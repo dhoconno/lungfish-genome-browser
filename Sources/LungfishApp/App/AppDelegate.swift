@@ -391,6 +391,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Check for --skip-welcome argument
         let uiTestConfiguration = AppUITestConfiguration.current
+        if uiTestConfiguration.scenarioName == "operations-failed-operation" {
+            seedOperationsPanelFailureForUITest()
+        }
         if uiTestConfiguration.isEnabled,
            let projectURL = uiTestConfiguration.projectPath {
             showMainWindowWithProject(projectURL)
@@ -7512,9 +7515,30 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc func reportIssue(_ sender: Any?) {
-        if let url = URL(string: "https://github.com/dho/lungfish-genome-browser/issues/new") {
-            NSWorkspace.shared.open(url)
+        if let url = OperationFailureIssueReporter.blankIssueURL() {
+            GitHubIssueOpener.open(url)
         }
+    }
+
+    private func seedOperationsPanelFailureForUITest() {
+        OperationCenter.shared.clearCompleted()
+        let operationID = OperationCenter.shared.start(
+            title: "UI test failed operation",
+            detail: "Preparing deterministic failure",
+            operationType: .classification,
+            cliCommand: "lungfish classify --reads '~/ui-test/R1.fastq.gz'"
+        )
+        OperationCenter.shared.log(
+            id: operationID,
+            level: .info,
+            message: "UI test seeded operation"
+        )
+        OperationCenter.shared.fail(
+            id: operationID,
+            detail: "Deterministic failure used by XCUI",
+            errorMessage: "UI test failure",
+            errorDetail: "This fixture exercises the Operations panel GitHub issue action."
+        )
     }
 }
 

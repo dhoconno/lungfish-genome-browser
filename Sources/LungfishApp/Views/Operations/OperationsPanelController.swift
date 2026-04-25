@@ -262,6 +262,12 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         OperationCenter.shared.cancel(id: items[row].id)
     }
 
+    @objc private func openGitHubIssueFromButton(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard row >= 0, row < items.count else { return }
+        openGitHubIssue(for: items[row])
+    }
+
     // MARK: - Context Menu Actions
 
     @objc private func contextCopyCLICommand(_ sender: NSMenuItem) {
@@ -286,6 +292,12 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         let report = buildFailureReport(for: item)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(report, forType: .string)
+    }
+
+    @objc private func contextOpenGitHubIssue(_ sender: NSMenuItem) {
+        guard let itemID = sender.representedObject as? UUID,
+              let item = items.first(where: { $0.id == itemID }) else { return }
+        openGitHubIssue(for: item)
     }
 
     @objc private func contextCancel(_ sender: NSMenuItem) {
@@ -342,6 +354,15 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 .map { "  \($0)" }.joined(separator: "\n"))
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func openGitHubIssue(for item: OperationCenter.Item) {
+        guard item.state == .failed,
+              let url = OperationFailureIssueReporter.newIssueURL(
+                for: item,
+                failureReport: buildFailureReport(for: item)
+              ) else { return }
+        GitHubIssueOpener.open(url)
     }
 
     /// Removes expansion-specific subviews (CLI command, log, error sections)
@@ -552,25 +573,50 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
 
         case "action":
             let cell = reuseOrCreate(identifier: identifier, in: tableView)
-            if item.state == .running {
-                let button = cell.viewWithTag(300) as? NSButton ?? {
-                    let btn = NSButton(title: "Cancel", target: self, action: #selector(cancelItem(_:)))
-                    btn.tag = 300
-                    btn.bezelStyle = .rounded
-                    btn.controlSize = .small
-                    btn.font = .systemFont(ofSize: 10)
-                    btn.translatesAutoresizingMaskIntoConstraints = false
-                    cell.addSubview(btn)
-                    NSLayoutConstraint.activate([
-                        btn.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
-                        btn.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                    ])
-                    return btn
-                }()
-                button.isHidden = false
-            } else {
-                (cell.viewWithTag(300) as? NSButton)?.isHidden = true
+            let cancelButton = cell.viewWithTag(300) as? NSButton ?? {
+                let btn = NSButton(title: "Cancel", target: self, action: #selector(cancelItem(_:)))
+                btn.tag = 300
+                btn.bezelStyle = .rounded
+                btn.controlSize = .small
+                btn.font = .systemFont(ofSize: 10)
+                btn.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(btn)
+                NSLayoutConstraint.activate([
+                    btn.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+                    btn.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                return btn
+            }()
+            let issueButton = cell.viewWithTag(301) as? NSButton ?? {
+                let btn = NSButton(title: "Issue", target: self, action: #selector(openGitHubIssueFromButton(_:)))
+                btn.tag = 301
+                btn.bezelStyle = .rounded
+                btn.controlSize = .small
+                btn.font = .systemFont(ofSize: 10)
+                btn.translatesAutoresizingMaskIntoConstraints = false
+                btn.setAccessibilityIdentifier("operations-open-github-issue-button")
+                btn.setAccessibilityLabel("Open GitHub Issue")
+                btn.setAccessibilityHelp("Opens a prefilled GitHub issue for this failed operation.")
+                cell.addSubview(btn)
+                NSLayoutConstraint.activate([
+                    btn.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+                    btn.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                return btn
+            }()
+
+            switch item.state {
+            case .running:
+                cancelButton.isHidden = false
+                issueButton.isHidden = true
+            case .failed:
+                cancelButton.isHidden = true
+                issueButton.isHidden = false
+            case .completed:
+                cancelButton.isHidden = true
+                issueButton.isHidden = true
             }
+
             return cell
 
         default:
@@ -960,15 +1006,18 @@ extension OperationsPanelViewController: NSMenuDelegate {
             menu.addItem(copyLog)
         }
 
-        // For failed operations, offer a single "Copy Failure Report" that bundles
-        // the CLI command + error/detail text + log into one clipboard copy.
-        // Show this regardless of whether errorMessage/logEntries are populated —
-        // the detail field always contains the failure reason.
+        // Failed operations can be copied as a report or opened as a prefilled
+        // GitHub issue; the user reviews and submits in the browser.
         if item.state == .failed {
             let copyReport = NSMenuItem(title: "Copy Failure Report", action: #selector(contextCopyFailureReport(_:)), keyEquivalent: "")
             copyReport.representedObject = item.id
             copyReport.target = self
             menu.addItem(copyReport)
+
+            let openIssue = NSMenuItem(title: "Open GitHub Issue", action: #selector(contextOpenGitHubIssue(_:)), keyEquivalent: "")
+            openIssue.representedObject = item.id
+            openIssue.target = self
+            menu.addItem(openIssue)
         }
 
         if item.cliCommand != nil || !item.logEntries.isEmpty || item.state == .failed {
