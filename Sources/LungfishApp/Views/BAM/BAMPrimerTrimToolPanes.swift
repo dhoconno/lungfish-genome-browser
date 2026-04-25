@@ -37,10 +37,10 @@ struct BAMPrimerTrimToolPanes: View {
     private var advancedOptionsSection: some View {
         DisclosureGroup("Advanced Options") {
             VStack(alignment: .leading, spacing: 12) {
-                labeledField("Minimum read length after trim", text: $state.minReadLengthText)
-                labeledField("Minimum quality", text: $state.minQualityText)
-                labeledField("Sliding window width", text: $state.slidingWindowText)
-                labeledField("Primer offset", text: $state.primerOffsetText)
+                labeledField("Minimum read length after trim", placeholder: "30", text: $state.minReadLengthText)
+                labeledField("Minimum quality", placeholder: "20", text: $state.minQualityText)
+                labeledField("Sliding window width", placeholder: "4", text: $state.slidingWindowText)
+                labeledField("Primer offset", placeholder: "0", text: $state.primerOffsetText)
             }
         }
     }
@@ -53,10 +53,10 @@ struct BAMPrimerTrimToolPanes: View {
     }
 
     @ViewBuilder
-    private func labeledField(_ label: String, text: Binding<String>) -> some View {
+    private func labeledField(_ label: String, placeholder: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label).font(.caption).foregroundStyle(.secondary)
-            TextField("", text: text).textFieldStyle(.roundedBorder)
+            TextField(placeholder, text: text).textFieldStyle(.roundedBorder)
         }
     }
 }

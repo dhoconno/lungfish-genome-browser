@@ -1,6 +1,7 @@
 import XCTest
 import LungfishCore
 import LungfishIO
+import LungfishWorkflow
 @testable import LungfishApp
 
 @MainActor
@@ -78,6 +79,52 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
         state.primerOffsetText = "0"
 
         XCTAssertTrue(state.isRunEnabled, "postcondition: re-enabled when all fields valid again")
+    }
+
+    func testPrepareForRunReturnsNilWhenNoSchemeSelected() {
+        let state = BAMPrimerTrimDialogState(
+            bundle: makeStubReferenceBundle(),
+            availability: .available,
+            builtInSchemes: [],
+            projectSchemes: []
+        )
+        XCTAssertNil(state.prepareForRun())
+        XCTAssertNil(state.pendingRequest)
+    }
+
+    func testPrepareForRunPopulatesPendingRequestWhenReady() throws {
+        let scheme = try loadSampleScheme()
+        let state = BAMPrimerTrimDialogState(
+            bundle: makeStubReferenceBundle(),
+            availability: .available,
+            builtInSchemes: [scheme],
+            projectSchemes: []
+        )
+        state.selectScheme(id: scheme.manifest.name)
+        state.minReadLengthText = "30"
+        state.minQualityText = "20"
+        state.slidingWindowText = "4"
+        state.primerOffsetText = "0"
+
+        let request = try XCTUnwrap(state.prepareForRun())
+        XCTAssertEqual(request.minReadLength, 30)
+        XCTAssertEqual(request.minQuality, 20)
+        XCTAssertEqual(request.slidingWindow, 4)
+        XCTAssertEqual(request.primerOffset, 0)
+        XCTAssertEqual(state.pendingRequest?.minReadLength, 30)
+    }
+
+    func testPrepareForRunReturnsNilWhenFieldsInvalid() throws {
+        let scheme = try loadSampleScheme()
+        let state = BAMPrimerTrimDialogState(
+            bundle: makeStubReferenceBundle(),
+            availability: .available,
+            builtInSchemes: [scheme],
+            projectSchemes: []
+        )
+        state.selectScheme(id: scheme.manifest.name)
+        state.minQualityText = "not a number"
+        XCTAssertNil(state.prepareForRun())
     }
 
     // MARK: - Fixture helpers

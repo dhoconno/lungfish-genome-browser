@@ -19,11 +19,16 @@ struct BAMPrimerTrimDialog: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
-                Button("Run", action: onRun)
+                Button("Run", action: handleRun)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!state.isRunEnabled)
             }
             .padding()
         }
+    }
+
+    private func handleRun() {
+        _ = state.prepareForRun()
+        onRun()
     }
 }

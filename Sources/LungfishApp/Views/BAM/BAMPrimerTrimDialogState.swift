@@ -85,4 +85,45 @@ final class BAMPrimerTrimDialogState {
         guard !trimmed.isEmpty, let value = Int(trimmed), value >= 0 else { return nil }
         return value
     }
+
+    // MARK: - Run Preparation
+
+    /// Validates the form and populates ``pendingRequest`` from the current state.
+    /// Called by the dialog's Run button before invoking the run handler; mirrors
+    /// ``BAMVariantCallingDialogState/prepareForRun()`` in intent but returns the
+    /// assembled request so callers can inspect it directly.
+    ///
+    /// Returns `nil` (and leaves ``pendingRequest`` unchanged) if validation
+    /// fails. The real source/output BAM URLs are supplied by the Inspector in
+    /// Task 10; until then we fill placeholder URLs so the request assembly
+    /// logic exercises the validated parameters end-to-end.
+    @discardableResult
+    func prepareForRun() -> BAMPrimerTrimRequest? {
+        guard let scheme = selectedScheme else { return nil }
+        guard let minReadLength = parsedInt(minReadLengthText),
+              let minQuality = parsedInt(minQualityText),
+              let slidingWindow = parsedInt(slidingWindowText),
+              let primerOffset = parsedInt(primerOffsetText) else {
+            return nil
+        }
+
+        // TODO(Task 10): replace these placeholders with URLs wired from the
+        // Inspector context that hosts the dialog, or restructure the request
+        // so parameter assembly and file-URL resolution happen at the call
+        // site. The sibling variant-calling dialog resolves its URL from the
+        // bundle itself (`bundle.url`); primer-trim genuinely needs two
+        // external file URLs that state does not own.
+        let placeholderURL = URL(fileURLWithPath: "/dev/null")
+        let request = BAMPrimerTrimRequest(
+            sourceBAMURL: placeholderURL,
+            primerSchemeBundle: scheme,
+            outputBAMURL: placeholderURL,
+            minReadLength: minReadLength,
+            minQuality: minQuality,
+            slidingWindow: slidingWindow,
+            primerOffset: primerOffset
+        )
+        pendingRequest = request
+        return request
+    }
 }

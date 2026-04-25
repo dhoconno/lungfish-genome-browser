@@ -16,21 +16,15 @@ struct PrimerSchemePickerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !builtIn.isEmpty {
-                Section {
-                    ForEach(builtIn, id: \.manifest.name) { scheme in
-                        schemeRow(scheme, badge: "Built-in")
-                    }
-                } header: {
-                    Text("Built-in").font(.caption).foregroundStyle(.secondary)
+                Text("Built-in").font(.caption).foregroundStyle(.secondary)
+                ForEach(builtIn, id: \.manifest.name) { scheme in
+                    schemeRow(scheme, badge: "Built-in")
                 }
             }
             if !projectLocal.isEmpty {
-                Section {
-                    ForEach(projectLocal, id: \.manifest.name) { scheme in
-                        schemeRow(scheme, badge: nil)
-                    }
-                } header: {
-                    Text("In this project").font(.caption).foregroundStyle(.secondary)
+                Text("In this project").font(.caption).foregroundStyle(.secondary)
+                ForEach(projectLocal, id: \.manifest.name) { scheme in
+                    schemeRow(scheme, badge: nil)
                 }
             }
             Button("Browse…", action: onBrowse)
@@ -38,18 +32,16 @@ struct PrimerSchemePickerView: View {
     }
 
     private func schemeRow(_ scheme: PrimerSchemeBundle, badge: String?) -> some View {
-        HStack {
-            Button(action: { selectedSchemeID = scheme.manifest.name }) {
-                HStack {
-                    Text(scheme.manifest.displayName)
-                    if selectedSchemeID == scheme.manifest.name {
-                        Image(systemName: "checkmark").foregroundStyle(.tint)
-                    }
-                    Spacer()
-                    if let badge { Text(badge).font(.caption2).foregroundStyle(.secondary) }
+        Button(action: { selectedSchemeID = scheme.manifest.name }) {
+            HStack {
+                Text(scheme.manifest.displayName)
+                if selectedSchemeID == scheme.manifest.name {
+                    Image(systemName: "checkmark").foregroundStyle(.tint)
                 }
+                Spacer()
+                if let badge { Text(badge).font(.caption2).foregroundStyle(.secondary) }
             }
-            .buttonStyle(.plain)
         }
+        .buttonStyle(.plain)
     }
 }
