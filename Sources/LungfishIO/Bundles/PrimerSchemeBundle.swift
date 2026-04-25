@@ -16,6 +16,38 @@ public struct PrimerSchemeManifest: Codable, Sendable, Equatable {
     public let imported: Date?
     public let attachments: [AttachmentEntry]?
 
+    public init(
+        schemaVersion: Int,
+        name: String,
+        displayName: String,
+        description: String? = nil,
+        organism: String? = nil,
+        referenceAccessions: [ReferenceAccession],
+        primerCount: Int,
+        ampliconCount: Int,
+        source: String? = nil,
+        sourceURL: String? = nil,
+        version: String? = nil,
+        created: Date? = nil,
+        imported: Date? = nil,
+        attachments: [AttachmentEntry]? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.name = name
+        self.displayName = displayName
+        self.description = description
+        self.organism = organism
+        self.referenceAccessions = referenceAccessions
+        self.primerCount = primerCount
+        self.ampliconCount = ampliconCount
+        self.source = source
+        self.sourceURL = sourceURL
+        self.version = version
+        self.created = created
+        self.imported = imported
+        self.attachments = attachments
+    }
+
     public var canonicalAccession: String {
         referenceAccessions.first(where: \.canonical)?.accession
             ?? referenceAccessions.first?.accession
@@ -57,6 +89,11 @@ public struct PrimerSchemeManifest: Codable, Sendable, Equatable {
     public struct AttachmentEntry: Codable, Sendable, Equatable {
         public let path: String
         public let description: String?
+
+        public init(path: String, description: String? = nil) {
+            self.path = path
+            self.description = description
+        }
     }
 
     enum CodingKeys: String, CodingKey {

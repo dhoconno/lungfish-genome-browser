@@ -99,6 +99,7 @@ struct ImportCardInfo: Identifiable, Sendable {
         case esViritu
         case taxTriage
         case nvd
+        case primerScheme
     }
 
     /// The underlying ``ImportAction`` regardless of whether the card uses a
@@ -411,6 +412,15 @@ final class ImportCenterViewModel {
                 action: .fasta
             )
         ),
+        ImportCardInfo(
+            id: "primer-scheme",
+            title: "Primer Scheme",
+            description: "Import a .lungfishprimers bundle authored from a BED (and optional FASTA) for use with iVar primer trimming.",
+            sfSymbol: "line.horizontal.3.decrease.circle",
+            fileHint: ".bed (+ optional .fasta/.fa/.fna)",
+            tab: .references,
+            importKind: .wizardSheet(action: .primerScheme)
+        ),
     ]
 
     /// Cards visible in the currently selected section.
@@ -490,6 +500,7 @@ final class ImportCenterViewModel {
         case .taxTriage: return "Select TaxTriage result files or directory"
         case .naoMgs:   return "Select NAO-MGS results"
         case .nvd:      return "Select NVD results directory"
+        case .primerScheme: return "Primer scheme import runs via the wizard sheet"
         }
     }
 
@@ -546,6 +557,8 @@ final class ImportCenterViewModel {
             break // Handled by wizard sheet path
         case .nvd:
             break // Handled by wizard sheet path
+        case .primerScheme:
+            break // Handled by wizard sheet path
         }
 
         recordHistory(urls: urls, action: action, succeeded: true)
@@ -570,6 +583,8 @@ final class ImportCenterViewModel {
             appDelegate.importProjectSampleMetadata(nil)
         case .nvd:
             appDelegate.launchNvdImport(nil)
+        case .primerScheme:
+            appDelegate.launchPrimerSchemeImport(nil)
         case .kraken2:
             appDelegate.launchKraken2Classification(nil)
         case .esViritu:
@@ -599,6 +614,7 @@ final class ImportCenterViewModel {
         case .esViritu: return "EsViritu"
         case .taxTriage: return "TaxTriage"
         case .nvd:      return "NVD"
+        case .primerScheme: return "Primer Scheme"
         }
     }
 

@@ -4472,6 +4472,39 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         window.beginSheet(wizardPanel)
     }
 
+    @objc func launchPrimerSchemeImport(_ sender: Any?) {
+        guard let window = mainWindowController?.window else {
+            debugLog("launchPrimerSchemeImport: No main window available")
+            return
+        }
+        guard let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController,
+              let projectURL = sidebarController.currentProjectURL else {
+            showAlert(title: "No Project Open", message: "Open a project before importing a primer scheme.")
+            return
+        }
+
+        let wizardPanel = NSPanel(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: true)
+        wizardPanel.title = "Import Primer Scheme"
+        wizardPanel.isReleasedWhenClosed = false
+
+        let importViewModel = PrimerSchemeImportViewModel()
+        let view = PrimerSchemeImportView(
+            viewModel: importViewModel,
+            projectURL: projectURL,
+            onComplete: { _ in
+                window.endSheet(wizardPanel)
+            },
+            onCancel: {
+                window.endSheet(wizardPanel)
+            }
+        )
+
+        let hostingController = NSHostingController(rootView: view)
+        wizardPanel.contentViewController = hostingController
+        wizardPanel.setContentSize(NSSize(width: 540, height: 480))
+        window.beginSheet(wizardPanel)
+    }
+
     @objc func launchNvdImport(_ sender: Any?) {
         guard let window = mainWindowController?.window else {
             debugLog("launchNvdImport: No main window available")
