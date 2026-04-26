@@ -21,6 +21,7 @@ import UniformTypeIdentifiers
 /// - Help menu
 @MainActor
 public final class MainMenu {
+    private static let windowMenuDelegate = WindowMenuDelegate()
 
     /// Creates and returns the main menu bar.
     public static func createMainMenu() -> NSMenu {
@@ -802,10 +803,48 @@ public final class MainMenu {
         )
 
         // Set as app's window menu
+        windowMenu.delegate = windowMenuDelegate
         NSApp.windowsMenu = windowMenu
 
         windowMenuItem.submenu = windowMenu
         return windowMenuItem
+    }
+
+    static func installWindowSizeItem(in windowMenu: NSMenu) {
+        removeWindowSizeItems(from: windowMenu)
+
+        guard let moveAndResizeMenu = windowMenu.items
+            .first(where: { $0.title == "Move & Resize" })?
+            .submenu else {
+            return
+        }
+
+        if let lastItem = moveAndResizeMenu.items.last, !lastItem.isSeparatorItem {
+            moveAndResizeMenu.addItem(.separator())
+        }
+        moveAndResizeMenu.addItem(makeSetWindowSizeItem())
+    }
+
+    private static func makeSetWindowSizeItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Set Size...",
+            action: #selector(AppDelegate.showWindowSizeDialog(_:)),
+            keyEquivalent: ""
+        )
+        item.identifier = NSUserInterfaceItemIdentifier(MainMenuAccessibilityID.setWindowSize)
+        return item
+    }
+
+    private static func removeWindowSizeItems(from menu: NSMenu) {
+        for item in menu.items.reversed() where item.identifier?.rawValue == MainMenuAccessibilityID.setWindowSize {
+            menu.removeItem(item)
+        }
+
+        for item in menu.items {
+            if let submenu = item.submenu {
+                removeWindowSizeItems(from: submenu)
+            }
+        }
     }
 
     // MARK: - Help Menu
@@ -1026,6 +1065,16 @@ final class OperationsMenuDelegate: NSObject, NSMenuDelegate {
             menuItem.toolTip = op.detail
             menu.insertItem(menuItem, at: index)
         }
+    }
+}
+
+private final class WindowMenuDelegate: NSObject, NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        MainMenu.installWindowSizeItem(in: menu)
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        MainMenu.installWindowSizeItem(in: menu)
     }
 }
 

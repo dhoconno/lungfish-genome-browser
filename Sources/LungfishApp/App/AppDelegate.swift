@@ -326,6 +326,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     /// AI assistant service (lazy singleton), hosted inside Inspector.
     private var aiAssistantService: AIAssistantService?
     private var helpWindowController: HelpWindowController?
+    private var windowSizeDialogController: WindowSizeDialogController?
 
     /// AI tool registry for the assistant
     private var aiToolRegistry: AIToolRegistry?
@@ -4273,7 +4274,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL != nil
         }
 
+        if menuItem.action == #selector(showWindowSizeDialog(_:)) {
+            return mainWindowController?.window != nil || NSApp.keyWindow != nil || NSApp.mainWindow != nil
+        }
+
         return true
+    }
+
+    @objc public func showWindowSizeDialog(_ sender: Any?) {
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow ?? NSApp.mainWindow else {
+            return
+        }
+
+        let controller = WindowSizeDialogController(parentWindow: window) { [weak self] in
+            self?.windowSizeDialogController = nil
+        }
+        windowSizeDialogController = controller
+        controller.beginSheet()
     }
 
     // MARK: - SequenceMenuActions

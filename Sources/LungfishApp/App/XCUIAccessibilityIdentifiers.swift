@@ -119,6 +119,7 @@ enum MainMenuAccessibilityID {
     static let callVariants = "tools-menu-call-variants"
     static let pluginManager = "tools-menu-plugin-manager"
     static let showOperationsPanel = "operations-menu-show-panel"
+    static let setWindowSize = "window-menu-set-size"
 
     static let helpHome = "help-menu-lungfish-help"
     static let gettingStarted = "help-menu-getting-started"

@@ -6,6 +6,7 @@ import XCTest
 final class AppShellAccessibilityTests: XCTestCase {
 
     func testMainMenuExposesStableIdentifiersForShellActions() throws {
+        let _ = NSApplication.shared
         let mainMenu = MainMenu.createMainMenu()
 
         let appMenu = try XCTUnwrap(mainMenu.items.first?.submenu)
@@ -22,6 +23,12 @@ final class AppShellAccessibilityTests: XCTestCase {
         XCTAssertEqual(importCenterItem.identifier?.rawValue, "file-menu-import-center")
         XCTAssertEqual(clearTemporaryFilesItem.identifier?.rawValue, "file-menu-clear-temporary-files")
 
+        let windowMenu = try XCTUnwrap(mainMenu.items.first(where: { $0.title == "Window" })?.submenu)
+        XCTAssertNil(
+            windowMenu.items.first(where: { $0.title == "Move & Resize" }),
+            "The app must not create a duplicate Move & Resize menu; macOS supplies that menu at runtime."
+        )
+
         let helpMenu = try XCTUnwrap(mainMenu.items.first(where: { $0.title == "Help" })?.submenu)
         let helpItem = try XCTUnwrap(helpMenu.items.first(where: { $0.title == "Lungfish Genome Explorer Help" }))
         let gettingStartedItem = try XCTUnwrap(helpMenu.items.first(where: { $0.title == "Getting Started" }))
@@ -35,6 +42,28 @@ final class AppShellAccessibilityTests: XCTestCase {
         XCTAssertEqual(aiGuideItem.identifier?.rawValue, "help-menu-ai-assistant-guide")
         XCTAssertEqual(releaseNotesItem.identifier?.rawValue, "help-menu-release-notes")
         XCTAssertEqual(reportIssueItem.identifier?.rawValue, "help-menu-report-issue")
+    }
+
+    func testSetSizeInstallsIntoExistingMoveAndResizeMenu() throws {
+        let _ = NSApplication.shared
+        let windowMenu = NSMenu(title: "Window")
+        let systemMoveAndResizeItem = NSMenuItem(title: "Move & Resize", action: nil, keyEquivalent: "")
+        let systemMoveAndResizeMenu = NSMenu(title: "Move & Resize")
+        systemMoveAndResizeMenu.addItem(withTitle: "Center", action: nil, keyEquivalent: "")
+        systemMoveAndResizeItem.submenu = systemMoveAndResizeMenu
+        windowMenu.addItem(systemMoveAndResizeItem)
+
+        MainMenu.installWindowSizeItem(in: windowMenu)
+        MainMenu.installWindowSizeItem(in: windowMenu)
+
+        XCTAssertEqual(windowMenu.items.filter { $0.title == "Move & Resize" }.count, 1)
+        let setSizeItems = systemMoveAndResizeMenu.items.filter {
+            $0.identifier?.rawValue == MainMenuAccessibilityID.setWindowSize
+        }
+        XCTAssertEqual(setSizeItems.count, 1)
+        let setSizeItem = try XCTUnwrap(setSizeItems.first)
+        XCTAssertEqual(setSizeItem.title, "Set Size...")
+        XCTAssertEqual(setSizeItem.action, #selector(AppDelegate.showWindowSizeDialog(_:)))
     }
 
     func testAboutWindowExposesStableAccessibilityIdentifiers() throws {
