@@ -79,6 +79,35 @@ final class ImportCenterMenuTests: XCTestCase {
         XCTAssertEqual(callVariantsItem.identifier?.rawValue, MainMenuAccessibilityID.callVariants)
     }
 
+    func testToolsMenuExposesNFCoreWorkflowsAsDistinctWorkflowSurface() throws {
+        let _ = NSApplication.shared
+        let mainMenu = MainMenu.createMainMenu()
+        let toolsMenu = try XCTUnwrap(mainMenu.items.first(where: { $0.title == "Tools" })?.submenu)
+        let nfCoreItem = try XCTUnwrap(toolsMenu.items.first(where: { $0.title == "nf-core Workflows…" }))
+
+        XCTAssertEqual(nfCoreItem.action, #selector(AppDelegate.showNFCoreWorkflows(_:)))
+        XCTAssertEqual(nfCoreItem.identifier?.rawValue, MainMenuAccessibilityID.nfCoreWorkflows)
+    }
+
+    func testFASTQFASTAOperationsMenuIncludesSequenceTransformActions() throws {
+        let _ = NSApplication.shared
+        let mainMenu = MainMenu.createMainMenu()
+        let toolsMenu = try XCTUnwrap(mainMenu.items.first(where: { $0.title == "Tools" })?.submenu)
+        let operationsMenu = try XCTUnwrap(
+            toolsMenu.items.first(where: { $0.title == "FASTQ/FASTA Operations" })?.submenu
+        )
+
+        let reverseComplement = try XCTUnwrap(
+            operationsMenu.items.first(where: { $0.title == "Reverse Complement Selection" })
+        )
+        let translate = try XCTUnwrap(
+            operationsMenu.items.first(where: { $0.title == "Translate Selection…" })
+        )
+
+        XCTAssertEqual(reverseComplement.action, #selector(AppDelegate.reverseComplement(_:)))
+        XCTAssertEqual(translate.action, #selector(AppDelegate.translate(_:)))
+    }
+
     func testImportCenterCatalogUsesExplicitImportCategoriesInsteadOfProjectFiles() {
         let viewModel = ImportCenterViewModel()
         let ids = Set(viewModel.allCards.map(\.id))

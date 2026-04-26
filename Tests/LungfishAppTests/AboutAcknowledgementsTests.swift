@@ -73,4 +73,19 @@ final class AboutAcknowledgementsTests: XCTestCase {
         XCTAssertFalse(entryIDs.contains("taxtriage"))
         XCTAssertFalse(entryIDs.contains("nao-mgs"))
     }
+
+    func testCurrentSectionsAcknowledgeCuratedNFCoreWorkflows() throws {
+        let sections = AboutAcknowledgements.currentSections()
+        let nfCore = try XCTUnwrap(sections.first(where: { $0.title == "Supported nf-core Workflows" }))
+
+        XCTAssertEqual(nfCore.entries.first?.id, "nf-core-fetchngs")
+        XCTAssertTrue(nfCore.entries.map(\.id).contains("nf-core-viralrecon"))
+        XCTAssertTrue(nfCore.entries.map(\.id).contains("nf-core-vipr"))
+
+        let viralrecon = try XCTUnwrap(nfCore.entries.first(where: { $0.id == "nf-core-viralrecon" }))
+        XCTAssertEqual(viralrecon.displayName, "nf-core/viralrecon")
+        XCTAssertEqual(viralrecon.detail, "Easy")
+        XCTAssertEqual(viralrecon.secondaryDetail, "Nextflow workflow")
+        XCTAssertEqual(viralrecon.sourceURL, "https://nf-co.re/viralrecon")
+    }
 }

@@ -673,6 +673,17 @@ public final class MainMenu {
             action: #selector(ToolsMenuActions.showFASTQClassificationOperations(_:)),
             keyEquivalent: ""
         )
+        fastqOperationsMenu.addItem(.separator())
+        fastqOperationsMenu.addItem(
+            withTitle: "Reverse Complement Selection",
+            action: #selector(SequenceMenuActions.reverseComplement(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Translate Selection\u{2026}",
+            action: #selector(SequenceMenuActions.translate(_:)),
+            keyEquivalent: ""
+        )
         fastqOperationsItem.submenu = fastqOperationsMenu
         toolsMenu.addItem(fastqOperationsItem)
 
@@ -684,6 +695,15 @@ public final class MainMenu {
             keyEquivalent: ""
         )
         callVariantsItem.identifier = NSUserInterfaceItemIdentifier(MainMenuAccessibilityID.callVariants)
+
+        toolsMenu.addItem(.separator())
+
+        let nfCoreItem = toolsMenu.addItem(
+            withTitle: "nf-core Workflows\u{2026}",
+            action: #selector(ToolsMenuActions.showNFCoreWorkflows(_:)),
+            keyEquivalent: ""
+        )
+        nfCoreItem.identifier = NSUserInterfaceItemIdentifier(MainMenuAccessibilityID.nfCoreWorkflows)
 
         toolsMenu.addItem(.separator())
 
@@ -977,6 +997,7 @@ public final class MainMenu {
     func showFASTQAssemblyOperations(_ sender: Any?)
     func showFASTQClassificationOperations(_ sender: Any?)
     func showBAMVariantCalling(_ sender: Any?)
+    func showNFCoreWorkflows(_ sender: Any?)
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func searchPathoplexus(_ sender: Any?)

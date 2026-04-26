@@ -4726,6 +4726,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         )
     }
 
+    @objc func showNFCoreWorkflows(_ sender: Any?) {
+        let supported = NFCoreSupportedWorkflowCatalog.firstWave
+            .map { "• \($0.fullName)" }
+            .joined(separator: "\n")
+        showAlert(
+            title: "nf-core Workflows",
+            message: "Lungfish runs supported nf-core workflows locally with Nextflow. The first supported workflows are:\n\n\(supported)\n\nUse the workflow runner to configure inputs, executor profile, logs, and result imports."
+        )
+    }
+
     func showFASTQOperationsDialog(
         _ sender: Any?,
         initialCategory: FASTQOperationCategoryID,

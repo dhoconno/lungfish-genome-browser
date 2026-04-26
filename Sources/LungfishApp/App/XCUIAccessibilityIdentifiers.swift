@@ -117,6 +117,7 @@ enum MainMenuAccessibilityID {
     static let clearTemporaryFiles = "file-menu-clear-temporary-files"
 
     static let callVariants = "tools-menu-call-variants"
+    static let nfCoreWorkflows = "tools-menu-nf-core-workflows"
     static let pluginManager = "tools-menu-plugin-manager"
     static let showOperationsPanel = "operations-menu-show-panel"
     static let setWindowSize = "window-menu-set-size"

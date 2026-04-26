@@ -46,6 +46,19 @@ struct AboutAcknowledgements {
             sections.append(Section(title: pack.name, entries: entries))
         }
 
+        let nfCoreEntries = NFCoreSupportedWorkflowCatalog.firstWave.map { workflow in
+            Entry(
+                id: "nf-core-\(workflow.name)",
+                displayName: workflow.fullName,
+                detail: workflow.difficulty.displayName,
+                secondaryDetail: "Nextflow workflow",
+                sourceURL: workflow.documentationURL.absoluteString
+            )
+        }
+        if !nfCoreEntries.isEmpty {
+            sections.append(Section(title: "Supported nf-core Workflows", entries: nfCoreEntries))
+        }
+
         return sections
     }
 
