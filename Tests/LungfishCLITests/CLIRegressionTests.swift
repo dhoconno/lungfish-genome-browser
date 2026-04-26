@@ -15,6 +15,7 @@ import XCTest
 @testable import LungfishCLI
 import LungfishCore
 import LungfishIO
+import LungfishWorkflow
 
 // MARK: - Top-Level CLI Structure
 
@@ -521,6 +522,27 @@ final class WorkflowCommandRegressionTests: XCTestCase {
 
     func testDefaultSubcommand() {
         XCTAssertNotNil(WorkflowCommand.configuration.defaultSubcommand)
+    }
+
+    func testRunSubcommandParsesNFCoreExecutionOptions() throws {
+        let command = try RunSubcommand.parse([
+            "nf-core/seqinspector",
+            "--executor", "docker",
+            "--input", "/tmp/sample_R1.fastq.gz",
+            "--input", "/tmp/sample_R2.fastq.gz",
+            "--results-dir", "/tmp/results",
+            "--bundle-root", "/tmp/project/Analyses",
+            "--version", "1.2.3",
+            "--prepare-only",
+        ])
+
+        XCTAssertEqual(command.workflow, "nf-core/seqinspector")
+        XCTAssertEqual(command.executor, .docker)
+        XCTAssertEqual(command.input, ["/tmp/sample_R1.fastq.gz", "/tmp/sample_R2.fastq.gz"])
+        XCTAssertEqual(command.resultsDir, "/tmp/results")
+        XCTAssertEqual(command.bundleRoot, "/tmp/project/Analyses")
+        XCTAssertEqual(command.version, "1.2.3")
+        XCTAssertTrue(command.prepareOnly)
     }
 }
 

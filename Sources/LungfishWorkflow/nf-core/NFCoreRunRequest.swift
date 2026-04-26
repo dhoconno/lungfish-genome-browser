@@ -50,6 +50,38 @@ public struct NFCoreRunRequest: Sendable, Codable, Equatable {
         )
     }
 
+    public func cliArguments(bundlePath: URL, prepareOnly: Bool = false) -> [String] {
+        var args = [
+            "workflow",
+            "run",
+            workflow.fullName,
+            "--executor",
+            executor.rawValue,
+            "--results-dir",
+            outputDirectory.path,
+            "--bundle-path",
+            bundlePath.path,
+        ]
+        if !version.isEmpty {
+            args += ["--version", version]
+        }
+        for inputURL in inputURLs {
+            args += ["--input", inputURL.path]
+        }
+        for key in params.keys.sorted() {
+            guard let value = params[key], !value.isEmpty else { continue }
+            args += ["--param", "\(key)=\(value)"]
+        }
+        if prepareOnly {
+            args.append("--prepare-only")
+        }
+        return args
+    }
+
+    public func cliCommandPreview(bundlePath: URL, executableName: String = "lungfish-cli") -> String {
+        ([executableName] + cliArguments(bundlePath: bundlePath)).map(Self.shellEscaped).joined(separator: " ")
+    }
+
     public init(
         workflow: NFCoreSupportedWorkflow,
         version: String,
@@ -77,5 +109,12 @@ public struct NFCoreRunRequest: Sendable, Codable, Equatable {
             outputDirectoryName: outputDirectory.lastPathComponent,
             createdAt: createdAt
         )
+    }
+
+    private static func shellEscaped(_ value: String) -> String {
+        guard value.rangeOfCharacter(from: .whitespacesAndNewlines) != nil else {
+            return value
+        }
+        return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }

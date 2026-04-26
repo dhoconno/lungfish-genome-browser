@@ -28,7 +28,7 @@ final class NFCoreWorkflowExecutionServiceTests: XCTestCase {
         XCTAssertEqual(result.operationItem?.operationType, .nfCoreWorkflow)
         XCTAssertEqual(result.operationItem?.title, "Run nf-core/seqinspector")
         XCTAssertEqual(result.operationItem?.detail, "Prepared nf-core workflow run bundle")
-        XCTAssertTrue(result.operationItem?.cliCommand?.contains("nextflow run nf-core/seqinspector") == true)
+        XCTAssertTrue(result.operationItem?.cliCommand?.contains("lungfish-cli workflow run nf-core/seqinspector") == true)
         XCTAssertEqual(result.operationItem?.bundleURLs, [result.bundleURL])
     }
 
@@ -57,8 +57,8 @@ final class NFCoreWorkflowExecutionServiceTests: XCTestCase {
 
         let result = try await service.run(request, bundleRoot: root)
 
-        XCTAssertEqual(runner.invocations.first?.arguments, request.nextflowArguments)
-        XCTAssertEqual(runner.invocations.first?.workingDirectory, result.bundleURL.appendingPathComponent("outputs", isDirectory: true))
+        XCTAssertEqual(runner.invocations.first?.arguments, request.cliArguments(bundlePath: result.bundleURL))
+        XCTAssertEqual(runner.invocations.first?.workingDirectory, root)
         XCTAssertEqual(result.operationItem?.state, .completed)
         XCTAssertEqual(result.operationItem?.detail, "nf-core workflow completed")
         XCTAssertEqual(result.operationItem?.bundleURLs, [result.bundleURL])

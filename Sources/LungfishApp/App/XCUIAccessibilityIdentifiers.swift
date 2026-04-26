@@ -129,3 +129,16 @@ enum MainMenuAccessibilityID {
     static let releaseNotes = "help-menu-release-notes"
     static let reportIssue = "help-menu-report-issue"
 }
+
+enum NFCoreWorkflowAccessibilityID {
+    static let window = "nf-core-workflow-dialog"
+    static let workflowPicker = "nf-core-workflow-picker"
+    static let executorPicker = "nf-core-executor-picker"
+    static let versionField = "nf-core-version-field"
+    static let inputTable = "nf-core-input-table"
+    static let selectAllButton = "nf-core-select-all-inputs"
+    static let clearButton = "nf-core-clear-inputs"
+    static let runButton = "nf-core-run-button"
+    static let cancelButton = "nf-core-cancel-button"
+    static let statusLabel = "nf-core-status-label"
+}

@@ -327,6 +327,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     private var aiAssistantService: AIAssistantService?
     private var helpWindowController: HelpWindowController?
     private var windowSizeDialogController: WindowSizeDialogController?
+    private var nfCoreWorkflowDialogController: NFCoreWorkflowDialogController?
 
     /// AI tool registry for the assistant
     private var aiToolRegistry: AIToolRegistry?
@@ -4730,13 +4731,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc func showNFCoreWorkflows(_ sender: Any?) {
-        let supported = NFCoreSupportedWorkflowCatalog.firstWave
-            .map { "• \($0.fullName)" }
-            .joined(separator: "\n")
-        showAlert(
-            title: "nf-core Workflows",
-            message: "Lungfish runs supported nf-core workflows locally with Nextflow. The first supported workflows are:\n\n\(supported)\n\nUse the workflow runner to configure inputs, executor profile, logs, and result imports."
-        )
+        let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL
+        let service: NFCoreWorkflowExecutionService
+        if AppUITestConfiguration.current.isEnabled,
+           AppUITestConfiguration.current.backendMode == .deterministic {
+            service = NFCoreWorkflowExecutionService(processRunner: AppUITestNFCoreWorkflowProcessRunner())
+        } else {
+            service = NFCoreWorkflowExecutionService()
+        }
+        let controller = NFCoreWorkflowDialogController(projectURL: projectURL, executionService: service)
+        nfCoreWorkflowDialogController = controller
+        if let window = mainWindowController?.window {
+            window.beginSheet(controller.window!) { [weak self] _ in
+                self?.nfCoreWorkflowDialogController = nil
+            }
+        } else {
+            controller.showWindow(sender)
+        }
     }
 
     func showFASTQOperationsDialog(

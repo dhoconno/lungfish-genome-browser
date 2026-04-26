@@ -29,7 +29,7 @@ final class NFCoreWorkflowExecutionService {
             title: request.displayTitle,
             detail: "Preparing nf-core workflow run",
             operationType: .nfCoreWorkflow,
-            cliCommand: request.commandPreview
+            cliCommand: request.cliCommandPreview(bundlePath: bundleURL)
         )
         operationCenter.log(
             id: operationID,
@@ -54,22 +54,20 @@ final class NFCoreWorkflowExecutionService {
         let bundleURL = try availableBundleURL(for: request.workflow.name, in: bundleRoot)
         try NFCoreRunBundleStore.write(request.manifest(), to: bundleURL)
 
-        let outputsURL = bundleURL.appendingPathComponent("outputs", isDirectory: true)
-        let logsURL = bundleURL.appendingPathComponent("logs", isDirectory: true)
         let operationID = operationCenter.start(
             title: request.displayTitle,
-            detail: "Running nf-core workflow with Nextflow",
+            detail: "Running nf-core workflow with lungfish-cli",
             operationType: .nfCoreWorkflow,
-            cliCommand: request.commandPreview
+            cliCommand: request.cliCommandPreview(bundlePath: bundleURL)
         )
-        operationCenter.log(id: operationID, level: .info, message: request.commandPreview)
+        operationCenter.log(id: operationID, level: .info, message: request.cliCommandPreview(bundlePath: bundleURL))
 
         do {
             let processResult = try await processRunner.runNextflow(
-                arguments: request.nextflowArguments,
-                workingDirectory: outputsURL
+                arguments: request.cliArguments(bundlePath: bundleURL),
+                workingDirectory: bundleRoot
             )
-            try writeProcessLogs(processResult, to: logsURL)
+            try writeProcessLogs(processResult, to: bundleURL.appendingPathComponent("logs", isDirectory: true))
 
             if processResult.exitCode == 0 {
                 operationCenter.complete(
@@ -169,8 +167,13 @@ struct ProcessNFCoreWorkflowProcessRunner: NFCoreWorkflowProcessRunning {
                 let stderrHandle = try FileHandle(forWritingTo: stderrURL)
 
                 let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = ["nextflow"] + arguments
+                if let cliURL = Self.lungfishCLIURL() {
+                    process.executableURL = cliURL
+                    process.arguments = arguments
+                } else {
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                    process.arguments = ["lungfish-cli"] + arguments
+                }
                 process.currentDirectoryURL = workingDirectory
                 process.standardOutput = stdoutHandle
                 process.standardError = stderrHandle
@@ -193,5 +196,21 @@ struct ProcessNFCoreWorkflowProcessRunner: NFCoreWorkflowProcessRunning {
                 continuation.resume(throwing: error)
             }
         }
+    }
+
+    private static func lungfishCLIURL() -> URL? {
+        let environment = ProcessInfo.processInfo.environment
+        if let path = environment["LUNGFISH_CLI_PATH"],
+           FileManager.default.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/lungfish-cli")
+        if FileManager.default.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
+
+        return nil
     }
 }

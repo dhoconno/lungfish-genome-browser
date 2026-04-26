@@ -7,6 +7,8 @@ import Foundation
 import LungfishCore
 import LungfishWorkflow
 
+extension NFCoreExecutor: ExpressibleByArgument {}
+
 /// Workflow execution commands
 struct WorkflowCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -55,6 +57,37 @@ struct RunSubcommand: AsyncParsableCommand {
     var resultsDir: String = "./results"
 
     @Option(
+        name: .customLong("executor"),
+        help: "Execution profile for nf-core workflows: docker, conda, or local"
+    )
+    var executor: NFCoreExecutor = .docker
+
+    @Option(
+        name: .customLong("input"),
+        parsing: .singleValue,
+        help: "Input file selected for the workflow; repeat for multiple inputs"
+    )
+    var input: [String] = []
+
+    @Option(
+        name: .customLong("bundle-root"),
+        help: "Directory where the .lungfishrun bundle should be created"
+    )
+    var bundleRoot: String?
+
+    @Option(
+        name: .customLong("bundle-path"),
+        help: "Exact .lungfishrun bundle path to create or update"
+    )
+    var bundlePath: String?
+
+    @Option(
+        name: .customLong("version"),
+        help: "nf-core workflow version or tag"
+    )
+    var version: String = ""
+
+    @Option(
         name: [.customLong("workdir"), .customShort("w")],
         help: "Working directory for execution"
     )
@@ -97,6 +130,12 @@ struct RunSubcommand: AsyncParsableCommand {
     )
     var dryRun: Bool = false
 
+    @Flag(
+        name: .customLong("prepare-only"),
+        help: "Create the Lungfish run bundle and command preview without launching Nextflow"
+    )
+    var prepareOnly: Bool = false
+
     @Option(
         name: .customLong("timeout"),
         help: "Maximum execution time in minutes"
@@ -107,11 +146,6 @@ struct RunSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let formatter = TerminalFormatter(useColors: globalOptions.useColors)
-
-        // Check container availability
-        guard #available(macOS 26, *) else {
-            throw CLIError.containerUnavailable
-        }
 
         if !globalOptions.quiet {
             print(formatter.info("Preparing workflow: \(workflow)"))
@@ -144,6 +178,10 @@ struct RunSubcommand: AsyncParsableCommand {
             print(formatter.info("Dry run - workflow would execute with:"))
             print("  Workflow: \(workflow)")
             print("  Results: \(resultsDir)")
+            print("  Executor: \(executor.rawValue)")
+            if !input.isEmpty {
+                print("  Inputs: \(input.joined(separator: ", "))")
+            }
             print("  Parameters: \(workflowParams.count)")
             for (key, value) in workflowParams.sorted(by: { $0.key < $1.key }) {
                 print("    \(key) = \(value)")
@@ -155,6 +193,14 @@ struct RunSubcommand: AsyncParsableCommand {
         let workflowURL = URL(fileURLWithPath: workflow)
         let isNextflow = workflowURL.pathExtension == "nf" || workflow.contains("nf-core")
         let isSnakemake = workflowURL.lastPathComponent.lowercased().contains("snakefile")
+
+        if workflow.contains("nf-core") {
+            try await runNFCoreWorkflow(
+                workflowParams: workflowParams,
+                formatter: formatter
+            )
+            return
+        }
 
         if !globalOptions.quiet {
             let engine = isNextflow ? "Nextflow" : (isSnakemake ? "Snakemake" : "Unknown")
@@ -168,6 +214,121 @@ struct RunSubcommand: AsyncParsableCommand {
         print("Would execute: \(workflow)")
         print("With \(workflowParams.count) parameters")
     }
+
+    private func runNFCoreWorkflow(
+        workflowParams: [String: String],
+        formatter: TerminalFormatter
+    ) async throws {
+        guard let supportedWorkflow = NFCoreSupportedWorkflowCatalog.workflow(named: workflow) else {
+            throw CLIError.workflowFailed(reason: "Unsupported nf-core workflow: \(workflow)")
+        }
+        guard !input.isEmpty else {
+            throw CLIError.workflowFailed(reason: "At least one --input file is required for nf-core workflows")
+        }
+
+        let inputURLs = input.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        for inputURL in inputURLs where !FileManager.default.fileExists(atPath: inputURL.path) {
+            throw CLIError.inputFileNotFound(path: inputURL.path)
+        }
+
+        let outputURL = URL(fileURLWithPath: resultsDir).standardizedFileURL
+        let request = NFCoreRunRequest(
+            workflow: supportedWorkflow,
+            version: version,
+            executor: executor,
+            inputURLs: inputURLs,
+            outputDirectory: outputURL,
+            params: workflowParams
+        )
+        let runBundleURL = try resolveRunBundleURL(workflowName: supportedWorkflow.name)
+        try NFCoreRunBundleStore.write(request.manifest(), to: runBundleURL)
+
+        if !globalOptions.quiet {
+            print(formatter.info("Created run bundle: \(runBundleURL.path)"))
+            print(formatter.info(request.commandPreview))
+        }
+        if prepareOnly {
+            print(runBundleURL.path)
+            return
+        }
+
+        let processResult = try await runNextflow(
+            arguments: request.nextflowArguments,
+            workingDirectory: runBundleURL.appendingPathComponent("outputs", isDirectory: true)
+        )
+        try writeProcessLogs(processResult, to: runBundleURL.appendingPathComponent("logs", isDirectory: true))
+        if processResult.exitCode != 0 {
+            throw CLIError.workflowFailed(reason: "Nextflow exited with status \(processResult.exitCode). See \(runBundleURL.appendingPathComponent("logs/stderr.log").path)")
+        }
+        print(runBundleURL.path)
+    }
+
+    private func resolveRunBundleURL(workflowName: String) throws -> URL {
+        if let bundlePath {
+            return URL(fileURLWithPath: bundlePath).standardizedFileURL
+        }
+        let root = URL(fileURLWithPath: bundleRoot ?? FileManager.default.currentDirectoryPath)
+            .standardizedFileURL
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let base = root.appendingPathComponent("\(workflowName).\(NFCoreRunBundleStore.directoryExtension)", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: base.path) else { return base }
+        for index in 2...999 {
+            let candidate = root.appendingPathComponent("\(workflowName)-\(index).\(NFCoreRunBundleStore.directoryExtension)", isDirectory: true)
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        throw CLIError.outputWriteFailed(path: base.path, reason: "Could not allocate a unique run bundle path")
+    }
+
+    private func runNextflow(arguments: [String], workingDirectory: URL) async throws -> NFCoreWorkflowProcessResult {
+        try await withCheckedThrowingContinuation { continuation in
+            do {
+                try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+                let stdoutURL = workingDirectory.appendingPathComponent(".nextflow-stdout.log")
+                let stderrURL = workingDirectory.appendingPathComponent(".nextflow-stderr.log")
+                _ = FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+                _ = FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+                let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
+                let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = ["nextflow"] + arguments
+                process.currentDirectoryURL = workingDirectory
+                process.standardOutput = stdoutHandle
+                process.standardError = stderrHandle
+                process.terminationHandler = { process in
+                    try? stdoutHandle.close()
+                    try? stderrHandle.close()
+                    let stdout = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
+                    let stderr = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
+                    try? FileManager.default.removeItem(at: stdoutURL)
+                    try? FileManager.default.removeItem(at: stderrURL)
+                    continuation.resume(returning: NFCoreWorkflowProcessResult(
+                        exitCode: process.terminationStatus,
+                        standardOutput: stdout,
+                        standardError: stderr
+                    ))
+                }
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    private func writeProcessLogs(_ result: NFCoreWorkflowProcessResult, to logsURL: URL) throws {
+        try FileManager.default.createDirectory(at: logsURL, withIntermediateDirectories: true)
+        try result.standardOutput.write(to: logsURL.appendingPathComponent("stdout.log"), atomically: true, encoding: .utf8)
+        try result.standardError.write(to: logsURL.appendingPathComponent("stderr.log"), atomically: true, encoding: .utf8)
+    }
+}
+
+private struct NFCoreWorkflowProcessResult {
+    let exitCode: Int32
+    let standardOutput: String
+    let standardError: String
 }
 
 // MARK: - List Subcommand
@@ -191,17 +352,9 @@ struct ListSubcommand: AsyncParsableCommand {
         let formatter = TerminalFormatter(useColors: globalOptions.useColors)
 
         if nfCore {
-            print(formatter.header("Available nf-core Pipelines"))
-            // TODO: Fetch from NFCoreRegistry
-            let pipelines = [
-                ("nf-core/rnaseq", "RNA sequencing analysis"),
-                ("nf-core/sarek", "Variant calling pipeline"),
-                ("nf-core/viralrecon", "Viral genome assembly"),
-                ("nf-core/ampliseq", "Amplicon sequencing"),
-                ("nf-core/chipseq", "ChIP-seq analysis"),
-            ]
-            for (name, description) in pipelines {
-                print("  \(formatter.colored(name, .cyan)): \(description)")
+            print(formatter.header("Supported nf-core Pipelines"))
+            for workflow in NFCoreSupportedWorkflowCatalog.firstWave {
+                print("  \(formatter.colored(workflow.fullName, .cyan)): \(workflow.description)")
             }
         } else {
             print(formatter.info("Use --nf-core to list nf-core pipelines"))
