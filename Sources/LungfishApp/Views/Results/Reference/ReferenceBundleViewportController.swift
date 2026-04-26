@@ -9,6 +9,8 @@ import LungfishWorkflow
 
 @MainActor
 final class ReferenceSequenceTableView: BatchTableView<BundleBrowserSequenceSummary> {
+    var onDisplayedRowsChanged: (() -> Void)?
+
     override var columnSpecs: [BatchColumnSpec] {
         [
             .init(identifier: .init("sequence"), title: "Sequence", width: 220, minWidth: 140, defaultAscending: true),
@@ -113,6 +115,10 @@ final class ReferenceSequenceTableView: BatchTableView<BundleBrowserSequenceSumm
         return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
     }
 
+    override func didApplyDisplayedRows() {
+        onDisplayedRowsChanged?()
+    }
+
     private var numericFont: NSFont {
         .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
     }
@@ -185,13 +191,16 @@ public class ReferenceBundleViewportController: NSViewController {
         return label
     }()
 
+    var rootAccessibilityIdentifier: String { "reference-bundle-view" }
+    var rootAccessibilityLabel: String { "Reference bundle viewport" }
+
     public override func loadView() {
         let root = NSView()
         root.translatesAutoresizingMaskIntoConstraints = false
         root.setAccessibilityElement(true)
         root.setAccessibilityRole(.group)
-        root.setAccessibilityLabel("Reference bundle viewport")
-        root.setAccessibilityIdentifier("reference-bundle-view")
+        root.setAccessibilityLabel(rootAccessibilityLabel)
+        root.setAccessibilityIdentifier(rootAccessibilityIdentifier)
         view = root
 
         setupSummaryBar()
@@ -303,6 +312,9 @@ public class ReferenceBundleViewportController: NSViewController {
         sequenceTableView.onSelectionCleared = { [weak self] in
             self?.showDetailPlaceholder("Select a sequence to inspect.")
         }
+        sequenceTableView.onDisplayedRowsChanged = { [weak self] in
+            self?.reconcileSequenceSelectionAfterDisplayedRowsChanged()
+        }
 
         NotificationCenter.default.addObserver(
             self,
@@ -374,6 +386,10 @@ public class ReferenceBundleViewportController: NSViewController {
     }
 
     func configure(input: ReferenceBundleViewportInput) throws {
+        try configure(input: input, preferredSelectionName: nil)
+    }
+
+    private func configure(input: ReferenceBundleViewportInput, preferredSelectionName: String?) throws {
         currentInput = input
         currentResult = input.mappingResult
         currentResultDirectoryURL = input.mappingResultDirectoryURL
@@ -383,24 +399,24 @@ public class ReferenceBundleViewportController: NSViewController {
 
         switch input.kind {
         case .mappingResult:
-            configureMappingRows(input.mappingResult)
+            configureMappingRows(input.mappingResult, preferredSelectionName: preferredSelectionName)
         case .directBundle:
-            try configureDirectBundleRows(input: input)
+            try configureDirectBundleRows(input: input, preferredSelectionName: preferredSelectionName)
         }
 
         applyLayoutPreference()
     }
 
-    private func configureMappingRows(_ result: MappingResult?) {
+    private func configureMappingRows(_ result: MappingResult?, preferredSelectionName: String?) {
         sequenceRows = []
         sequenceTableView.configure(rows: [])
         sequenceTableView.isHidden = true
         contigTableView.isHidden = false
         contigTableView.configure(rows: result?.contigs ?? [])
-        refreshSelection()
+        refreshSelection(preferredSelectionName: preferredSelectionName)
     }
 
-    private func configureDirectBundleRows(input: ReferenceBundleViewportInput) throws {
+    private func configureDirectBundleRows(input: ReferenceBundleViewportInput, preferredSelectionName: String?) throws {
         contigTableView.configure(rows: [])
         contigTableView.isHidden = true
         sequenceTableView.isHidden = false
@@ -421,10 +437,10 @@ public class ReferenceBundleViewportController: NSViewController {
         let loadResult = try BundleBrowserLoader().load(bundleURL: bundleURL, manifest: manifest)
         sequenceRows = loadResult.summary.sequences
         sequenceTableView.configure(rows: sequenceRows)
-        refreshSequenceSelection()
+        refreshSequenceSelection(preferredSelectionName: preferredSelectionName)
     }
 
-    private func refreshSelection() {
+    private func refreshSelection(preferredSelectionName: String? = nil) {
         guard !contigTableView.displayedRows.isEmpty else {
             if let viewerBundleURL = currentInput?.renderedBundleURL {
                 do {
@@ -439,18 +455,43 @@ public class ReferenceBundleViewportController: NSViewController {
             return
         }
 
-        contigTableView.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        displaySelectedContig(contigTableView.displayedRows[0])
+        if let preferredSelectionName,
+           selectContig(named: preferredSelectionName) {
+            return
+        }
+
+        selectContig(at: 0)
     }
 
-    private func refreshSequenceSelection() {
+    private func refreshSequenceSelection(preferredSelectionName: String? = nil) {
         guard !sequenceTableView.displayedRows.isEmpty else {
             showDetailPlaceholder("No sequences are available for this reference bundle.")
             return
         }
 
-        sequenceTableView.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        displaySelectedSequence(sequenceTableView.displayedRows[0])
+        if let preferredSelectionName,
+           selectSequence(named: preferredSelectionName) {
+            return
+        }
+
+        selectSequence(at: 0)
+    }
+
+    private func reconcileSequenceSelectionAfterDisplayedRowsChanged() {
+        guard currentInput?.kind == .directBundle, !sequenceTableView.isHidden else { return }
+
+        guard !sequenceTableView.displayedRows.isEmpty else {
+            sequenceTableView.tableView.deselectAll(nil)
+            showDetailPlaceholder("No sequences are available for this reference bundle.")
+            return
+        }
+
+        if let selected = currentSelectedSequence() {
+            displaySelectedSequence(selected)
+            return
+        }
+
+        selectSequence(at: 0)
     }
 
     private func loadViewerBundleIfNeeded(from bundleURL: URL, sequenceName: String) throws {
@@ -472,8 +513,15 @@ public class ReferenceBundleViewportController: NSViewController {
     @objc(reloadViewerBundleForInspectorChangesAndReturnError:)
     func reloadViewerBundleForInspectorChanges() throws {
         guard let input = currentInput else { return }
+        let preferredSelectionName: String?
+        switch input.kind {
+        case .directBundle:
+            preferredSelectionName = currentSelectedSequence()?.name
+        case .mappingResult:
+            preferredSelectionName = currentSelectedContig()?.contigName
+        }
         loadedViewerBundleURL = nil
-        try configure(input: input)
+        try configure(input: input, preferredSelectionName: preferredSelectionName)
     }
 
     var filteredAlignmentServiceTarget: AlignmentFilterTarget? {
@@ -628,6 +676,30 @@ public class ReferenceBundleViewportController: NSViewController {
         guard selectedRow >= 0, selectedRow < sequenceTableView.displayedRows.count else { return nil }
         return sequenceTableView.displayedRows[selectedRow]
     }
+
+    private func selectContig(named name: String) -> Bool {
+        guard let row = contigTableView.displayedRows.firstIndex(where: { $0.contigName == name }) else { return false }
+        selectContig(at: row)
+        return true
+    }
+
+    private func selectContig(at row: Int) {
+        guard row >= 0, row < contigTableView.displayedRows.count else { return }
+        contigTableView.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        displaySelectedContig(contigTableView.displayedRows[row])
+    }
+
+    private func selectSequence(named name: String) -> Bool {
+        guard let row = sequenceTableView.displayedRows.firstIndex(where: { $0.name == name }) else { return false }
+        selectSequence(at: row)
+        return true
+    }
+
+    private func selectSequence(at row: Int) {
+        guard row >= 0, row < sequenceTableView.displayedRows.count else { return }
+        sequenceTableView.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        displaySelectedSequence(sequenceTableView.displayedRows[row])
+    }
 }
 
 extension ReferenceBundleViewportController: ResultViewportController {
@@ -716,8 +788,9 @@ extension ReferenceBundleViewportController {
         configure(result: result, resultDirectoryURL: resultDirectoryURL)
     }
 
-    var testDisplayedSequenceNames: [String] { sequenceRows.map(\.name) }
+    var testDisplayedSequenceNames: [String] { sequenceTableView.displayedRows.map(\.name) }
     var testSelectedSequenceName: String? { currentSelectedSequence()?.name }
+    var testSelectedContigName: String? { currentSelectedContig()?.contigName }
     var testPresentationMode: PresentationMode { presentationMode }
     var testSplitView: TrackedDividerSplitView { splitView }
     var testListContainer: NSView { listContainer }
@@ -739,8 +812,15 @@ extension ReferenceBundleViewportController {
     }
 
     func testSelectContig(named name: String) {
-        guard let row = contigTableView.displayedRows.firstIndex(where: { $0.contigName == name }) else { return }
-        contigTableView.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        _ = selectContig(named: name)
+    }
+
+    func testSelectSequence(named name: String) {
+        _ = selectSequence(named: name)
+    }
+
+    func testApplySequenceFilter(_ filter: String) {
+        sequenceTableView.setFilterText(filter)
     }
 
     func testClearContigSelection() {

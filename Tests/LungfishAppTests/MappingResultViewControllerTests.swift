@@ -35,6 +35,13 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertEqual(vc.testContigTableView.record(at: 0)?.contigName, "beta")
     }
 
+    func testMappingCompatibilityKeepsRootAccessibilityIdentifier() {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        XCTAssertEqual(vc.view.accessibilityIdentifier(), "mapping-result-view")
+    }
+
     func testTableSupportsTextAndNumericFilters() {
         let table = MappingContigTableView()
         table.configure(rows: makeContigs())
@@ -150,6 +157,21 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertNoThrow(try invokeInspectorReload(on: vc))
         XCTAssertEqual(loadCount, 1)
         XCTAssertEqual(deliveredBundle?.url.standardizedFileURL, bundleURL.standardizedFileURL)
+    }
+
+    func testReloadViewerBundleForInspectorChangesPreservesSelectedContig() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        let bundleURL = try makeReferenceBundleWithAnnotationDatabase()
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: bundleURL))
+        vc.testSelectContig(named: "alpha")
+
+        XCTAssertEqual(vc.testSelectedContigName, "alpha")
+
+        XCTAssertNoThrow(try invokeInspectorReload(on: vc))
+
+        XCTAssertEqual(vc.testSelectedContigName, "alpha")
     }
 
     func testFilteredAlignmentServiceTargetUsesCurrentMappingResultDirectory() throws {

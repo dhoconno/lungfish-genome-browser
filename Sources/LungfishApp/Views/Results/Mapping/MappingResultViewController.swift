@@ -5,4 +5,7 @@
 import AppKit
 
 @MainActor
-public final class MappingResultViewController: ReferenceBundleViewportController {}
+public final class MappingResultViewController: ReferenceBundleViewportController {
+    override var rootAccessibilityIdentifier: String { "mapping-result-view" }
+    override var rootAccessibilityLabel: String { "Mapping result viewport" }
+}

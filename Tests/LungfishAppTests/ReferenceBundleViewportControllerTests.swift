@@ -26,6 +26,58 @@ final class ReferenceBundleViewportControllerTests: XCTestCase {
         XCTAssertFalse(vc.testEmbeddedViewerShowsBundleBrowser)
         XCTAssertEqual(vc.testPresentationMode, .listDetail)
     }
+
+    func testReloadViewerBundleForInspectorChangesPreservesSelectedSequence() throws {
+        let bundleURL = try ReferenceViewportFixture.makeReferenceBundle(
+            name: "Reference",
+            chromosomes: [
+                .init(name: "chr1", length: 100),
+                .init(name: "chr2", length: 200),
+            ],
+            includeAlignment: false,
+            includeVariant: false
+        )
+        let manifest = try BundleManifest.load(from: bundleURL)
+        let vc = ReferenceBundleViewportController()
+        _ = vc.view
+
+        try vc.configureForTesting(input: .directBundle(bundleURL: bundleURL, manifest: manifest))
+        vc.testSelectSequence(named: "chr2")
+
+        XCTAssertEqual(vc.testSelectedSequenceName, "chr2")
+
+        try vc.reloadViewerBundleForInspectorChanges()
+
+        XCTAssertEqual(vc.testSelectedSequenceName, "chr2")
+    }
+
+    func testFilteringSequenceRowsSelectsFirstVisibleSequenceAndClearsWhenEmpty() throws {
+        let bundleURL = try ReferenceViewportFixture.makeReferenceBundle(
+            name: "Reference",
+            chromosomes: [
+                .init(name: "chr1", length: 100),
+                .init(name: "chr2", length: 200),
+            ],
+            includeAlignment: false,
+            includeVariant: false
+        )
+        let manifest = try BundleManifest.load(from: bundleURL)
+        let vc = ReferenceBundleViewportController()
+        _ = vc.view
+
+        try vc.configureForTesting(input: .directBundle(bundleURL: bundleURL, manifest: manifest))
+
+        vc.testApplySequenceFilter("chr2")
+
+        XCTAssertEqual(vc.testDisplayedSequenceNames, ["chr2"])
+        XCTAssertEqual(vc.testSelectedSequenceName, "chr2")
+
+        vc.testApplySequenceFilter("missing")
+
+        XCTAssertEqual(vc.testDisplayedSequenceNames, [])
+        XCTAssertNil(vc.testSelectedSequenceName)
+        XCTAssertEqual(vc.testDetailPlaceholderMessage, "No sequences are available for this reference bundle.")
+    }
 }
 
 private enum ReferenceViewportFixture {
