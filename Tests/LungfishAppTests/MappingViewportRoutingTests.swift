@@ -88,7 +88,6 @@ final class MappingViewportRoutingTests: XCTestCase {
         let controller = try XCTUnwrap(vc.referenceBundleViewportController)
         XCTAssertEqual(controller.currentInput?.kind, .directBundle)
         XCTAssertEqual(controller.currentInput?.renderedBundleURL, bundleURL.standardizedFileURL)
-        XCTAssertNil(vc.testBundleBrowserController)
     }
 
     func testViewerExposesReferenceViewportMappingInputAsActiveMappingViewport() throws {

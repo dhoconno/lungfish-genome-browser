@@ -264,6 +264,27 @@ final class TwoPaneTrackedSplitCoordinator {
         if !isSynchronizingTrackedSplitPosition,
            didSetInitialSplitPosition,
            !needsInitialSplitValidation,
+           let requestedPosition = splitView.requestedDividerPosition(at: 0),
+           let currentPosition = currentDividerPosition(in: splitView),
+           abs(currentPosition - requestedPosition) > 2 {
+            let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+            let clampedPosition = SplitPaneSizing.clampedDividerPosition(
+                proposed: requestedPosition,
+                containerExtent: totalExtent,
+                minimumLeadingExtent: minimumExtents.leading,
+                minimumTrailingExtent: minimumExtents.trailing
+            )
+            isSynchronizingTrackedSplitPosition = true
+            splitView.setPosition(clampedPosition, ofDividerAt: 0)
+            applySplitFrames(in: splitView, leadingExtent: clampedPosition)
+            isSynchronizingTrackedSplitPosition = false
+            afterResize?()
+            return
+        }
+
+        if !isSynchronizingTrackedSplitPosition,
+           didSetInitialSplitPosition,
+           !needsInitialSplitValidation,
            let currentPosition = currentDividerPosition(in: splitView) {
             splitView.recordObservedDividerPosition(currentPosition)
         }

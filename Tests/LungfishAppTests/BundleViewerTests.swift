@@ -926,19 +926,21 @@ final class ViewerBundleRoutingTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    func testDisplayBundleDefaultOverloadUsesBrowseMode() throws {
+    func testDisplayBundleDefaultOverloadUsesReferenceViewport() throws {
         let vc = ViewerViewController()
         _ = vc.view
         let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
 
         try vc.displayBundle(at: bundleURL)
 
-        XCTAssertNotNil(vc.testBundleBrowserController)
+        let controller = try XCTUnwrap(vc.referenceBundleViewportController)
+        XCTAssertEqual(controller.currentInput?.kind, .directBundle)
+        XCTAssertEqual(controller.currentInput?.renderedBundleURL, bundleURL.standardizedFileURL)
         XCTAssertNil(vc.chromosomeNavigatorView)
         XCTAssertNil(vc.referenceFrame)
     }
 
-    func testDisplayBundleBrowseModeDoesNotInstallChromosomeNavigatorOrReferenceFrame() throws {
+    func testDisplayBundleBrowseModeUsesReferenceViewportWithoutChromosomeNavigatorOrReferenceFrame() throws {
         let vc = ViewerViewController()
         _ = vc.view
         let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
@@ -947,10 +949,10 @@ final class ViewerBundleRoutingTests: XCTestCase {
 
         XCTAssertNil(vc.chromosomeNavigatorView)
         XCTAssertNil(vc.referenceFrame)
-        XCTAssertNotNil(vc.testBundleBrowserController)
+        XCTAssertNotNil(vc.referenceBundleViewportController)
     }
 
-    func testSingleSequenceBundleStillOpensInBrowserMode() throws {
+    func testSingleSequenceBundleStillOpensInReferenceViewportMode() throws {
         let vc = ViewerViewController()
         _ = vc.view
         let bundleURL = try makeReferenceBundle(chromosomes: ["chr1"])
@@ -959,7 +961,7 @@ final class ViewerBundleRoutingTests: XCTestCase {
 
         XCTAssertNil(vc.chromosomeNavigatorView)
         XCTAssertNil(vc.referenceFrame)
-        XCTAssertEqual(vc.testBundleBrowserController?.testSelectedName, "chr1")
+        XCTAssertEqual(vc.referenceBundleViewportController?.testSelectedSequenceName, "chr1")
     }
 
     func testBrowseModeEmbedsSequenceDetailViewerForSelectedRow() throws {
@@ -969,13 +971,13 @@ final class ViewerBundleRoutingTests: XCTestCase {
 
         try vc.displayBundle(at: bundleURL, mode: .browse)
 
-        let browser = try XCTUnwrap(vc.testBundleBrowserController)
-        let embeddedViewer = try XCTUnwrap(browser.children.compactMap { $0 as? ViewerViewController }.first)
+        let viewport = try XCTUnwrap(vc.referenceBundleViewportController)
+        let embeddedViewer = try XCTUnwrap(viewport.children.compactMap { $0 as? ViewerViewController }.first)
 
-        XCTAssertEqual(browser.testSelectedName, "chr1")
+        XCTAssertEqual(viewport.testSelectedSequenceName, "chr1")
         XCTAssertEqual(embeddedViewer.referenceFrame?.chromosome, "chr1")
         XCTAssertNil(embeddedViewer.chromosomeNavigatorView)
-        XCTAssertNil(embeddedViewer.testBundleBrowserController)
+        XCTAssertNil(embeddedViewer.referenceBundleViewportController)
     }
 
     func testBrowseModeSelectionUpdatesEmbeddedSequenceDetailViewer() throws {
@@ -984,37 +986,36 @@ final class ViewerBundleRoutingTests: XCTestCase {
         let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
 
         try vc.displayBundle(at: bundleURL, mode: .browse)
-        let browser = try XCTUnwrap(vc.testBundleBrowserController)
-        let embeddedViewer = try XCTUnwrap(browser.children.compactMap { $0 as? ViewerViewController }.first)
+        let viewport = try XCTUnwrap(vc.referenceBundleViewportController)
+        let embeddedViewer = try XCTUnwrap(viewport.children.compactMap { $0 as? ViewerViewController }.first)
 
-        browser.testSelectRow(named: "chr2")
+        viewport.testSelectSequence(named: "chr2")
 
-        XCTAssertEqual(browser.testSelectedName, "chr2")
+        XCTAssertEqual(viewport.testSelectedSequenceName, "chr2")
         XCTAssertEqual(embeddedViewer.referenceFrame?.chromosome, "chr2")
     }
 
-    func testBundleBrowserDrillDownAndBackRestoresBrowserState() throws {
+    func testReferenceViewportFocusedDetailAndBackRestoresListDetailState() throws {
         let vc = ViewerViewController()
         _ = vc.view
         let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
 
         try vc.displayBundle(at: bundleURL, mode: .browse)
-        let browser = try XCTUnwrap(vc.testBundleBrowserController)
-        browser.testSelectRow(named: "chr2")
+        let viewport = try XCTUnwrap(vc.referenceBundleViewportController)
+        viewport.testSelectSequence(named: "chr2")
 
-        browser.testInvokeOpen()
+        viewport.testEnterFocusedDetailMode()
 
-        XCTAssertNil(vc.testBundleBrowserController)
-        XCTAssertEqual(vc.referenceFrame?.chromosome, "chr2")
-        XCTAssertEqual(vc.testBundleBackNavigationAccessibilityIdentifier, "viewer-back-navigation-button")
+        XCTAssertTrue(viewport.testIsFocusedDetailMode)
+        XCTAssertEqual(viewport.testFocusedBackButtonAccessibilityIdentifier, "reference-viewport-back-button")
 
-        vc.testTapBundleBackNavigation()
+        viewport.testReturnToListDetailMode()
 
-        XCTAssertNil(vc.referenceFrame)
-        XCTAssertEqual(vc.testBundleBrowserController?.testSelectedName, "chr2")
+        XCTAssertFalse(viewport.testIsFocusedDetailMode)
+        XCTAssertEqual(viewport.testSelectedSequenceName, "chr2")
     }
 
-    func testFailedBrowseOpenPreservesExistingBundleBrowserState() throws {
+    func testFailedBrowseOpenPreservesExistingReferenceViewportState() throws {
         let vc = ViewerViewController()
         _ = vc.view
         let validBundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
@@ -1022,14 +1023,13 @@ final class ViewerBundleRoutingTests: XCTestCase {
         try FileManager.default.createDirectory(at: invalidBundleURL, withIntermediateDirectories: true)
 
         try vc.displayBundle(at: validBundleURL, mode: .browse)
-        let browser = try XCTUnwrap(vc.testBundleBrowserController)
-        browser.testSelectRow(named: "chr2")
+        let viewport = try XCTUnwrap(vc.referenceBundleViewportController)
+        viewport.testSelectSequence(named: "chr2")
 
         XCTAssertThrowsError(try vc.displayBundle(at: invalidBundleURL, mode: .browse))
 
-        XCTAssertEqual(vc.currentBundleURL?.standardizedFileURL, validBundleURL.standardizedFileURL)
-        XCTAssertNotNil(vc.testBundleBrowserController)
-        XCTAssertEqual(vc.testBundleBrowserController?.testSelectedName, "chr2")
+        XCTAssertNotNil(vc.referenceBundleViewportController)
+        XCTAssertEqual(vc.referenceBundleViewportController?.testSelectedSequenceName, "chr2")
         XCTAssertNil(vc.referenceFrame)
     }
 

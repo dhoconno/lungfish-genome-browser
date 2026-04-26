@@ -65,9 +65,6 @@ public class ViewerViewController: NSViewController {
     /// FASTA collection browser (shown in place of sequence viewer for multi-sequence FASTA files)
     private var fastaCollectionController: FASTACollectionViewController?
 
-    /// Bundle browser (shown in place of sequence viewer for top-level bundle opens)
-    var bundleBrowserController: BundleBrowserViewController?
-
     /// Taxonomy classification browser (shown in place of sequence viewer for kreport results)
     var taxonomyViewController: TaxonomyViewController?
 
@@ -559,7 +556,7 @@ public class ViewerViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleBundleScrollDirectionChanged(_:)),
-            name: .bundleBrowserScrollDirectionChanged,
+            name: .referenceBundleScrollDirectionChanged,
             object: nil
         )
     }
@@ -569,7 +566,7 @@ public class ViewerViewController: NSViewController {
             viewerView.horizontalScrollDirectionOverride = nil
             return
         }
-        viewerView.horizontalScrollDirectionOverride = BundleBrowserScrollDirectionPreference.current()
+        viewerView.horizontalScrollDirectionOverride = ReferenceBundleScrollDirectionPreference.current()
     }
 
     @objc private func handleBundleScrollDirectionChanged(_ notification: Notification) {
@@ -1702,18 +1699,6 @@ public class ViewerViewController: NSViewController {
         bundleBackNavigationAction?()
     }
 
-    func hideBundleBrowserView() {
-        guard let controller = bundleBrowserController else { return }
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
-        bundleBrowserController = nil
-
-        enhancedRulerView.isHidden = false
-        viewerView.isHidden = false
-        headerView.isHidden = false
-        statusBar.isHidden = false
-    }
-
     /// Invalidates the offscreen annotation tile so it will be re-rendered
     /// at the correct size on the next draw cycle.
     public func invalidateAnnotationTile() {
@@ -2787,7 +2772,6 @@ public class ReferenceFrame {
 
 #if DEBUG
 extension ViewerViewController {
-    var testBundleBrowserController: BundleBrowserViewController? { bundleBrowserController }
     var testBundleBackNavigationAccessibilityIdentifier: String? {
         bundleBackNavigationButton?.accessibilityIdentifier()
     }

@@ -23,7 +23,7 @@ final class ReferenceBundleViewportControllerTests: XCTestCase {
 
         XCTAssertEqual(vc.testDisplayedSequenceNames, ["chr1", "chr2"])
         XCTAssertEqual(vc.testSelectedSequenceName, "chr1")
-        XCTAssertFalse(vc.testEmbeddedViewerShowsBundleBrowser)
+        XCTAssertFalse(vc.testEmbeddedViewerShowsReferenceViewport)
         XCTAssertEqual(vc.testPresentationMode, .listDetail)
     }
 

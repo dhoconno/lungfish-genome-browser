@@ -267,11 +267,8 @@ public final class DocumentSectionViewModel {
     /// Persisted mapping layout preference.
     var mappingPanelLayout: MappingPanelLayout = .current()
 
-    /// Persisted reference-bundle browser layout preference.
-    var bundleBrowserPanelLayout: BundleBrowserPanelLayout = .current()
-
     /// Persisted reference-bundle horizontal scroll direction preference.
-    var bundleHorizontalScrollDirection: ScrollDirectionPreference = BundleBrowserScrollDirectionPreference.current()
+    var bundleHorizontalScrollDirection: ScrollDirectionPreference = ReferenceBundleScrollDirectionPreference.current()
 
     // MARK: - Unified Classifier Sample Picker
     /// Shared classifier sample picker state for Inspector-embedded sample selector.

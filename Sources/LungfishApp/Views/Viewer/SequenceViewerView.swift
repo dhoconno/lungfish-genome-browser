@@ -187,7 +187,7 @@ public class SequenceViewerView: NSView {
         globalPreference: ScrollDirectionPreference
     ) -> ScrollDirectionPreference {
         guard let bundleOverride else { return globalPreference }
-        return BundleBrowserScrollDirectionPreference.viewportDirection(for: bundleOverride)
+        return ReferenceBundleScrollDirectionPreference.viewportDirection(for: bundleOverride)
     }
 
     /// Generation counter for read fetches — prevents stale results from overwriting newer ones
@@ -6072,7 +6072,7 @@ public class SequenceViewerView: NSView {
         }
         menu.addItem(zoomItem)
 
-        if viewController?.mappingResultController?.currentResult != nil {
+        if viewController?.activeMappingViewportController?.currentResult != nil {
             let extractReadsItem = NSMenuItem(
                 title: "Extract Overlapping Reads\u{2026}",
                 action: #selector(extractOverlappingReadsAction(_:)),
@@ -6431,7 +6431,7 @@ public class SequenceViewerView: NSView {
 
     /// Zooms the viewer to show the given annotation (callable from notification handlers).
     func zoomToAnnotation(_ annotation: SequenceAnnotation) {
-        if viewController?.mappingResultController?.currentResult != nil {
+        if viewController?.activeMappingViewportController?.currentResult != nil {
             viewController?.zoomToMappingAnnotation(annotation)
             return
         }

@@ -919,6 +919,8 @@ extension ReferenceBundleViewportController {
     var testSelectedSequenceName: String? { currentSelectedSequence()?.name }
     var testSelectedContigName: String? { currentSelectedContig()?.contigName }
     var testPresentationMode: PresentationMode { presentationMode }
+    var testIsFocusedDetailMode: Bool { presentationMode == .focusedDetail }
+    var testFocusedBackButtonAccessibilityIdentifier: String? { focusedBackButton.accessibilityIdentifier() }
     var testBackButtonAccessibilityIdentifier: String? { focusedBackButton.accessibilityIdentifier() }
     var testBackButtonIsHidden: Bool { focusContainer.isHidden || focusedBackButton.isHidden }
     var testSplitView: TrackedDividerSplitView { splitView }
@@ -930,8 +932,8 @@ extension ReferenceBundleViewportController {
     var testEmbeddedViewerPublishesGlobalViewportNotifications: Bool {
         embeddedViewerController.publishesGlobalViewportNotifications
     }
-    var testEmbeddedViewerShowsBundleBrowser: Bool {
-        embeddedViewerController.testBundleBrowserController != nil
+    var testEmbeddedViewerShowsReferenceViewport: Bool {
+        embeddedViewerController.referenceBundleViewportController != nil
     }
     var testEmbeddedViewerShowsChromosomeNavigator: Bool {
         embeddedViewerController.chromosomeNavigatorView != nil
@@ -954,6 +956,10 @@ extension ReferenceBundleViewportController {
 
     func testTapBackButton() {
         focusedBackButton.performClick(nil)
+    }
+
+    func testReturnToListDetailMode() {
+        returnToListDetailMode()
     }
 
     func testApplySequenceFilter(_ filter: String) {

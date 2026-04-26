@@ -178,7 +178,7 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         // Clear any previous sequence fetch error so the new region can be fetched
         viewerView.clearSequenceFetchError()
 
-        if mappingResultController?.currentResult == nil {
+        if activeMappingViewportController?.currentResult == nil {
             // Log current viewer state before navigation
             let currentChrom = referenceFrame?.chromosome ?? "nil"
             let currentScale = referenceFrame?.scale ?? 0
@@ -275,7 +275,7 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         }
         viewerView.selectedAnnotation = annotation
         viewerView.postAnnotationSelectedNotification(annotation)
-        if mappingResultController?.currentResult != nil {
+        if activeMappingViewportController?.currentResult != nil {
             zoomToMappingAnnotation(annotation)
         }
         if result.isVariant {

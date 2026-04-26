@@ -31,7 +31,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         let chromosomes: [ChromosomeInfo]
     }
 
-    /// Displays a reference genome bundle using the default top-level bundle browser.
+    /// Displays a reference genome bundle using the harmonized reference viewport.
     ///
     /// - Parameter url: URL of the `.lungfishref` bundle directory
     /// - Throws: Error if the manifest cannot be loaded or the bundle is invalid
@@ -39,21 +39,14 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         try displayBundle(at: url, mode: .browse)
     }
 
-    /// Displays a reference genome bundle using an explicit top-level browser or direct sequence mode.
+    /// Displays a reference genome bundle using the harmonized viewport or direct sequence mode.
     public func displayBundle(at url: URL, mode: BundleDisplayMode) throws {
         saveCurrentViewState()
         let context = try loadBundleDisplayContext(at: url)
 
         switch mode {
         case .browse:
-            let loadResult = try BundleBrowserLoader().load(bundleURL: context.url, manifest: context.manifest)
-            activateBundleDisplayContext(context)
-            displayBundleBrowser(
-                summary: loadResult.summary,
-                context: context,
-                restoredState: nil,
-                publishBundleDidLoad: true
-            )
+            try displayReferenceBundleViewport(.directBundle(bundleURL: context.url, manifest: context.manifest))
         case .sequence(let name, let restoreViewState):
             activateBundleDisplayContext(context)
             try displayBundleSequence(
@@ -135,91 +128,6 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         hideMappingView()
     }
 
-    private func displayBundleBrowser(
-        summary: BundleBrowserSummary,
-        context: BundleDisplayContext,
-        restoredState: BundleBrowserState?,
-        publishBundleDidLoad: Bool
-    ) {
-        hideNonBundleViews()
-        hideCollectionBackButton()
-        hideBundleBackNavigationButton()
-        hideBundleBrowserView()
-        removeChromosomeNavigator()
-
-        annotationDrawerView?.isHidden = true
-        fastqMetadataDrawerView?.isHidden = true
-        referenceFrame = nil
-        enhancedRulerView.referenceFrame = nil
-        headerView.setTrackNames([])
-        viewerView.hideTranslation()
-        viewerView.clearReferenceBundle()
-
-        let controller = BundleBrowserViewController()
-        controller.onOpenSequence = { [weak self, weak controller] row in
-            guard let self, let controller else { return }
-            let savedState = controller.captureState()
-
-            do {
-                try self.displayBundle(
-                    at: context.url,
-                    mode: .sequence(name: row.name, restoreViewState: false)
-                )
-                self.showBundleBackNavigationButton(title: "All Sequences (\(summary.sequences.count))") { [weak self] in
-                    self?.displayBundleBrowser(
-                        summary: summary,
-                        context: context,
-                        restoredState: savedState,
-                        publishBundleDidLoad: true
-                    )
-                }
-            } catch {
-                bundleLogger.error(
-                    "displayBundleBrowser: Failed to open sequence '\(row.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                self.displayBundleBrowser(
-                    summary: summary,
-                    context: context,
-                    restoredState: savedState,
-                    publishBundleDidLoad: true
-                )
-            }
-        }
-
-        addChild(controller)
-        let browserView = controller.view
-        browserView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(browserView)
-
-        NSLayoutConstraint.activate([
-            browserView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            browserView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            browserView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            browserView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-
-        controller.configure(summary: summary, bundleURL: context.url, restoredState: restoredState)
-        bundleBrowserController = controller
-
-        enhancedRulerView.isHidden = true
-        viewerView.isHidden = true
-        headerView.isHidden = true
-        statusBar.isHidden = true
-        geneTabBarView.isHidden = true
-
-        if publishBundleDidLoad {
-            publishBundleDidLoadNotification(
-                userInfo: [
-                    NotificationUserInfoKey.bundleURL: context.url,
-                    NotificationUserInfoKey.chromosomes: context.chromosomes,
-                    NotificationUserInfoKey.manifest: context.manifest,
-                    NotificationUserInfoKey.referenceBundle: context.bundle,
-                ]
-            )
-            syncInspectorForBundleViewState(context.viewState)
-        }
-    }
-
     private func displayBundleSequence(
         preferredSequenceName: String?,
         context: BundleDisplayContext,
@@ -227,7 +135,6 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         restoreViewState: Bool
     ) throws {
         hideNonBundleViews()
-        hideBundleBrowserView()
         hideCollectionBackButton()
         annotationDrawerView?.isHidden = false
         fastqMetadataDrawerView?.isHidden = false
@@ -652,7 +559,6 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         saveCurrentViewState()
 
         bundleLogger.info("clearBundleDisplay: Clearing bundle state")
-        hideBundleBrowserView()
         hideBundleBackNavigationButton()
         currentBundleDataProvider = nil
         currentBundleViewState = nil
