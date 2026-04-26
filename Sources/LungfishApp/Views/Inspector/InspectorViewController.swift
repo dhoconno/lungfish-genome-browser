@@ -913,6 +913,8 @@ public class InspectorViewController: NSViewController {
 
         if let bundle {
             viewModel.selectionSectionViewModel.referenceBundle = bundle
+            viewModel.documentSectionViewModel.referenceTrackCapabilities =
+                ReferenceBundleTrackCapabilities(bundle: bundle)
             updateSampleSection(from: bundle)
         }
 
@@ -1527,6 +1529,8 @@ public class InspectorViewController: NSViewController {
 
     /// Populates the read style section with alignment statistics from the bundle's metadata DBs.
     private func updateAlignmentSection(from bundle: ReferenceBundle) {
+        viewModel.documentSectionViewModel.referenceTrackCapabilities =
+            ReferenceBundleTrackCapabilities(bundle: bundle)
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
         syncAlignmentTrackInventory(from: bundle)
         viewModel.readStyleSectionViewModel.supportsConsensusExtraction = false
@@ -1577,6 +1581,8 @@ public class InspectorViewController: NSViewController {
     ) {
         viewModel.selectionSectionViewModel.referenceBundle = bundle
         viewModel.documentSectionViewModel.bundleURL = bundle.url
+        viewModel.documentSectionViewModel.referenceTrackCapabilities =
+            ReferenceBundleTrackCapabilities(bundle: bundle)
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
         syncAlignmentTrackInventory(from: bundle)
         viewModel.readStyleSectionViewModel.supportsConsensusExtraction = true

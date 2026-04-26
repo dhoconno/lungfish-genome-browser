@@ -18,6 +18,9 @@ public final class DocumentSectionViewModel {
     /// Bundle alignment tracks shown in the bundle inspector.
     var alignmentTrackRows: [AlignmentTrackInventoryRow] = []
 
+    /// Track-derived action readiness for the currently loaded reference bundle.
+    var referenceTrackCapabilities: ReferenceBundleTrackCapabilities?
+
     /// Currently isolated alignment track for viewing. `nil` means all alignments.
     var visibleAlignmentTrackID: String?
 
@@ -60,6 +63,7 @@ public final class DocumentSectionViewModel {
         self.manifest = manifest
         self.bundleURL = bundleURL
         self.selectedChromosome = nil
+        self.referenceTrackCapabilities = nil
         clearAlignmentTrackInventory()
     }
 
@@ -97,6 +101,7 @@ public final class DocumentSectionViewModel {
         self.manifest = nil
         self.bundleURL = nil
         self.selectedChromosome = nil
+        self.referenceTrackCapabilities = nil
         clearAlignmentTrackInventory()
     }
 
@@ -126,6 +131,7 @@ public final class DocumentSectionViewModel {
         mappingDocument = nil
         assemblyDocument = nil
         self.naoMgsManifest = manifest
+        referenceTrackCapabilities = nil
         clearAlignmentTrackInventory()
     }
 
@@ -139,6 +145,7 @@ public final class DocumentSectionViewModel {
         mappingDocument = nil
         assemblyDocument = nil
         self.nvdManifest = manifest
+        referenceTrackCapabilities = nil
         clearAlignmentTrackInventory()
     }
 
@@ -151,6 +158,7 @@ public final class DocumentSectionViewModel {
         manifest = nil
         bundleURL = nil
         selectedChromosome = nil
+        referenceTrackCapabilities = nil
         fastqStatistics = nil
         sraRunInfo = nil
         enaReadRecord = nil
@@ -170,6 +178,7 @@ public final class DocumentSectionViewModel {
         manifest = nil
         bundleURL = nil
         selectedChromosome = nil
+        referenceTrackCapabilities = nil
         fastqStatistics = nil
         sraRunInfo = nil
         enaReadRecord = nil

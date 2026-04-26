@@ -47,6 +47,10 @@ final class InspectorMappingModeTests: XCTestCase {
 
         XCTAssertEqual(vc.selectionSectionViewModel.referenceBundle?.url, bundle.url)
         XCTAssertEqual(vc.viewModel.documentSectionViewModel.bundleURL, bundle.url)
+        XCTAssertEqual(
+            vc.viewModel.documentSectionViewModel.referenceTrackCapabilities,
+            ReferenceBundleTrackCapabilities(bundle: bundle)
+        )
     }
 
     func testMappingAlignmentSectionImmediatelyAppliesCurrentReadStylePayload() throws {
@@ -104,6 +108,10 @@ final class InspectorMappingModeTests: XCTestCase {
         XCTAssertEqual(vc.selectionSectionViewModel.referenceBundle?.url, bundle.url)
         XCTAssertEqual(vc.viewModel.documentSectionViewModel.manifest?.name, bundle.manifest.name)
         XCTAssertEqual(vc.viewModel.documentSectionViewModel.bundleURL, bundle.url)
+        XCTAssertEqual(
+            vc.viewModel.documentSectionViewModel.referenceTrackCapabilities,
+            ReferenceBundleTrackCapabilities(bundle: bundle)
+        )
         XCTAssertEqual(vc.viewModel.documentSectionViewModel.selectedChromosome?.name, "chr1")
         XCTAssertEqual(deliveredPayload?[NotificationUserInfoKey.showReads] as? Bool, vc.readStyleSectionViewModel.showReads)
         XCTAssertFalse(vc.readStyleSectionViewModel.supportsConsensusExtraction)
