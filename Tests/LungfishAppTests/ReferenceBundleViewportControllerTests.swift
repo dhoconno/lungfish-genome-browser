@@ -78,6 +78,37 @@ final class ReferenceBundleViewportControllerTests: XCTestCase {
         XCTAssertNil(vc.testSelectedSequenceName)
         XCTAssertEqual(vc.testDetailPlaceholderMessage, "No sequences are available for this reference bundle.")
     }
+
+    func testFocusModeUsesVisibleBackButtonAndRestoresListDetailSelection() throws {
+        let bundleURL = try ReferenceViewportFixture.makeReferenceBundle(
+            name: "Reference",
+            chromosomes: [
+                .init(name: "chr1", length: 100),
+                .init(name: "chr2", length: 200),
+            ],
+            includeAlignment: false,
+            includeVariant: false
+        )
+        let manifest = try BundleManifest.load(from: bundleURL)
+        let vc = ReferenceBundleViewportController()
+        _ = vc.view
+
+        try vc.configureForTesting(input: .directBundle(bundleURL: bundleURL, manifest: manifest))
+        vc.testSelectSequence(named: "chr2")
+
+        vc.testEnterFocusedDetailMode()
+
+        XCTAssertEqual(vc.testPresentationMode, .focusedDetail)
+        XCTAssertEqual(vc.testBackButtonAccessibilityIdentifier, "reference-viewport-back-button")
+        XCTAssertFalse(vc.testBackButtonIsHidden)
+        XCTAssertEqual(vc.testSelectedSequenceName, "chr2")
+
+        vc.testTapBackButton()
+
+        XCTAssertEqual(vc.testPresentationMode, .listDetail)
+        XCTAssertEqual(vc.testSelectedSequenceName, "chr2")
+        XCTAssertFalse(vc.testListContainer.isHidden)
+    }
 }
 
 private enum ReferenceViewportFixture {

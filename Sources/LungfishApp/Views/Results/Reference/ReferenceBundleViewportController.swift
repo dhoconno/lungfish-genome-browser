@@ -175,9 +175,40 @@ public class ReferenceBundleViewportController: NSViewController {
         return label
     }()
 
+    private let focusButton: NSButton = {
+        let button = NSButton(title: "Focus", target: nil, action: nil)
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setAccessibilityIdentifier("reference-viewport-focus-button")
+        button.setAccessibilityLabel("Focus reference detail")
+        return button
+    }()
+
+    private let focusContainer: NSView = {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.isHidden = true
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        return container
+    }()
+
+    private let focusedBackButton: NSButton = {
+        let button = NSButton(title: "Back", target: nil, action: nil)
+        button.bezelStyle = .rounded
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setAccessibilityIdentifier("reference-viewport-back-button")
+        button.setAccessibilityLabel("Back to reference list and detail")
+        return button
+    }()
+
+    private let focusedDetailContainer = NSView()
     private let splitView = TrackedDividerSplitView()
     private let listContainer = NSView()
     private let detailContainer = NSView()
+    private let detailContentContainer = NSView()
+    private var detailContentContainerConstraints: [NSLayoutConstraint] = []
     private let contigTableView = MappingContigTableView()
     private let sequenceTableView = ReferenceSequenceTableView()
 
@@ -206,8 +237,10 @@ public class ReferenceBundleViewportController: NSViewController {
         setupSummaryBar()
         setupContainers()
         setupSplitView()
+        setupFocusContainer()
         layoutSubviews()
         wireCallbacks()
+        applyPresentationMode()
         applyLayoutPreference()
     }
 
@@ -224,16 +257,29 @@ public class ReferenceBundleViewportController: NSViewController {
 
     private func setupSummaryBar() {
         summaryBar.addSubview(summaryLabel)
+        summaryBar.addSubview(focusButton)
         NSLayoutConstraint.activate([
             summaryLabel.leadingAnchor.constraint(equalTo: summaryBar.leadingAnchor, constant: 12),
-            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: summaryBar.trailingAnchor, constant: -12),
+            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: focusButton.leadingAnchor, constant: -12),
             summaryLabel.centerYAnchor.constraint(equalTo: summaryBar.centerYAnchor),
+
+            focusButton.trailingAnchor.constraint(equalTo: summaryBar.trailingAnchor, constant: -12),
+            focusButton.centerYAnchor.constraint(equalTo: summaryBar.centerYAnchor),
             summaryBar.heightAnchor.constraint(equalToConstant: 32),
         ])
     }
 
     private func setupContainers() {
-        [summaryBar, splitView, listContainer, detailContainer, contigTableView, sequenceTableView].forEach {
+        [
+            summaryBar,
+            splitView,
+            listContainer,
+            detailContainer,
+            detailContentContainer,
+            focusedDetailContainer,
+            contigTableView,
+            sequenceTableView,
+        ].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
 
@@ -241,12 +287,13 @@ public class ReferenceBundleViewportController: NSViewController {
 
         listContainer.addSubview(contigTableView)
         listContainer.addSubview(sequenceTableView)
-        detailContainer.addSubview(detailPlaceholderLabel)
+        detailContentContainer.addSubview(detailPlaceholderLabel)
 
         addChild(embeddedViewerController)
         let detailView = embeddedViewerController.view
         detailView.translatesAutoresizingMaskIntoConstraints = false
-        detailContainer.addSubview(detailView, positioned: .below, relativeTo: detailPlaceholderLabel)
+        detailContentContainer.addSubview(detailView, positioned: .below, relativeTo: detailPlaceholderLabel)
+        attachDetailContent(to: detailContainer)
 
         NSLayoutConstraint.activate([
             contigTableView.topAnchor.constraint(equalTo: listContainer.topAnchor),
@@ -259,15 +306,30 @@ public class ReferenceBundleViewportController: NSViewController {
             sequenceTableView.trailingAnchor.constraint(equalTo: listContainer.trailingAnchor),
             sequenceTableView.bottomAnchor.constraint(equalTo: listContainer.bottomAnchor),
 
-            detailView.topAnchor.constraint(equalTo: detailContainer.topAnchor),
-            detailView.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
-            detailView.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
-            detailView.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor),
+            detailView.topAnchor.constraint(equalTo: detailContentContainer.topAnchor),
+            detailView.leadingAnchor.constraint(equalTo: detailContentContainer.leadingAnchor),
+            detailView.trailingAnchor.constraint(equalTo: detailContentContainer.trailingAnchor),
+            detailView.bottomAnchor.constraint(equalTo: detailContentContainer.bottomAnchor),
 
-            detailPlaceholderLabel.centerXAnchor.constraint(equalTo: detailContainer.centerXAnchor),
-            detailPlaceholderLabel.centerYAnchor.constraint(equalTo: detailContainer.centerYAnchor),
-            detailPlaceholderLabel.leadingAnchor.constraint(greaterThanOrEqualTo: detailContainer.leadingAnchor, constant: 24),
-            detailPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: detailContainer.trailingAnchor, constant: -24),
+            detailPlaceholderLabel.centerXAnchor.constraint(equalTo: detailContentContainer.centerXAnchor),
+            detailPlaceholderLabel.centerYAnchor.constraint(equalTo: detailContentContainer.centerYAnchor),
+            detailPlaceholderLabel.leadingAnchor.constraint(greaterThanOrEqualTo: detailContentContainer.leadingAnchor, constant: 24),
+            detailPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: detailContentContainer.trailingAnchor, constant: -24),
+        ])
+    }
+
+    private func setupFocusContainer() {
+        focusContainer.addSubview(focusedBackButton)
+        focusContainer.addSubview(focusedDetailContainer)
+
+        NSLayoutConstraint.activate([
+            focusedBackButton.topAnchor.constraint(equalTo: focusContainer.topAnchor, constant: 10),
+            focusedBackButton.leadingAnchor.constraint(equalTo: focusContainer.leadingAnchor, constant: 12),
+
+            focusedDetailContainer.topAnchor.constraint(equalTo: focusedBackButton.bottomAnchor, constant: 10),
+            focusedDetailContainer.leadingAnchor.constraint(equalTo: focusContainer.leadingAnchor),
+            focusedDetailContainer.trailingAnchor.constraint(equalTo: focusContainer.trailingAnchor),
+            focusedDetailContainer.bottomAnchor.constraint(equalTo: focusContainer.bottomAnchor),
         ])
     }
 
@@ -285,6 +347,7 @@ public class ReferenceBundleViewportController: NSViewController {
     private func layoutSubviews() {
         view.addSubview(summaryBar)
         view.addSubview(splitView)
+        view.addSubview(focusContainer)
 
         NSLayoutConstraint.activate([
             summaryBar.topAnchor.constraint(equalTo: view.topAnchor),
@@ -295,10 +358,20 @@ public class ReferenceBundleViewportController: NSViewController {
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            focusContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            focusContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            focusContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            focusContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
     private func wireCallbacks() {
+        focusButton.target = self
+        focusButton.action = #selector(enterFocusedDetailModeFromControl)
+        focusedBackButton.target = self
+        focusedBackButton.action = #selector(returnToListDetailModeFromControl)
+
         contigTableView.onRowSelected = { [weak self] row in
             self?.displaySelectedContig(row)
         }
@@ -322,6 +395,59 @@ public class ReferenceBundleViewportController: NSViewController {
             name: .mappingLayoutSwapRequested,
             object: nil
         )
+    }
+
+    private func attachDetailContent(to container: NSView) {
+        NSLayoutConstraint.deactivate(detailContentContainerConstraints)
+        if detailContentContainer.superview !== container {
+            detailContentContainer.removeFromSuperview()
+            container.addSubview(detailContentContainer)
+        }
+        detailContentContainerConstraints = [
+            detailContentContainer.topAnchor.constraint(equalTo: container.topAnchor),
+            detailContentContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            detailContentContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            detailContentContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(detailContentContainerConstraints)
+    }
+
+    @objc private func enterFocusedDetailModeFromControl() {
+        enterFocusedDetailMode()
+    }
+
+    @objc private func returnToListDetailModeFromControl() {
+        returnToListDetailMode()
+    }
+
+    private func enterFocusedDetailMode() {
+        guard presentationMode != .focusedDetail else { return }
+        presentationMode = .focusedDetail
+        applyPresentationMode()
+    }
+
+    private func returnToListDetailMode() {
+        guard presentationMode != .listDetail else { return }
+        presentationMode = .listDetail
+        applyPresentationMode()
+        applyLayoutPreference()
+    }
+
+    private func applyPresentationMode() {
+        switch presentationMode {
+        case .listDetail:
+            focusContainer.isHidden = true
+            summaryBar.isHidden = false
+            splitView.isHidden = false
+            focusedBackButton.isHidden = true
+            attachDetailContent(to: detailContainer)
+        case .focusedDetail:
+            attachDetailContent(to: focusedDetailContainer)
+            summaryBar.isHidden = true
+            splitView.isHidden = true
+            focusedBackButton.isHidden = false
+            focusContainer.isHidden = false
+        }
     }
 
     @objc private func handleLayoutPreferenceChanged() {
@@ -395,6 +521,7 @@ public class ReferenceBundleViewportController: NSViewController {
         currentResultDirectoryURL = input.mappingResultDirectoryURL
         loadedViewerBundleURL = nil
         presentationMode = .listDetail
+        applyPresentationMode()
         updateSummaryBar()
 
         switch input.kind {
@@ -792,6 +919,8 @@ extension ReferenceBundleViewportController {
     var testSelectedSequenceName: String? { currentSelectedSequence()?.name }
     var testSelectedContigName: String? { currentSelectedContig()?.contigName }
     var testPresentationMode: PresentationMode { presentationMode }
+    var testBackButtonAccessibilityIdentifier: String? { focusedBackButton.accessibilityIdentifier() }
+    var testBackButtonIsHidden: Bool { focusContainer.isHidden || focusedBackButton.isHidden }
     var testSplitView: TrackedDividerSplitView { splitView }
     var testListContainer: NSView { listContainer }
     var testDetailContainer: NSView { detailContainer }
@@ -817,6 +946,14 @@ extension ReferenceBundleViewportController {
 
     func testSelectSequence(named name: String) {
         _ = selectSequence(named: name)
+    }
+
+    func testEnterFocusedDetailMode() {
+        enterFocusedDetailMode()
+    }
+
+    func testTapBackButton() {
+        focusedBackButton.performClick(nil)
     }
 
     func testApplySequenceFilter(_ filter: String) {
