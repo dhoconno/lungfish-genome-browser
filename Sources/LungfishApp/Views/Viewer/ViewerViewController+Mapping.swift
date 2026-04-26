@@ -94,11 +94,72 @@ extension ViewerViewController {
         )
     }
 
+    func displayReferenceBundleViewport(_ input: ReferenceBundleViewportInput) throws {
+        hideQuickLookPreview()
+        hideFASTQDatasetView()
+        hideVCFDatasetView()
+        hideFASTACollectionView()
+        hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
+        hideNaoMgsView()
+        hideNvdView()
+        hideAssemblyView()
+        hideMappingView()
+        clearBundleDisplay()
+        hideCollectionBackButton()
+        contentMode = .mapping
+
+        let controller = ReferenceBundleViewportController()
+        addChild(controller)
+
+        annotationDrawerView?.isHidden = true
+        fastqMetadataDrawerView?.isHidden = true
+
+        let referenceView = controller.view
+        referenceView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(referenceView)
+
+        NSLayoutConstraint.activate([
+            referenceView.topAnchor.constraint(equalTo: view.topAnchor),
+            referenceView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            referenceView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            referenceView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        do {
+            try controller.configure(input: input)
+        } catch {
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            throw error
+        }
+
+        referenceBundleViewportController = controller
+
+        enhancedRulerView.isHidden = true
+        viewerView.isHidden = true
+        headerView.isHidden = true
+        statusBar.isHidden = true
+        geneTabBarView.isHidden = true
+
+        mappingDisplayLogger.info(
+            "displayReferenceBundleViewport: Showing \(input.documentTitle, privacy: .public)"
+        )
+    }
+
     public func hideMappingView() {
-        guard let controller = mappingResultController else { return }
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
-        mappingResultController = nil
+        if let controller = mappingResultController {
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            mappingResultController = nil
+        }
+
+        if let controller = referenceBundleViewportController {
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            referenceBundleViewportController = nil
+        }
 
         enhancedRulerView.isHidden = false
         viewerView.isHidden = false

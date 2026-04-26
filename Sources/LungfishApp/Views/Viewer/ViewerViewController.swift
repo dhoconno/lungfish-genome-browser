@@ -83,6 +83,9 @@ public class ViewerViewController: NSViewController {
     /// Mapping result browser (shown in place of the sequence viewer for mapping analyses)
     var mappingResultController: MappingResultViewController?
 
+    /// Shared reference bundle viewport (shown for direct `.lungfishref` bundle opens)
+    var referenceBundleViewportController: ReferenceBundleViewportController?
+
     /// Whether this viewer should publish app-wide viewport notifications.
     ///
     /// Embedded viewers, such as the mapping detail viewer, use the same

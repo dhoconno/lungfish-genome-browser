@@ -2351,7 +2351,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         // Reference genome bundles (.lungfishref)
         if item.type == .referenceBundle, let url = item.url {
-            displayReferenceBundle(at: url)
+            displayReferenceBundleViewportFromSidebar(at: url)
             return
         }
 
@@ -2434,24 +2434,9 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
     }
 
-    /// Display reference bundle using the ViewerViewController's bundle display system.
-    ///
-    /// Top-level bundle opens route through the explicit bundle browser mode so
-    /// `.lungfishref` documents land in the list/detail browser first.
-    private func displayReferenceBundle(at url: URL, forceReload: Bool = false) {
-        if !forceReload,
-           viewerController.currentBundleDataProvider != nil,
-           viewerController.currentBundleURL?.standardizedFileURL == url.standardizedFileURL {
-            if viewerController.bundleBrowserController != nil {
-                logger.debug("displayReferenceBundle: '\(url.lastPathComponent, privacy: .public)' already displayed in browse mode, skipping reload")
-                viewerController.openAnnotationDrawerIfBundleHasData()
-                return
-            }
-
-            logger.debug("displayReferenceBundle: '\(url.lastPathComponent, privacy: .public)' already displayed in sequence mode, restoring browse mode")
-        }
-
-        logger.info("displayReferenceBundle: Opening '\(url.lastPathComponent, privacy: .public)'")
+    /// Display a direct reference bundle in the shared list/detail reference viewport.
+    private func displayReferenceBundleViewportFromSidebar(at url: URL, forceReload: Bool = false) {
+        logger.info("displayReferenceBundleViewport: Opening '\(url.lastPathComponent, privacy: .public)'")
 
         activityIndicator.show(
             message: "Loading \(url.lastPathComponent)...",
@@ -2465,18 +2450,17 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 defer { self.activityIndicator.hide() }
 
                 do {
-                    try self.viewerController.displayBundle(at: url, mode: .browse)
-                    logger.info("displayReferenceBundle: Bundle displayed successfully")
+                    let manifest = try BundleManifest.load(from: url)
+                    let input = ReferenceBundleViewportInput.directBundle(
+                        bundleURL: url,
+                        manifest: manifest
+                    )
+                    self.inspectorController.clearSelection()
+                    try self.viewerController.displayReferenceBundleViewport(input)
+                    logger.info("displayReferenceBundleViewport: Bundle displayed successfully")
                 } catch {
-                    logger.error("displayReferenceBundle: Failed - \(error.localizedDescription, privacy: .public)")
-                    let alert = NSAlert()
-                    alert.messageText = "Failed to Open Reference Bundle"
-                    alert.informativeText = error.localizedDescription
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    if let window = self.view.window ?? NSApp.keyWindow {
-                        alert.beginSheetModal(for: window)
-                    }
+                    logger.error("displayReferenceBundleViewport: Failed - \(error.localizedDescription, privacy: .public)")
+                    self.viewerController.clearViewport(statusMessage: "Unable to load reference bundle.")
                 }
             }
         }
@@ -3609,7 +3593,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     DispatchQueue.main.async { [weak self, weak viewerController] in
                         MainActor.assumeIsolated {
                             viewerController?.hideProgress()
-                            self?.displayReferenceBundle(at: bundleURL)
+                            self?.displayReferenceBundleViewportFromSidebar(at: bundleURL)
                         }
                     }
 
@@ -3755,7 +3739,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 // Reload the bundle in the viewer (force reload since URL hasn't changed)
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
-                        self?.displayReferenceBundle(at: bundleURL, forceReload: true)
+                        self?.displayReferenceBundleViewportFromSidebar(at: bundleURL, forceReload: true)
                     }
                 }
 
