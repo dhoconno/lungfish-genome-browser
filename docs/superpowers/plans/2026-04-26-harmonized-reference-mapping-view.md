@@ -90,6 +90,36 @@ final class ReferenceBundleViewportInputTests: XCTestCase {
         XCTAssertEqual(input.mappingResultDirectoryURL, resultDirectory.standardizedFileURL)
         XCTAssertTrue(input.hasMappingRunContext)
     }
+
+    func testMappingInputWithoutViewerBundlePreservesUnavailableRenderableBundleState() throws {
+        let resultDirectory = URL(fileURLWithPath: "/tmp/project/Analyses/minimap2-run", isDirectory: true)
+        let bam = resultDirectory.appendingPathComponent("sample.sorted.bam")
+        let result = MappingResult(
+            mapper: .minimap2,
+            modeID: MappingMode.defaultShortRead.id,
+            sourceReferenceBundleURL: nil,
+            viewerBundleURL: nil,
+            bamURL: bam,
+            baiURL: resultDirectory.appendingPathComponent("sample.sorted.bam.bai"),
+            totalReads: 10,
+            mappedReads: 9,
+            unmappedReads: 1,
+            wallClockSeconds: 1.0,
+            contigs: []
+        )
+
+        let input = ReferenceBundleViewportInput.mappingResult(
+            result: result,
+            resultDirectoryURL: resultDirectory,
+            provenance: nil as MappingProvenance?
+        )
+
+        XCTAssertNil(input.renderedBundleURL)
+        XCTAssertEqual(input.documentTitle, "minimap2-run")
+        XCTAssertEqual(input.mappingResult, result)
+        XCTAssertEqual(input.mappingResultDirectoryURL, resultDirectory.standardizedFileURL)
+        XCTAssertTrue(input.hasMappingRunContext)
+    }
 }
 ```
 
@@ -115,7 +145,7 @@ struct ReferenceBundleViewportInput: Equatable {
     }
 
     let kind: Kind
-    let renderedBundleURL: URL
+    let renderedBundleURL: URL?
     let manifest: BundleManifest?
     let mappingResult: MappingResult?
     let mappingResultDirectoryURL: URL?
@@ -124,7 +154,8 @@ struct ReferenceBundleViewportInput: Equatable {
     var documentTitle: String {
         manifest?.name
             ?? mappingResultDirectoryURL?.lastPathComponent
-            ?? renderedBundleURL.deletingPathExtension().lastPathComponent
+            ?? renderedBundleURL?.deletingPathExtension().lastPathComponent
+            ?? "Reference Bundle"
     }
 
     var hasMappingRunContext: Bool {
@@ -152,7 +183,7 @@ struct ReferenceBundleViewportInput: Equatable {
     ) -> ReferenceBundleViewportInput {
         ReferenceBundleViewportInput(
             kind: .mappingResult,
-            renderedBundleURL: result.viewerBundleURL?.standardizedFileURL ?? result.bamURL.deletingLastPathComponent().standardizedFileURL,
+            renderedBundleURL: result.viewerBundleURL?.standardizedFileURL,
             manifest: nil,
             mappingResult: result,
             mappingResultDirectoryURL: resultDirectoryURL?.standardizedFileURL,
@@ -166,7 +197,7 @@ struct ReferenceBundleViewportInput: Equatable {
 
 Run: `swift test --filter ReferenceBundleViewportInputTests`
 
-Expected: PASS.
+Expected: PASS with 3 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -297,7 +328,8 @@ final class ReferenceBundleViewportController: NSViewController {
     func configure(input: ReferenceBundleViewportInput) throws {
         currentInput = input
         presentationMode = .listDetail
-        // Load BundleManifest from input.renderedBundleURL if input.manifest is nil.
+        // If input.renderedBundleURL is nil, show the existing mapping-unavailable placeholder.
+        // Otherwise load BundleManifest from input.renderedBundleURL if input.manifest is nil.
         // Load BundleBrowserLoader summary.
         // Configure the sequence list.
         // Select first row and call displaySelectedSequence.
