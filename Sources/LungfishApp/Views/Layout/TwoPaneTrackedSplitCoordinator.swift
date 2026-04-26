@@ -87,6 +87,7 @@ final class TwoPaneTrackedSplitCoordinator {
             minimumTrailingExtent: minimumExtents.trailing
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
+        applySplitFrames(in: splitView, leadingExtent: clampedPosition)
         didSetInitialSplitPosition = true
         needsInitialSplitValidation = false
         afterApply?()

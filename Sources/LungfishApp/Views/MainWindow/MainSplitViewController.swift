@@ -2192,7 +2192,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             || viewerController.taxonomyViewController != nil
             || viewerController.fastqDatasetController != nil
             || viewerController.assemblyResultController != nil
-            || viewerController.mappingResultController != nil
+            || viewerController.activeMappingViewportController != nil
     }
 
     /// Heuristic for whether the current sidebar selection callback was user-initiated.
