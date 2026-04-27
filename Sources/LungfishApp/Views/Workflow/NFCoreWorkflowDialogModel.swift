@@ -13,6 +13,7 @@ final class NFCoreWorkflowDialogModel {
         let exampleUseCase: String
         let provenanceText: String
         let runButtonTitle: String
+        let pinnedVersionText: String
         let keyParameters: [NFCoreWorkflowParameter]
     }
 
@@ -52,7 +53,7 @@ final class NFCoreWorkflowDialogModel {
         self.inputCandidates = []
         if let workflow = workflows.first {
             self.version = workflow.pinnedVersion
-            self.parameterValues = workflow.defaultParams
+            self.parameterValues = workflow.defaultParameterValues
             self.inputCandidates = Self.filterInputCandidates(allInputCandidates, for: workflow)
         }
     }
@@ -61,7 +62,7 @@ final class NFCoreWorkflowDialogModel {
         guard let workflow = availableWorkflows.first(where: { $0.name == name || $0.fullName == name }) else { return }
         selectedWorkflow = workflow
         version = workflow.pinnedVersion
-        parameterValues = workflow.defaultParams
+        parameterValues = workflow.defaultParameterValues
         inputCandidates = Self.filterInputCandidates(allInputCandidates, for: workflow)
         selectedInputURLs = selectedInputURLs.filter { selectedURL in
             inputCandidates.contains { $0.url.standardizedFileURL == selectedURL.standardizedFileURL }
@@ -80,6 +81,7 @@ final class NFCoreWorkflowDialogModel {
                 exampleUseCase: "",
                 provenanceText: "",
                 runButtonTitle: "Run",
+                pinnedVersionText: "",
                 keyParameters: []
             )
         }
@@ -93,6 +95,7 @@ final class NFCoreWorkflowDialogModel {
             exampleUseCase: selectedWorkflow.exampleUseCase,
             provenanceText: "Lungfish will record the exact nf-core workflow, pinned workflow version, runtime, inputs, outputs, and parameters with the run.",
             runButtonTitle: selectedWorkflow.runButtonTitle,
+            pinnedVersionText: "App-pinned version: \(selectedWorkflow.pinnedVersion)",
             keyParameters: selectedWorkflow.keyParameters
         )
     }

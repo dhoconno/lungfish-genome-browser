@@ -53,6 +53,10 @@ public struct NFCoreSupportedWorkflow: Codable, Sendable, Equatable, Identifiabl
 
     public var fullName: String { "nf-core/\(name)" }
     public var documentationURL: URL { URL(string: "https://nf-co.re/\(name)")! }
+    public var defaultParameterValues: [String: String] {
+        Dictionary(uniqueKeysWithValues: keyParameters.map { ($0.name, $0.defaultValue) })
+            .merging(defaultParams) { _, override in override }
+    }
 
     public init(
         name: String,
@@ -124,7 +128,10 @@ public enum NFCoreSupportedWorkflowCatalog {
             exampleUseCase: "Example: download SRR11605097 or a PRJNA study from a paper so those reads can be checked or analyzed in this project.",
             runButtonTitle: "Download Reads",
             acceptedInputSuffixes: [".csv", ".tsv", ".txt"],
-            defaultParams: ["download_method": "sratools"],
+            keyParameters: [
+                NFCoreWorkflowParameter(name: "download_method", displayName: "Download method", defaultValue: "sratools", help: "Backend used by nf-core/fetchngs to retrieve reads."),
+                NFCoreWorkflowParameter(name: "nf_core_pipeline", displayName: "Output samplesheet type", defaultValue: "none", help: "Optional downstream nf-core samplesheet format to generate."),
+            ],
             difficulty: .easy,
             resultSurfaces: [.fastqDatasets, .reports]
         ),
@@ -170,6 +177,9 @@ public enum NFCoreSupportedWorkflowCatalog {
             exampleUseCase: "Example: the sequencing core delivered new Illumina FASTQs and you want to see whether they are usable before analysis.",
             runButtonTitle: "Inspect Quality",
             acceptedInputSuffixes: [".fastq", ".fq", ".fastq.gz", ".fq.gz"],
+            keyParameters: [
+                NFCoreWorkflowParameter(name: "skip_fastqc", displayName: "Skip FastQC", defaultValue: "false", help: "Set to true to skip FastQC when only other report outputs are needed."),
+            ],
             difficulty: .easy,
             resultSurfaces: [.reports]
         ),
@@ -313,5 +323,4 @@ public enum NFCoreSupportedWorkflowCatalog {
             .lowercased()
         return allCurated.first { $0.name == name }
     }
-
 }

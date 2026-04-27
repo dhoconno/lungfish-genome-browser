@@ -79,7 +79,7 @@ final class NFCoreWorkflowDialogModelTests: XCTestCase {
         XCTAssertTrue(model.selectedWorkflowDetail.expectedOutputs.contains("ready-to-use FASTQ"))
         XCTAssertTrue(model.selectedWorkflowDetail.exampleUseCase.contains("SRR"))
         XCTAssertFalse(model.selectedWorkflowDetail.overview.localizedCaseInsensitiveContains("nf-core"))
-        XCTAssertTrue(model.selectedWorkflowDetail.keyParameters.isEmpty)
+        XCTAssertTrue(model.selectedWorkflowDetail.keyParameters.contains { $0.name == "download_method" })
         XCTAssertTrue(model.inputCandidates.map(\.displayName).contains("accessions.csv"))
         XCTAssertFalse(model.inputCandidates.map(\.displayName).contains("reads.fastq.gz"))
 
@@ -91,7 +91,7 @@ final class NFCoreWorkflowDialogModelTests: XCTestCase {
         XCTAssertTrue(request.commandPreview.contains("-r \(request.version)"))
     }
 
-    func testSelectingWorkflowRefreshesFilteredInputsAndHidesTechnicalParameters() throws {
+    func testSelectingWorkflowRefreshesFilteredInputsAndKeyParameters() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("nfcore-filter-model-\(UUID().uuidString)", isDirectory: true)
         let project = root.appendingPathComponent("Demo.lungfish", isDirectory: true)
@@ -109,7 +109,7 @@ final class NFCoreWorkflowDialogModelTests: XCTestCase {
         model.selectWorkflow(named: "seqinspector")
 
         XCTAssertEqual(model.inputCandidates.map(\.displayName), ["reads.fastq.gz"])
-        XCTAssertTrue(model.selectedWorkflowDetail.keyParameters.isEmpty)
+        XCTAssertTrue(model.selectedWorkflowDetail.keyParameters.contains { $0.name == "skip_fastqc" })
     }
 
     func testFirstWaveWorkflowDetailsUsePlainLanguageTitlesAndExamples() {
@@ -124,7 +124,6 @@ final class NFCoreWorkflowDialogModelTests: XCTestCase {
             XCTAssertFalse(model.selectedWorkflowDetail.requiredInputs.localizedCaseInsensitiveContains("--input"), workflow.name)
             XCTAssertFalse(model.selectedWorkflowDetail.expectedOutputs.localizedCaseInsensitiveContains("adapter"), workflow.name)
             XCTAssertFalse(model.selectedWorkflowDetail.exampleUseCase.isEmpty, workflow.name)
-            XCTAssertTrue(model.selectedWorkflowDetail.keyParameters.isEmpty, workflow.name)
         }
     }
 }
