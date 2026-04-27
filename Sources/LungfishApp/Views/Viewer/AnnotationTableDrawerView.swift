@@ -492,7 +492,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let tooManyLabel = NSTextField(wrappingLabelWithString: "")
     private let allTypesButton = NSButton()
     private let noneTypesButton = NSButton()
-    private let annotationViewportFilterButton = NSButton(checkboxWithTitle: "Viewport: Filtered", target: nil, action: nil)
+    private let annotationViewportFilterButton = NSButton()
     private let presetFiltersToggleButton = NSButton()
     private let searchBuilderButton = NSButton()
     private let localVariantFilterBadgeLabel = NSTextField(labelWithString: "Local: Visible Rows")
@@ -752,8 +752,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         allTypesButton.translatesAutoresizingMaskIntoConstraints = false
         searchBar.addSubview(allTypesButton)
 
+        annotationViewportFilterButton.title = "Viewport"
+        annotationViewportFilterButton.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter viewport")
+        annotationViewportFilterButton.imagePosition = .imageLeading
         annotationViewportFilterButton.font = .systemFont(ofSize: 10, weight: .medium)
         annotationViewportFilterButton.controlSize = .small
+        annotationViewportFilterButton.bezelStyle = .recessed
+        annotationViewportFilterButton.setButtonType(.toggle)
         annotationViewportFilterButton.target = self
         annotationViewportFilterButton.action = #selector(annotationViewportFilterToggled(_:))
         annotationViewportFilterButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1447,7 +1452,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         }
         updateVariantToolbarDensity()
         annotationFilterField.isHidden = activeTab != .annotations
-        annotationViewportFilterButton.isHidden = activeTab != .annotations || toolbarDensity == .minimal
+        annotationViewportFilterButton.isHidden = activeTab != .annotations
         annotationViewportFilterButton.state = annotationViewportFilterEnabled ? .on : .off
         variantFilterField.isHidden = true  // Always hidden; Query Builder writes to variantFilterText directly
         sampleFilterField.isHidden = true  // Samples use Query Builder; free-text field hidden to reduce toolbar density
@@ -3228,6 +3233,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         annotationViewportFilterEnabled = enabled
         annotationViewportFilterButton.state = enabled ? .on : .off
         emitVisibleAnnotationRenderKeyUpdateIfNeeded()
+    }
+
+    var isAnnotationViewportFilterControlVisible: Bool {
+        !annotationViewportFilterButton.isHidden
     }
 
     private struct AnnotationFilterQuery {

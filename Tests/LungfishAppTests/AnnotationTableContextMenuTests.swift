@@ -440,6 +440,17 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         XCTAssertEqual(delegate.visibleAnnotationRenderKeys, ["annotations:1"])
     }
 
+    func testAnnotationViewportFilterControlRemainsVisibleInMinimalToolbarDensity() throws {
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t200\tgene-a\t0\t+\t100\t200\t0,0,0\t1\t100\t0\tgene\tgene=gene-a"
+        ])
+        drawer.frame = NSRect(x: 0, y: 0, width: 520, height: 200)
+        drawer.switchToTab(.annotations)
+        drawer.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(drawer.isAnnotationViewportFilterControlVisible)
+    }
+
     func testAnnotationContextMenuExposesEditForSingleDatabaseAnnotation() throws {
         let drawer = try createDrawerWithDatabase(lines: [
             "chr1\t100\t200\tgene-a\t0\t+\t100\t200\t0,0,0\t1\t100\t0\tgene\tgene=gene-a"
