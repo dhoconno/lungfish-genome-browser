@@ -544,6 +544,23 @@ final class WorkflowCommandRegressionTests: XCTestCase {
         XCTAssertEqual(command.version, "1.2.3")
         XCTAssertTrue(command.prepareOnly)
     }
+
+    func testNFCoreRequestUsesPinnedVersionWhenVersionOmitted() throws {
+        let workflow = try XCTUnwrap(NFCoreSupportedWorkflowCatalog.workflow(named: "seqinspector"))
+        let request = NFCoreRunRequest(
+            workflow: workflow,
+            version: "",
+            executor: .docker,
+            inputURLs: [URL(fileURLWithPath: "/tmp/sample.fastq.gz")],
+            outputDirectory: URL(fileURLWithPath: "/tmp/results")
+        )
+
+        XCTAssertEqual(request.version, workflow.pinnedVersion)
+        XCTAssertEqual(request.manifest().workflowPinnedVersion, workflow.pinnedVersion)
+        XCTAssertTrue(request.nextflowArguments.contains("-r"))
+        XCTAssertTrue(request.nextflowArguments.contains(workflow.pinnedVersion))
+        XCTAssertTrue(request.cliArguments(bundlePath: URL(fileURLWithPath: "/tmp/run.lungfishrun")).contains(workflow.pinnedVersion))
+    }
 }
 
 // MARK: - FetchCommand

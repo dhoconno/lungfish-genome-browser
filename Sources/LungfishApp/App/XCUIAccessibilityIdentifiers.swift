@@ -132,9 +132,18 @@ enum MainMenuAccessibilityID {
 
 enum NFCoreWorkflowAccessibilityID {
     static let window = "nf-core-workflow-dialog"
+    static let workflowList = "nf-core-workflow-list"
     static let workflowPicker = "nf-core-workflow-picker"
+    static let detailTitle = "nf-core-workflow-detail-title"
+    static let usageText = "nf-core-workflow-usage"
+    static let fetchngsUsageText = "nf-core-fetchngs-usage"
+    static let requiredInputsText = "nf-core-required-inputs"
+    static let expectedOutputsText = "nf-core-expected-outputs"
+    static let versionLabel = "nf-core-version-label"
     static let executorPicker = "nf-core-executor-picker"
     static let versionField = "nf-core-version-field"
+    static let parameterStack = "nf-core-parameter-stack"
+    static let commandPreview = "nf-core-command-preview"
     static let inputTable = "nf-core-input-table"
     static let selectAllButton = "nf-core-select-all-inputs"
     static let clearButton = "nf-core-clear-inputs"
