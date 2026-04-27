@@ -92,7 +92,8 @@ public struct NFCoreRunRequest: Sendable, Codable, Equatable {
         presentationMode: NFCoreRunPresentationMode = .genericReport
     ) {
         self.workflow = workflow
-        self.version = version
+        let trimmedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.version = trimmedVersion.isEmpty ? workflow.pinnedVersion : trimmedVersion
         self.executor = executor
         self.inputURLs = inputURLs.map(\.standardizedFileURL)
         self.outputDirectory = outputDirectory.standardizedFileURL
@@ -107,6 +108,7 @@ public struct NFCoreRunRequest: Sendable, Codable, Equatable {
             executor: executor,
             params: effectiveParams,
             outputDirectoryName: outputDirectory.lastPathComponent,
+            workflowPinnedVersion: workflow.pinnedVersion,
             createdAt: createdAt
         )
     }

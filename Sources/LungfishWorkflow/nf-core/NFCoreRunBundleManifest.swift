@@ -14,6 +14,9 @@ public struct NFCoreRunBundleManifest: Codable, Sendable, Equatable {
     public let workflowDisplayName: String
     public let workflowDescription: String
     public let version: String
+    public let workflowPinnedVersion: String?
+    public let appVersion: String?
+    public let appBuildVersion: String?
     public let executor: NFCoreExecutor
     public let params: [String: String]
     public let outputDirectoryName: String
@@ -28,6 +31,9 @@ public struct NFCoreRunBundleManifest: Codable, Sendable, Equatable {
         executor: NFCoreExecutor,
         params: [String: String],
         outputDirectoryName: String,
+        workflowPinnedVersion: String? = nil,
+        appVersion: String? = nil,
+        appBuildVersion: String? = nil,
         createdAt: Date = Date()
     ) {
         self.schemaVersion = Self.schemaVersion
@@ -35,6 +41,9 @@ public struct NFCoreRunBundleManifest: Codable, Sendable, Equatable {
         self.workflowDisplayName = workflow.fullName
         self.workflowDescription = workflow.description
         self.version = version
+        self.workflowPinnedVersion = workflowPinnedVersion ?? workflow.pinnedVersion
+        self.appVersion = appVersion ?? Self.hostAppVersion
+        self.appBuildVersion = appBuildVersion ?? Self.hostAppBuildVersion
         self.executor = executor
         self.params = params
         self.outputDirectoryName = outputDirectoryName
@@ -47,6 +56,14 @@ public struct NFCoreRunBundleManifest: Codable, Sendable, Equatable {
             params: params
         )
         self.createdAt = createdAt
+    }
+
+    private static var hostAppVersion: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    }
+
+    private static var hostAppBuildVersion: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
     }
 }
 

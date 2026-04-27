@@ -46,12 +46,12 @@ struct AboutAcknowledgements {
             sections.append(Section(title: pack.name, entries: entries))
         }
 
-        let nfCoreEntries = NFCoreSupportedWorkflowCatalog.firstWave.map { workflow in
+        let nfCoreEntries = (NFCoreSupportedWorkflowCatalog.firstWave + NFCoreSupportedWorkflowCatalog.legacyWorkflows).map { workflow in
             Entry(
                 id: "nf-core-\(workflow.name)",
                 displayName: workflow.fullName,
-                detail: workflow.difficulty.displayName,
-                secondaryDetail: "Nextflow workflow",
+                detail: "Pinned \(workflow.pinnedVersion)",
+                secondaryDetail: "\(workflow.difficulty.displayName) Nextflow workflow",
                 sourceURL: workflow.documentationURL.absoluteString
             )
         }

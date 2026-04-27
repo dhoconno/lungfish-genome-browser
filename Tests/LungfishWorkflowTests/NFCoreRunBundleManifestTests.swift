@@ -27,6 +27,7 @@ final class NFCoreRunBundleManifestTests: XCTestCase {
         XCTAssertEqual(roundTrip.workflowName, "viralrecon")
         XCTAssertEqual(roundTrip.workflowDisplayName, "nf-core/viralrecon")
         XCTAssertEqual(roundTrip.version, "2.7.0")
+        XCTAssertEqual(roundTrip.workflowPinnedVersion, workflow.pinnedVersion)
         XCTAssertEqual(roundTrip.executor, .docker)
         XCTAssertEqual(roundTrip.resultSurfaces, workflow.resultSurfaces)
         XCTAssertTrue(roundTrip.commandPreview.contains("nextflow run nf-core/viralrecon"))

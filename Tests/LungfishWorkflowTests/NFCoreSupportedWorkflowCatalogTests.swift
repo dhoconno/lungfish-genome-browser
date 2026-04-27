@@ -11,7 +11,6 @@ final class NFCoreSupportedWorkflowCatalogTests: XCTestCase {
             "references",
             "nanoseq",
             "viralrecon",
-            "vipr",
         ]
 
         XCTAssertEqual(NFCoreSupportedWorkflowCatalog.firstWave.map(\.name), expectedNames)
@@ -32,6 +31,15 @@ final class NFCoreSupportedWorkflowCatalogTests: XCTestCase {
         XCTAssertEqual(scrnaseq?.difficulty, .hard)
         XCTAssertEqual(scrnaseq?.resultSurfaces, [.singleCell])
         XCTAssertEqual(scrnaseq?.supportedAdapterIDs, ["generic-report"])
+    }
+
+    func testLegacyWorkflowsStayLookupableWithoutAppearingInFirstWave() {
+        XCTAssertFalse(NFCoreSupportedWorkflowCatalog.firstWave.map(\.name).contains("vipr"))
+        XCTAssertEqual(NFCoreSupportedWorkflowCatalog.legacyWorkflows.map(\.name), ["vipr"])
+
+        let workflow = NFCoreSupportedWorkflowCatalog.workflow(named: "nf-core/vipr")
+        XCTAssertEqual(workflow?.name, "vipr")
+        XCTAssertEqual(workflow?.isLegacy, true)
     }
 
     func testWorkflowLookupAcceptsFullNFCoreNames() {
