@@ -474,6 +474,9 @@ public class SequenceViewerView: NSView {
     /// Optional row-level variant render filter from the drawer (`trackId:variantRowId`).
     /// `nil` means render all variants that pass inspector filters.
     private var localVariantRenderFilterKeys: Set<String>?
+    /// Optional row-level annotation render filter from the drawer (`trackId:annotationRowId`).
+    /// `nil` means render all annotations that pass inspector filters.
+    private var localAnnotationRenderFilterKeys: Set<String>?
     /// Cached genotype dataset after applying table-synced row filtering.
     private var _cachedFilteredGenotypeData: GenotypeDisplayData?
 
@@ -580,6 +583,14 @@ public class SequenceViewerView: NSView {
         lastHoveredGenotypeTooltipText = nil
         lastHoveredGenotypeStatusText = nil
         invalidateFilteredVariantCache()
+    }
+
+    /// Updates the optional drawer-local annotation render filter and invalidates cached annotation drawing.
+    func setLocalAnnotationRenderFilterKeys(_ keys: Set<String>?) {
+        guard localAnnotationRenderFilterKeys != keys else { return }
+        localAnnotationRenderFilterKeys = keys
+        hoveredAnnotation = nil
+        invalidateAnnotationTile()
     }
 
     /// Total height of the translation track area.
@@ -1412,6 +1423,7 @@ public class SequenceViewerView: NSView {
         self.cachedVariantRegion = nil
         self.cachedCDSTranslations = [:]
         self.cachedCDSCodingContexts = [:]
+        self.localAnnotationRenderFilterKeys = nil
         self.localVariantRenderFilterKeys = nil
         self.invalidateFilteredVariantCache()
         self.isFetchingBundleData = false
@@ -1587,6 +1599,7 @@ public class SequenceViewerView: NSView {
         self.cachedVariantRegion = nil
         self.cachedCDSTranslations = [:]
         self.cachedCDSCodingContexts = [:]
+        self.localAnnotationRenderFilterKeys = nil
         self.localVariantRenderFilterKeys = nil
         self.invalidateFilteredVariantCache()
         self.cachedGenotypeData = nil
@@ -2311,7 +2324,11 @@ public class SequenceViewerView: NSView {
                         end: expandedRegion.end,
                         limit: 50_000
                     )
-                    let annotations = records.map { $0.toAnnotation() }
+                    let annotations = records.map { record -> SequenceAnnotation in
+                        var annotation = record.toAnnotation()
+                        annotation.qualifiers["annotation_db_track_id"] = AnnotationQualifier(trackId)
+                        return annotation
+                    }
                     allAnnotations.append(contentsOf: annotations)
                     logger.info("fetchAnnotationsAsync: SQLite query returned \(annotations.count) annotations for track \(trackId)")
                 } catch {
@@ -3863,11 +3880,19 @@ public class SequenceViewerView: NSView {
         }
 
         // Apply type filter if set
-        let filteredAnnotations: [SequenceAnnotation]
+        var filteredAnnotations: [SequenceAnnotation]
         if let typeFilter = visibleAnnotationTypes {
             filteredAnnotations = visibleAnnotations.filter { typeFilter.contains($0.type) }
         } else {
             filteredAnnotations = visibleAnnotations
+        }
+
+        if let localKeys = localAnnotationRenderFilterKeys {
+            filteredAnnotations = filteredAnnotations.filter { annotation in
+                guard let trackId = annotation.qualifiers["annotation_db_track_id"]?.values.first,
+                      let rowId = annotation.qualifiers["annotation_db_row_id"]?.values.first else { return false }
+                return localKeys.contains("\(trackId):\(rowId)")
+            }
         }
 
         // Apply text filter if set

@@ -143,6 +143,7 @@ protocol AnnotationTableDrawerDelegate: AnyObject {
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int)
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didResolveGeneRegions regions: [GeneRegion])
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleVariantRenderKeys keys: Set<String>?)
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleAnnotationRenderKeys keys: Set<String>?)
     func annotationDrawerDidDragDivider(_ drawer: AnnotationTableDrawerView, deltaY: CGFloat)
     func annotationDrawerDidFinishDraggingDivider(_ drawer: AnnotationTableDrawerView)
     func annotationDrawer(
@@ -157,6 +158,8 @@ extension AnnotationTableDrawerDelegate {
     func annotationDrawerSelectedSequenceRegion(_ drawer: AnnotationTableDrawerView) -> AnnotationTableDrawerSelectionRegion? {
         nil
     }
+
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleAnnotationRenderKeys keys: Set<String>?) {}
 
     func annotationDrawer(
         _ drawer: AnnotationTableDrawerView,
@@ -376,6 +379,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Specific annotation region selected by the user (e.g., via "Show Overlapping Variants").
     private var selectedAnnotationRegion: (chromosome: String, start: Int, end: Int)?
 
+    /// When enabled, the sequence viewport renders only annotation rows visible in this table.
+    private var annotationViewportFilterEnabled = false
+
     // MARK: - Sample Tab State
 
     /// All sample names from variant databases.
@@ -486,6 +492,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let tooManyLabel = NSTextField(wrappingLabelWithString: "")
     private let allTypesButton = NSButton()
     private let noneTypesButton = NSButton()
+    private let annotationViewportFilterButton = NSButton(checkboxWithTitle: "Viewport: Filtered", target: nil, action: nil)
     private let presetFiltersToggleButton = NSButton()
     private let searchBuilderButton = NSButton()
     private let localVariantFilterBadgeLabel = NSTextField(labelWithString: "Local: Visible Rows")
@@ -595,6 +602,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private var fallbackConsequenceCache: [String: (consequence: String?, aaChange: String?)] = [:]
     /// Last local variant key set emitted to the viewer for viewport render syncing.
     private var lastEmittedVisibleVariantRenderKeys: Set<String>?
+    /// Last local annotation key set emitted to the viewer for viewport render syncing.
+    private var lastEmittedVisibleAnnotationRenderKeys: Set<String>?
     /// Column configuration popover (gear menu).
     var columnConfigPopover: NSPopover?
 
@@ -742,6 +751,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         allTypesButton.action = #selector(selectAllTypes(_:))
         allTypesButton.translatesAutoresizingMaskIntoConstraints = false
         searchBar.addSubview(allTypesButton)
+
+        annotationViewportFilterButton.font = .systemFont(ofSize: 10, weight: .medium)
+        annotationViewportFilterButton.controlSize = .small
+        annotationViewportFilterButton.target = self
+        annotationViewportFilterButton.action = #selector(annotationViewportFilterToggled(_:))
+        annotationViewportFilterButton.translatesAutoresizingMaskIntoConstraints = false
+        annotationViewportFilterButton.toolTip = "When enabled, the viewport shows only the annotations currently visible in this table."
+        annotationViewportFilterButton.setAccessibilityLabel("Filter viewport to visible annotation rows")
+        searchBar.addSubview(annotationViewportFilterButton)
 
         noneTypesButton.title = "None"
         noneTypesButton.font = .systemFont(ofSize: 10, weight: .medium)
@@ -1067,7 +1085,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             annotationFilterField.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             annotationFilterField.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
             annotationFilterField.heightAnchor.constraint(equalToConstant: 24),
-            annotationFilterField.trailingAnchor.constraint(lessThanOrEqualTo: allTypesButton.leadingAnchor, constant: -8),
+            annotationFilterField.trailingAnchor.constraint(lessThanOrEqualTo: annotationViewportFilterButton.leadingAnchor, constant: -8),
 
             scopeControl.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             scopeControl.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
@@ -1109,6 +1127,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
             noneTypesButton.centerYAnchor.constraint(equalTo: allTypesButton.centerYAnchor),
             noneTypesButton.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
+
+            annotationViewportFilterButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            annotationViewportFilterButton.trailingAnchor.constraint(equalTo: allTypesButton.leadingAnchor, constant: -8),
 
             presetFiltersToggleButton.centerYAnchor.constraint(equalTo: allTypesButton.centerYAnchor),
             presetFiltersToggleButton.trailingAnchor.constraint(equalTo: allTypesButton.leadingAnchor, constant: -8),
@@ -1426,6 +1447,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         }
         updateVariantToolbarDensity()
         annotationFilterField.isHidden = activeTab != .annotations
+        annotationViewportFilterButton.isHidden = activeTab != .annotations || toolbarDensity == .minimal
+        annotationViewportFilterButton.state = annotationViewportFilterEnabled ? .on : .off
         variantFilterField.isHidden = true  // Always hidden; Query Builder writes to variantFilterText directly
         sampleFilterField.isHidden = true  // Samples use Query Builder; free-text field hidden to reduce toolbar density
         addSampleFieldButton.isHidden = !showSamples
@@ -3046,7 +3069,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     func updateCountLabel() {
-        defer { emitVisibleVariantRenderKeyUpdateIfNeeded() }
+        defer {
+            emitVisibleVariantRenderKeyUpdateIfNeeded()
+            emitVisibleAnnotationRenderKeyUpdateIfNeeded()
+        }
         if activeTab == .variants && activeVariantSubtab == .genotypes {
             let count = displayedGenotypes.count
             countLabel.stringValue = "\(count) genotype\(count == 1 ? "" : "s")"
@@ -3191,6 +3217,17 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         } else {
             updateDisplayedAnnotations()
         }
+    }
+
+    @objc private func annotationViewportFilterToggled(_ sender: NSButton) {
+        setAnnotationViewportFilterEnabled(sender.state == .on)
+    }
+
+    func setAnnotationViewportFilterEnabled(_ enabled: Bool) {
+        guard annotationViewportFilterEnabled != enabled else { return }
+        annotationViewportFilterEnabled = enabled
+        annotationViewportFilterButton.state = enabled ? .on : .off
+        emitVisibleAnnotationRenderKeyUpdateIfNeeded()
     }
 
     private struct AnnotationFilterQuery {
@@ -3643,6 +3680,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     func debugSetVariantFilterText(_ text: String) {
         variantFilterText = text
         updateVariantFilterIndicator()
+    }
+
+    func debugSetAnnotationFilterText(_ text: String) {
+        annotationFilterText = text
+        annotationFilterField.stringValue = text
     }
 
     func debugSetSelectedAnnotationRegion(chromosome: String, start: Int, end: Int) {
@@ -6689,6 +6731,21 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         guard keysToEmit != lastEmittedVisibleVariantRenderKeys else { return }
         lastEmittedVisibleVariantRenderKeys = keysToEmit
         delegate?.annotationDrawer(self, didUpdateVisibleVariantRenderKeys: keysToEmit)
+    }
+
+    func emitVisibleAnnotationRenderKeyUpdateIfNeeded() {
+        let keysToEmit: Set<String>?
+        if activeTab == .annotations && annotationViewportFilterEnabled && !scrollView.isHidden {
+            keysToEmit = Set(displayedAnnotations.compactMap { result in
+                guard !result.trackId.isEmpty, let rowID = result.annotationRowId else { return nil }
+                return "\(result.trackId):\(rowID)"
+            })
+        } else {
+            keysToEmit = nil
+        }
+        guard keysToEmit != lastEmittedVisibleAnnotationRenderKeys else { return }
+        lastEmittedVisibleAnnotationRenderKeys = keysToEmit
+        delegate?.annotationDrawer(self, didUpdateVisibleAnnotationRenderKeys: keysToEmit)
     }
 
     /// Returns sample row keys in effective display order (persisted order + any new rows).

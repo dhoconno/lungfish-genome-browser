@@ -15,6 +15,7 @@ final class AnnotationTableContextMenuTests: XCTestCase {
     private final class DrawerDelegateSpy: AnnotationTableDrawerDelegate {
         var extractedAnnotations: [SequenceAnnotation] = []
         var selectedRegion: AnnotationTableDrawerSelectionRegion?
+        var visibleAnnotationRenderKeys: Set<String>?
 
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didSelectAnnotation result: AnnotationSearchIndex.SearchResult) {}
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didRequestExtract annotations: [SequenceAnnotation]) {
@@ -26,6 +27,9 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int) {}
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didResolveGeneRegions regions: [GeneRegion]) {}
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleVariantRenderKeys keys: Set<String>?) {}
+        func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleAnnotationRenderKeys keys: Set<String>?) {
+            visibleAnnotationRenderKeys = keys
+        }
         func annotationDrawerDidDragDivider(_ drawer: AnnotationTableDrawerView, deltaY: CGFloat) {}
         func annotationDrawerDidFinishDraggingDivider(_ drawer: AnnotationTableDrawerView) {}
     }
@@ -404,6 +408,36 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         XCTAssertNotNil(deleteItem)
         XCTAssertFalse(drawer.selectAnnotation(named: "gene-a"))
         XCTAssertFalse(drawer.selectAnnotation(named: "gene-b"))
+    }
+
+    func testAnnotationViewportFilterDoesNotEmitRowKeysUntilEnabled() throws {
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t200\tgene-a\t0\t+\t100\t200\t0,0,0\t1\t100\t0\tgene\tgene=gene-a",
+            "chr1\t300\t400\tgene-b\t0\t+\t300\t400\t0,0,0\t1\t100\t0\tgene\tgene=gene-b"
+        ])
+        let delegate = DrawerDelegateSpy()
+        drawer.delegate = delegate
+
+        drawer.debugSetAnnotationFilterText("gene-a")
+        drawer.debugRefreshDisplayedAnnotations()
+
+        XCTAssertEqual(drawer.displayedAnnotations.map(\.name), ["gene-a"])
+        XCTAssertNil(delegate.visibleAnnotationRenderKeys)
+    }
+
+    func testAnnotationViewportFilterEmitsDisplayedRowKeysWhenEnabled() throws {
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t200\tgene-a\t0\t+\t100\t200\t0,0,0\t1\t100\t0\tgene\tgene=gene-a",
+            "chr1\t300\t400\tgene-b\t0\t+\t300\t400\t0,0,0\t1\t100\t0\tgene\tgene=gene-b"
+        ])
+        let delegate = DrawerDelegateSpy()
+        drawer.delegate = delegate
+
+        drawer.setAnnotationViewportFilterEnabled(true)
+        drawer.debugSetAnnotationFilterText("gene-a")
+        drawer.debugRefreshDisplayedAnnotations()
+
+        XCTAssertEqual(delegate.visibleAnnotationRenderKeys, ["annotations:1"])
     }
 
     func testAnnotationContextMenuExposesEditForSingleDatabaseAnnotation() throws {

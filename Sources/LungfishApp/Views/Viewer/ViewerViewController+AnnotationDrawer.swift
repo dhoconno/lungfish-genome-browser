@@ -333,6 +333,12 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         viewerView.setNeedsDisplay(viewerView.bounds)
     }
 
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleAnnotationRenderKeys keys: Set<String>?) {
+        viewerView.setLocalAnnotationRenderFilterKeys(keys)
+        viewerView.invalidateAnnotationTile()
+        viewerView.setNeedsDisplay(viewerView.bounds)
+    }
+
     public func annotationDrawer(
         _ drawer: AnnotationTableDrawerView,
         fallbackConsequenceFor result: AnnotationSearchIndex.SearchResult
