@@ -16,6 +16,7 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         var extractedAnnotations: [SequenceAnnotation] = []
         var selectedRegion: AnnotationTableDrawerSelectionRegion?
         var visibleAnnotationRenderKeys: Set<String>?
+        var annotationTrackDisplayStates: [AnnotationTrackDisplayState] = []
 
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didSelectAnnotation result: AnnotationSearchIndex.SearchResult) {}
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didRequestExtract annotations: [SequenceAnnotation]) {
@@ -29,6 +30,9 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleVariantRenderKeys keys: Set<String>?) {}
         func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleAnnotationRenderKeys keys: Set<String>?) {
             visibleAnnotationRenderKeys = keys
+        }
+        func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateAnnotationTrackDisplayState state: AnnotationTrackDisplayState) {
+            annotationTrackDisplayStates.append(state)
         }
         func annotationDrawerDidDragDivider(_ drawer: AnnotationTableDrawerView, deltaY: CGFloat) {}
         func annotationDrawerDidFinishDraggingDivider(_ drawer: AnnotationTableDrawerView) {}
@@ -107,6 +111,79 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         guard let action = item.action else { return nil }
         _ = (item.target as AnyObject?)?.perform(action, with: item)
         return item
+    }
+
+    func testAnnotationTrackControlsToggleVisibilityAndReorderTracks() {
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        let spy = DrawerDelegateSpy()
+        drawer.delegate = spy
+        drawer.setAnnotations([
+            AnnotationSearchIndex.SearchResult(
+                name: "alpha",
+                chromosome: "chr1",
+                start: 10,
+                end: 30,
+                trackId: "track-a",
+                type: "gene",
+                annotationRowId: 1
+            ),
+            AnnotationSearchIndex.SearchResult(
+                name: "beta",
+                chromosome: "chr1",
+                start: 20,
+                end: 40,
+                trackId: "track-b",
+                type: "gene",
+                annotationRowId: 2
+            ),
+        ])
+
+        XCTAssertEqual(drawer.debugAnnotationTrackDisplayState.order, ["track-a", "track-b"])
+        XCTAssertEqual(spy.annotationTrackDisplayStates.last?.order, ["track-a", "track-b"])
+
+        drawer.debugSetAnnotationTrackVisible(trackId: "track-a", visible: false)
+        XCTAssertEqual(spy.annotationTrackDisplayStates.last?.hiddenTrackIDs, ["track-a"])
+
+        drawer.debugMoveAnnotationTrack(trackId: "track-b", direction: .up)
+        XCTAssertEqual(spy.annotationTrackDisplayStates.last?.order, ["track-b", "track-a"])
+    }
+
+    func testViewportAnnotationPackingKeepsTracksInDisplayOrder() {
+        let viewer = SequenceViewerView(frame: NSRect(x: 0, y: 0, width: 800, height: 300))
+        viewer.setAnnotationTrackDisplayState(
+            AnnotationTrackDisplayState(order: ["track-b", "track-a"], hiddenTrackIDs: [])
+        )
+        let annotations = [
+            SequenceAnnotation(
+                type: .gene,
+                name: "A1",
+                chromosome: "chr1",
+                start: 10,
+                end: 90,
+                qualifiers: ["annotation_db_track_id": AnnotationQualifier("track-a")]
+            ),
+            SequenceAnnotation(
+                type: .gene,
+                name: "B1",
+                chromosome: "chr1",
+                start: 20,
+                end: 80,
+                qualifiers: ["annotation_db_track_id": AnnotationQualifier("track-b")]
+            ),
+            SequenceAnnotation(
+                type: .gene,
+                name: "A2",
+                chromosome: "chr1",
+                start: 120,
+                end: 160,
+                qualifiers: ["annotation_db_track_id": AnnotationQualifier("track-a")]
+            ),
+        ]
+        let frame = ReferenceFrame(chromosome: "chr1", start: 0, end: 200, pixelWidth: 800, sequenceLength: 200)
+
+        let trackRows = viewer.debugPackedAnnotationTrackIDs(annotations, frame: frame)
+
+        XCTAssertEqual(trackRows, ["track-b", "track-a"])
     }
 
     // MARK: - lookupTranslation Tests

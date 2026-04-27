@@ -134,6 +134,23 @@ struct AnnotationTableDrawerSelectionRegion: Equatable, Sendable {
     let end: Int
 }
 
+struct AnnotationTrackDisplayState: Equatable, Sendable {
+    let order: [String]
+    let hiddenTrackIDs: Set<String>
+    let displayNames: [String: String]
+
+    init(order: [String], hiddenTrackIDs: Set<String> = [], displayNames: [String: String] = [:]) {
+        self.order = order
+        self.hiddenTrackIDs = hiddenTrackIDs
+        self.displayNames = displayNames
+    }
+}
+
+enum AnnotationTrackMoveDirection {
+    case up
+    case down
+}
+
 /// Delegate protocol for annotation table selection events.
 @MainActor
 protocol AnnotationTableDrawerDelegate: AnyObject {
@@ -144,6 +161,7 @@ protocol AnnotationTableDrawerDelegate: AnyObject {
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didResolveGeneRegions regions: [GeneRegion])
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleVariantRenderKeys keys: Set<String>?)
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleAnnotationRenderKeys keys: Set<String>?)
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateAnnotationTrackDisplayState state: AnnotationTrackDisplayState)
     func annotationDrawerDidDragDivider(_ drawer: AnnotationTableDrawerView, deltaY: CGFloat)
     func annotationDrawerDidFinishDraggingDivider(_ drawer: AnnotationTableDrawerView)
     func annotationDrawer(
@@ -160,6 +178,8 @@ extension AnnotationTableDrawerDelegate {
     }
 
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleAnnotationRenderKeys keys: Set<String>?) {}
+
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateAnnotationTrackDisplayState state: AnnotationTrackDisplayState) {}
 
     func annotationDrawer(
         _ drawer: AnnotationTableDrawerView,
@@ -381,6 +401,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     /// When enabled, the sequence viewport renders only annotation rows visible in this table.
     private var annotationViewportFilterEnabled = false
+    private var annotationTrackOrder: [String] = []
+    private var hiddenAnnotationTrackIDs: Set<String> = []
+    private var annotationTrackDisplayNames: [String: String] = [:]
+    private var lastEmittedAnnotationTrackDisplayState: AnnotationTrackDisplayState?
 
     // MARK: - Sample Tab State
 
@@ -493,6 +517,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let allTypesButton = NSButton()
     private let noneTypesButton = NSButton()
     private let annotationViewportFilterButton = NSButton()
+    private let annotationTracksButton = NSButton()
     private let presetFiltersToggleButton = NSButton()
     private let searchBuilderButton = NSButton()
     private let localVariantFilterBadgeLabel = NSTextField(labelWithString: "Local: Visible Rows")
@@ -765,6 +790,19 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         annotationViewportFilterButton.toolTip = "When enabled, the viewport shows only the annotations currently visible in this table."
         annotationViewportFilterButton.setAccessibilityLabel("Filter viewport to visible annotation rows")
         searchBar.addSubview(annotationViewportFilterButton)
+
+        annotationTracksButton.title = "Tracks"
+        annotationTracksButton.image = NSImage(systemSymbolName: "list.bullet.rectangle", accessibilityDescription: "Annotation tracks")
+        annotationTracksButton.imagePosition = .imageLeading
+        annotationTracksButton.font = .systemFont(ofSize: 10, weight: .medium)
+        annotationTracksButton.controlSize = .small
+        annotationTracksButton.bezelStyle = .recessed
+        annotationTracksButton.target = self
+        annotationTracksButton.action = #selector(showAnnotationTracksMenu(_:))
+        annotationTracksButton.translatesAutoresizingMaskIntoConstraints = false
+        annotationTracksButton.toolTip = "Show, hide, and reorder annotation tracks in the viewport."
+        annotationTracksButton.setAccessibilityLabel("Annotation track display options")
+        searchBar.addSubview(annotationTracksButton)
 
         noneTypesButton.title = "None"
         noneTypesButton.font = .systemFont(ofSize: 10, weight: .medium)
@@ -1134,7 +1172,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             noneTypesButton.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
 
             annotationViewportFilterButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
-            annotationViewportFilterButton.trailingAnchor.constraint(equalTo: allTypesButton.leadingAnchor, constant: -8),
+            annotationViewportFilterButton.trailingAnchor.constraint(equalTo: annotationTracksButton.leadingAnchor, constant: -6),
+
+            annotationTracksButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            annotationTracksButton.trailingAnchor.constraint(equalTo: allTypesButton.leadingAnchor, constant: -8),
 
             presetFiltersToggleButton.centerYAnchor.constraint(equalTo: allTypesButton.centerYAnchor),
             presetFiltersToggleButton.trailingAnchor.constraint(equalTo: allTypesButton.leadingAnchor, constant: -8),
@@ -1454,6 +1495,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         annotationFilterField.isHidden = activeTab != .annotations
         annotationViewportFilterButton.isHidden = activeTab != .annotations
         annotationViewportFilterButton.state = annotationViewportFilterEnabled ? .on : .off
+        annotationTracksButton.isHidden = activeTab != .annotations || annotationTrackOrder.count <= 1
         variantFilterField.isHidden = true  // Always hidden; Query Builder writes to variantFilterText directly
         sampleFilterField.isHidden = true  // Samples use Query Builder; free-text field hidden to reduce toolbar density
         addSampleFieldButton.isHidden = !showSamples
@@ -2075,6 +2117,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         annotationAttributeColumnKeys = Self.orderedAnnotationAttributeKeys(
             from: index.queryAnnotationsOnly(limit: Self.maxDisplayCount)
         )
+        syncAnnotationTracks(from: index.annotationDatabaseHandles.map(\.trackId))
         variantTrackDatabaseURLs = index.variantDatabaseHandles.map(\.db.databaseURL)
         variantInfoPresetValues = []
         variantPresetLoadState = .idle
@@ -2170,6 +2213,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         availableAnnotationTypes = typeSet.sorted()
         visibleAnnotationTypes = typeSet
         annotationAttributeColumnKeys = Self.orderedAnnotationAttributeKeys(from: results)
+        syncAnnotationTracks(from: results.map(\.trackId))
         configureColumnsForTab(.annotations)
 
         rebuildChipButtons()
@@ -3239,6 +3283,138 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         !annotationViewportFilterButton.isHidden
     }
 
+    private var annotationTrackDisplayState: AnnotationTrackDisplayState {
+        AnnotationTrackDisplayState(
+            order: annotationTrackOrder,
+            hiddenTrackIDs: hiddenAnnotationTrackIDs,
+            displayNames: annotationTrackDisplayNames
+        )
+    }
+
+    private func syncAnnotationTracks(from trackIDs: [String]) {
+        var seen: Set<String> = []
+        let discovered = trackIDs.filter { trackID in
+            guard !trackID.isEmpty, !seen.contains(trackID) else { return false }
+            seen.insert(trackID)
+            return true
+        }
+        guard !discovered.isEmpty else { return }
+
+        let discoveredSet = Set(discovered)
+        var nextOrder = annotationTrackOrder.filter { discoveredSet.contains($0) }
+        let orderedSet = Set(nextOrder)
+        nextOrder.append(contentsOf: discovered.filter { !orderedSet.contains($0) })
+
+        let changed = nextOrder != annotationTrackOrder
+            || !hiddenAnnotationTrackIDs.isSubset(of: discoveredSet)
+        annotationTrackOrder = nextOrder
+        hiddenAnnotationTrackIDs = hiddenAnnotationTrackIDs.intersection(discoveredSet)
+        for trackID in discovered where annotationTrackDisplayNames[trackID] == nil {
+            annotationTrackDisplayNames[trackID] = trackID
+        }
+
+        updateSearchFieldVisibility()
+        if changed {
+            emitAnnotationTrackDisplayStateIfNeeded()
+        }
+    }
+
+    private func emitAnnotationTrackDisplayStateIfNeeded() {
+        let state = annotationTrackDisplayState
+        guard state != lastEmittedAnnotationTrackDisplayState else { return }
+        lastEmittedAnnotationTrackDisplayState = state
+        delegate?.annotationDrawer(self, didUpdateAnnotationTrackDisplayState: state)
+    }
+
+    private func setAnnotationTrackVisible(trackId: String, visible: Bool) {
+        guard annotationTrackOrder.contains(trackId) else { return }
+        if visible {
+            hiddenAnnotationTrackIDs.remove(trackId)
+        } else {
+            hiddenAnnotationTrackIDs.insert(trackId)
+        }
+        emitAnnotationTrackDisplayStateIfNeeded()
+    }
+
+    private func moveAnnotationTrack(trackId: String, direction: AnnotationTrackMoveDirection) {
+        guard let index = annotationTrackOrder.firstIndex(of: trackId) else { return }
+        let targetIndex: Int
+        switch direction {
+        case .up:
+            targetIndex = max(0, index - 1)
+        case .down:
+            targetIndex = min(annotationTrackOrder.count - 1, index + 1)
+        }
+        guard targetIndex != index else { return }
+        annotationTrackOrder.swapAt(index, targetIndex)
+        emitAnnotationTrackDisplayStateIfNeeded()
+    }
+
+    @objc private func showAnnotationTracksMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        if annotationTrackOrder.isEmpty {
+            let item = NSMenuItem(title: "No Annotation Tracks", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        } else {
+            for trackID in annotationTrackOrder {
+                let item = NSMenuItem(title: annotationTrackDisplayNames[trackID] ?? trackID, action: nil, keyEquivalent: "")
+                let submenu = NSMenu()
+
+                let visibleItem = NSMenuItem(
+                    title: "Visible",
+                    action: #selector(toggleAnnotationTrackVisibility(_:)),
+                    keyEquivalent: ""
+                )
+                visibleItem.target = self
+                visibleItem.representedObject = trackID
+                visibleItem.state = hiddenAnnotationTrackIDs.contains(trackID) ? .off : .on
+                submenu.addItem(visibleItem)
+
+                submenu.addItem(.separator())
+
+                let moveUpItem = NSMenuItem(
+                    title: "Move Up",
+                    action: #selector(moveAnnotationTrackUp(_:)),
+                    keyEquivalent: ""
+                )
+                moveUpItem.target = self
+                moveUpItem.representedObject = trackID
+                moveUpItem.isEnabled = annotationTrackOrder.first != trackID
+                submenu.addItem(moveUpItem)
+
+                let moveDownItem = NSMenuItem(
+                    title: "Move Down",
+                    action: #selector(moveAnnotationTrackDown(_:)),
+                    keyEquivalent: ""
+                )
+                moveDownItem.target = self
+                moveDownItem.representedObject = trackID
+                moveDownItem.isEnabled = annotationTrackOrder.last != trackID
+                submenu.addItem(moveDownItem)
+
+                item.submenu = submenu
+                menu.addItem(item)
+            }
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 2), in: sender)
+    }
+
+    @objc private func toggleAnnotationTrackVisibility(_ sender: NSMenuItem) {
+        guard let trackID = sender.representedObject as? String else { return }
+        setAnnotationTrackVisible(trackId: trackID, visible: hiddenAnnotationTrackIDs.contains(trackID))
+    }
+
+    @objc private func moveAnnotationTrackUp(_ sender: NSMenuItem) {
+        guard let trackID = sender.representedObject as? String else { return }
+        moveAnnotationTrack(trackId: trackID, direction: .up)
+    }
+
+    @objc private func moveAnnotationTrackDown(_ sender: NSMenuItem) {
+        guard let trackID = sender.representedObject as? String else { return }
+        moveAnnotationTrack(trackId: trackID, direction: .down)
+    }
+
     private struct AnnotationFilterQuery {
         var nameFilter: String = ""
         var typeFilter: Set<String>?
@@ -3694,6 +3870,18 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     func debugSetAnnotationFilterText(_ text: String) {
         annotationFilterText = text
         annotationFilterField.stringValue = text
+    }
+
+    var debugAnnotationTrackDisplayState: AnnotationTrackDisplayState {
+        annotationTrackDisplayState
+    }
+
+    func debugSetAnnotationTrackVisible(trackId: String, visible: Bool) {
+        setAnnotationTrackVisible(trackId: trackId, visible: visible)
+    }
+
+    func debugMoveAnnotationTrack(trackId: String, direction: AnnotationTrackMoveDirection) {
+        moveAnnotationTrack(trackId: trackId, direction: direction)
     }
 
     func debugSetSelectedAnnotationRegion(chromosome: String, start: Int, end: Int) {
@@ -6614,6 +6802,8 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
     private func setAnnotationBaseResults(_ rows: [AnnotationSearchIndex.SearchResult]) {
         baseDisplayedAnnotationRows = rows
         displayedAnnotations = applyAnnotationColumnFilters(to: rows)
+        let availableTrackIDs = searchIndex?.annotationDatabaseHandles.map(\.trackId) ?? []
+        syncAnnotationTracks(from: availableTrackIDs.isEmpty ? rows.map(\.trackId) : availableTrackIDs)
     }
 
     private func applyAnnotationColumnFiltersFromBase() {

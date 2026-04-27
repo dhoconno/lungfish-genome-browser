@@ -477,6 +477,7 @@ public class SequenceViewerView: NSView {
     /// Optional row-level annotation render filter from the drawer (`trackId:annotationRowId`).
     /// `nil` means render all annotations that pass inspector filters.
     private var localAnnotationRenderFilterKeys: Set<String>?
+    private var annotationTrackDisplayState = AnnotationTrackDisplayState(order: [])
     /// Cached genotype dataset after applying table-synced row filtering.
     private var _cachedFilteredGenotypeData: GenotypeDisplayData?
 
@@ -589,6 +590,13 @@ public class SequenceViewerView: NSView {
     func setLocalAnnotationRenderFilterKeys(_ keys: Set<String>?) {
         guard localAnnotationRenderFilterKeys != keys else { return }
         localAnnotationRenderFilterKeys = keys
+        hoveredAnnotation = nil
+        invalidateAnnotationTile()
+    }
+
+    func setAnnotationTrackDisplayState(_ state: AnnotationTrackDisplayState) {
+        guard annotationTrackDisplayState != state else { return }
+        annotationTrackDisplayState = state
         hoveredAnnotation = nil
         invalidateAnnotationTile()
     }
@@ -3849,7 +3857,7 @@ public class SequenceViewerView: NSView {
             || (displayAnnotations.count > maxSquishedFeatures && scale > annotationSquishedThreshold)
 
         if useDensityMode {
-            lastAnnotationBottomY = annotationTrackY + 30 + annotationLabelClearance  // density histogram + label
+            lastAnnotationBottomY = annotationTrackY + annotationDensityHeight(for: displayAnnotations) + annotationLabelClearance
         } else if scale > annotationSquishedThreshold {
             let (rows, _) = packAnnotationsLayered(displayAnnotations, frame: frame)
             lastAnnotationBottomY = annotationTrackY + CGFloat(rows.count) * 7 + annotationLabelClearance
@@ -3892,6 +3900,12 @@ public class SequenceViewerView: NSView {
                 guard let trackId = annotation.qualifiers["annotation_db_track_id"]?.values.first,
                       let rowId = annotation.qualifiers["annotation_db_row_id"]?.values.first else { return false }
                 return localKeys.contains("\(trackId):\(rowId)")
+            }
+        }
+
+        if !annotationTrackDisplayState.hiddenTrackIDs.isEmpty {
+            filteredAnnotations = filteredAnnotations.filter { annotation in
+                !annotationTrackDisplayState.hiddenTrackIDs.contains(annotationTrackID(for: annotation))
             }
         }
 
@@ -4019,6 +4033,34 @@ public class SequenceViewerView: NSView {
 
     /// Draws a density histogram of annotation counts per pixel column.
     private func drawAnnotationDensity(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
+        let trackIDs = orderedAnnotationTrackIDs(for: annotations)
+        if trackIDs.count > 1 {
+            for (index, trackID) in trackIDs.enumerated() {
+                let trackAnnotations = annotations.filter { annotationTrackID(for: $0) == trackID }
+                drawAnnotationDensity(
+                    trackAnnotations,
+                    frame: frame,
+                    context: context,
+                    y: annotationTrackY + CGFloat(index) * 34,
+                    labelPrefix: annotationTrackDisplayName(for: trackID)
+                )
+            }
+            return
+        }
+        drawAnnotationDensity(annotations, frame: frame, context: context, y: annotationTrackY, labelPrefix: nil)
+    }
+
+    private func annotationDensityHeight(for annotations: [SequenceAnnotation]) -> CGFloat {
+        CGFloat(max(1, orderedAnnotationTrackIDs(for: annotations).count)) * 34
+    }
+
+    private func drawAnnotationDensity(
+        _ annotations: [SequenceAnnotation],
+        frame: ReferenceFrame,
+        context: CGContext,
+        y: CGFloat,
+        labelPrefix: String?
+    ) {
         let dataWidth = frame.dataPixelWidth
         let inset = frame.leadingInset
         let binCount = max(1, Int(dataWidth))
@@ -4041,7 +4083,6 @@ public class SequenceViewerView: NSView {
         guard maxCount > 0 else { return }
 
         let trackHeight: CGFloat = 30
-        let y = annotationTrackY
 
         // Draw background
         context.setFillColor(NSColor.controlBackgroundColor.withAlphaComponent(0.3).cgColor)
@@ -4059,7 +4100,12 @@ public class SequenceViewerView: NSView {
         }
 
         // Draw label
-        let labelText = "\(annotations.count) features (zoom in to see details)"
+        let labelText: String
+        if let labelPrefix {
+            labelText = "\(labelPrefix): \(annotations.count) features"
+        } else {
+            labelText = "\(annotations.count) features (zoom in to see details)"
+        }
         let font = NSFont.systemFont(ofSize: 10)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
@@ -4118,6 +4164,10 @@ public class SequenceViewerView: NSView {
                 }
             }
         }
+
+        drawAnnotationTrackLabels(rows: rows, rowYOffsets: rows.indices.map {
+            annotationTrackY + CGFloat($0) * (squishedHeight + squishedSpacing)
+        }, frame: frame, context: context)
 
         if overflow > 0 {
             drawOverflowIndicator(rowCount: rows.count, height: squishedHeight + squishedSpacing,
@@ -4295,6 +4345,8 @@ public class SequenceViewerView: NSView {
             }
         }
 
+        drawAnnotationTrackLabels(rows: rows, rowYOffsets: rowYOffsets, frame: frame, context: context)
+
         // Update lastAnnotationBottomY to include CDS translation heights
         let totalHeight = CGFloat(rows.count) * (annotationHeight + annotationRowSpacing) + cumulativeExtra
         lastAnnotationBottomY = annotationTrackY + totalHeight + annotationLabelClearance
@@ -4314,15 +4366,52 @@ public class SequenceViewerView: NSView {
         _ annotations: [SequenceAnnotation],
         frame: ReferenceFrame
     ) -> (rows: [[SequenceAnnotation]], overflow: Int) {
+        let trackIDs = orderedAnnotationTrackIDs(for: annotations)
+        if trackIDs.count > 1 {
+            var rows: [[SequenceAnnotation]] = []
+            var overflow = 0
+            for trackID in trackIDs {
+                let trackAnnotations = annotations.filter { annotationTrackID(for: $0) == trackID }
+                let packed = packAnnotationsLayeredWithinTrack(trackAnnotations, frame: frame, maxRows: maxAnnotationRows)
+                rows.append(contentsOf: packed.rows)
+                overflow += packed.overflow
+            }
+            return (rows, overflow)
+        }
+        return packAnnotationsLayeredWithinTrack(annotations, frame: frame, maxRows: maxAnnotationRows)
+    }
+
+    private func packAnnotationsLayeredWithinTrack(
+        _ annotations: [SequenceAnnotation],
+        frame: ReferenceFrame,
+        maxRows: Int
+    ) -> (rows: [[SequenceAnnotation]], overflow: Int) {
+        guard maxRows > 0 else { return ([], annotations.count) }
         let landmarks = annotations.filter { !isVariantAnnotationType($0.type) }
         let variants = annotations.filter { isVariantAnnotationType($0.type) }
 
-        let (landmarkRows, landmarkOverflow) = packAnnotationsPixelBased(landmarks, frame: frame, maxRows: maxAnnotationRows)
-        let remainingRows = max(0, maxAnnotationRows - landmarkRows.count)
+        let (landmarkRows, landmarkOverflow) = packAnnotationsPixelBased(landmarks, frame: frame, maxRows: maxRows)
+        let remainingRows = max(0, maxRows - landmarkRows.count)
         let (variantRows, variantOverflow) = packAnnotationsPixelBased(variants, frame: frame, maxRows: remainingRows)
 
         return (landmarkRows + variantRows, landmarkOverflow + variantOverflow)
     }
+
+    #if DEBUG
+    func debugPackedAnnotationTrackIDs(_ annotations: [SequenceAnnotation], frame: ReferenceFrame) -> [String] {
+        let (rows, _) = packAnnotationsLayered(annotations, frame: frame)
+        var ordered: [String] = []
+        var seen: Set<String> = []
+        for row in rows {
+            guard let first = row.first else { continue }
+            let trackID = annotationTrackID(for: first)
+            guard !seen.contains(trackID) else { continue }
+            seen.insert(trackID)
+            ordered.append(trackID)
+        }
+        return ordered
+    }
+    #endif
 
     private func isVariantAnnotationType(_ type: AnnotationType) -> Bool {
         switch type {
@@ -4330,6 +4419,63 @@ public class SequenceViewerView: NSView {
             return true
         default:
             return false
+        }
+    }
+
+    private func annotationTrackID(for annotation: SequenceAnnotation) -> String {
+        annotation.qualifiers["annotation_db_track_id"]?.values.first ?? "annotations"
+    }
+
+    private func annotationTrackDisplayName(for trackID: String) -> String {
+        annotationTrackDisplayState.displayNames[trackID] ?? trackID
+    }
+
+    private func orderedAnnotationTrackIDs(for annotations: [SequenceAnnotation]) -> [String] {
+        var discovered: [String] = []
+        var seen: Set<String> = []
+        for annotation in annotations {
+            let trackID = annotationTrackID(for: annotation)
+            guard !seen.contains(trackID) else { continue }
+            seen.insert(trackID)
+            discovered.append(trackID)
+        }
+
+        let discoveredSet = Set(discovered)
+        var ordered = annotationTrackDisplayState.order.filter { discoveredSet.contains($0) }
+        let orderedSet = Set(ordered)
+        ordered.append(contentsOf: discovered.filter { !orderedSet.contains($0) })
+        return ordered
+    }
+
+    private func drawAnnotationTrackLabels(
+        rows: [[SequenceAnnotation]],
+        rowYOffsets: [CGFloat],
+        frame: ReferenceFrame,
+        context: CGContext
+    ) {
+        guard orderedAnnotationTrackIDs(for: rows.flatMap { $0 }).count > 1 else { return }
+        let font = NSFont.systemFont(ofSize: 9, weight: .medium)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        var previousTrackID: String?
+        for (rowIndex, row) in rows.enumerated() {
+            guard let firstAnnotation = row.first, rowIndex < rowYOffsets.count else { continue }
+            let trackID = annotationTrackID(for: firstAnnotation)
+            guard trackID != previousTrackID else { continue }
+            let y = rowYOffsets[rowIndex]
+            if previousTrackID != nil {
+                context.setStrokeColor(NSColor.separatorColor.withAlphaComponent(0.65).cgColor)
+                context.setLineWidth(1)
+                context.move(to: CGPoint(x: frame.leadingInset, y: y - 2))
+                context.addLine(to: CGPoint(x: CGFloat(frame.pixelWidth) - frame.trailingInset, y: y - 2))
+                context.strokePath()
+            }
+            let label = annotationTrackDisplayName(for: trackID)
+            let labelRect = CGRect(x: frame.leadingInset + 4, y: y + 1, width: 180, height: 12)
+            (label as NSString).draw(in: labelRect, withAttributes: attrs)
+            previousTrackID = trackID
         }
     }
 
@@ -7630,17 +7776,26 @@ public class SequenceViewerView: NSView {
             }
         }
 
+        let trackFiltered: [SequenceAnnotation]
+        if annotationTrackDisplayState.hiddenTrackIDs.isEmpty {
+            trackFiltered = textFiltered
+        } else {
+            trackFiltered = textFiltered.filter { annotation in
+                !annotationTrackDisplayState.hiddenTrackIDs.contains(annotationTrackID(for: annotation))
+            }
+        }
+
         let visibleSpan = max(1, visibleEnd - visibleStart)
         let regionThresholdSpan = max(visibleSpan, frame.sequenceLength)
         let displayAnnotations: [SequenceAnnotation]
         if scale > annotationDensityThreshold {
-            displayAnnotations = textFiltered.filter { annot in
+            displayAnnotations = trackFiltered.filter { annot in
                 let span = annot.end - annot.start
                 return annot.type != .region || span < Int(Double(regionThresholdSpan) * 0.98)
             }
         } else {
             let minFeatureBp = max(1, Int(scale))
-            displayAnnotations = textFiltered.filter { annot in
+            displayAnnotations = trackFiltered.filter { annot in
                 let span = annot.end - annot.start
                 guard span >= minFeatureBp else { return false }
                 return annot.type != .region || span < Int(Double(regionThresholdSpan) * 0.98)

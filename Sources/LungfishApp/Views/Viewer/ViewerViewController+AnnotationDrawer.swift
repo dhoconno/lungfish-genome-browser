@@ -339,6 +339,11 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         viewerView.setNeedsDisplay(viewerView.bounds)
     }
 
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateAnnotationTrackDisplayState state: AnnotationTrackDisplayState) {
+        viewerView.setAnnotationTrackDisplayState(state)
+        viewerView.setNeedsDisplay(viewerView.bounds)
+    }
+
     public func annotationDrawer(
         _ drawer: AnnotationTableDrawerView,
         fallbackConsequenceFor result: AnnotationSearchIndex.SearchResult
