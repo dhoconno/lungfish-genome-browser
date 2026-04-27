@@ -693,6 +693,10 @@ public class MainSplitViewController: NSSplitViewController {
 
     @objc private func handleSidebarFileDropped(_ notification: Notification) {
         logger.info("handleSidebarFileDropped: Notification received!")
+        guard shouldHandleSidebarFileDropNotification(from: notification.object) else {
+            logger.debug("handleSidebarFileDropped: Ignoring drop notification from another project window")
+            return
+        }
 
         // Support both new "urls" array format and legacy single "url" format
         let allURLs: [URL]
@@ -773,6 +777,29 @@ public class MainSplitViewController: NSSplitViewController {
                 }
             }
         }
+    }
+
+    func shouldHandleSidebarFileDropNotification(from source: Any?) -> Bool {
+        Self.shouldHandleSidebarFileDropNotification(
+            from: source,
+            owningSidebar: sidebarController,
+            owningViewer: viewerController
+        )
+    }
+
+    static func shouldHandleSidebarFileDropNotification(
+        from source: Any?,
+        owningSidebar: SidebarViewController,
+        owningViewer: ViewerViewController?
+    ) -> Bool {
+        guard let source else { return true }
+        if let sourceSidebar = source as? SidebarViewController {
+            return sourceSidebar === owningSidebar
+        }
+        if let sourceViewer = source as? ViewerViewController {
+            return sourceViewer === owningViewer
+        }
+        return true
     }
 
     func makeSidebarImportPlan(for droppedURLs: [URL]) -> SidebarImportPlan {
