@@ -28,6 +28,7 @@ final class NFCoreRunRequestTests: XCTestCase {
 
         let manifest = request.manifest(createdAt: Date(timeIntervalSince1970: 0))
         XCTAssertEqual(manifest.workflowName, "fetchngs")
+        XCTAssertEqual(manifest.workflowPinnedVersion, workflow.pinnedVersion)
         XCTAssertEqual(manifest.params["input"], "/tmp/samples ids.csv")
         XCTAssertEqual(manifest.params["outdir"], "/tmp/results")
         XCTAssertEqual(manifest.outputDirectoryName, "results")
@@ -47,8 +48,10 @@ final class NFCoreRunRequestTests: XCTestCase {
         )
 
         XCTAssertEqual(request.presentationMode, .customAdapter("single-cell-matrix"))
-        XCTAssertEqual(Array(request.nextflowArguments.prefix(4)), ["run", "nf-core/scrnaseq", "-profile", "conda"])
+        XCTAssertEqual(Array(request.nextflowArguments.prefix(4)), ["run", "nf-core/scrnaseq", "-r", workflow.pinnedVersion])
+        XCTAssertTrue(request.nextflowArguments.contains("-profile"))
+        XCTAssertTrue(request.nextflowArguments.contains("conda"))
         XCTAssertTrue(request.nextflowArguments.contains("--input"))
-        XCTAssertFalse(request.nextflowArguments.contains("-r"))
+        XCTAssertTrue(request.nextflowArguments.contains(workflow.pinnedVersion))
     }
 }

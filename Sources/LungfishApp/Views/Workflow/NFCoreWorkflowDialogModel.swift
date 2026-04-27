@@ -3,6 +3,16 @@ import LungfishWorkflow
 
 @MainActor
 final class NFCoreWorkflowDialogModel {
+    struct WorkflowDetail: Equatable {
+        let title: String
+        let overview: String
+        let whenToUse: String
+        let requiredInputs: String
+        let expectedOutputs: String
+        let pinnedVersionText: String
+        let keyParameters: [NFCoreWorkflowParameter]
+    }
+
     struct InputCandidate: Identifiable, Equatable {
         let id: URL
         let url: URL
@@ -19,9 +29,11 @@ final class NFCoreWorkflowDialogModel {
     let projectURL: URL?
     let availableWorkflows: [NFCoreSupportedWorkflow]
     private(set) var inputCandidates: [InputCandidate]
+    private let allInputCandidates: [InputCandidate]
     private var selectedInputURLs: Set<URL> = []
+    private var parameterValues: [String: String] = [:]
 
-    var selectedWorkflow: NFCoreSupportedWorkflow?
+    private(set) var selectedWorkflow: NFCoreSupportedWorkflow?
     var executor: NFCoreExecutor = .docker
     var version: String = ""
 
@@ -33,11 +45,55 @@ final class NFCoreWorkflowDialogModel {
         self.projectURL = projectURL?.standardizedFileURL
         self.availableWorkflows = workflows
         self.selectedWorkflow = workflows.first
-        self.inputCandidates = Self.discoverInputCandidates(projectURL: projectURL, fileManager: fileManager)
+        self.allInputCandidates = Self.discoverInputCandidates(projectURL: projectURL, fileManager: fileManager)
+        self.inputCandidates = []
+        if let workflow = workflows.first {
+            self.version = workflow.pinnedVersion
+            self.parameterValues = Dictionary(uniqueKeysWithValues: workflow.keyParameters.map { ($0.name, $0.defaultValue) })
+            self.inputCandidates = Self.filterInputCandidates(allInputCandidates, for: workflow)
+        }
     }
 
     func selectWorkflow(named name: String) {
-        selectedWorkflow = availableWorkflows.first { $0.name == name || $0.fullName == name } ?? selectedWorkflow
+        guard let workflow = availableWorkflows.first(where: { $0.name == name || $0.fullName == name }) else { return }
+        selectedWorkflow = workflow
+        version = workflow.pinnedVersion
+        parameterValues = Dictionary(uniqueKeysWithValues: workflow.keyParameters.map { ($0.name, $0.defaultValue) })
+        inputCandidates = Self.filterInputCandidates(allInputCandidates, for: workflow)
+        selectedInputURLs = selectedInputURLs.filter { selectedURL in
+            inputCandidates.contains { $0.url.standardizedFileURL == selectedURL.standardizedFileURL }
+        }
+    }
+
+    var selectedWorkflowDetail: WorkflowDetail {
+        guard let selectedWorkflow else {
+            return WorkflowDetail(
+                title: "No workflow selected",
+                overview: "",
+                whenToUse: "",
+                requiredInputs: "",
+                expectedOutputs: "",
+                pinnedVersionText: "",
+                keyParameters: []
+            )
+        }
+        return WorkflowDetail(
+            title: selectedWorkflow.fullName,
+            overview: selectedWorkflow.description,
+            whenToUse: selectedWorkflow.whenToUse,
+            requiredInputs: selectedWorkflow.requiredInputs,
+            expectedOutputs: selectedWorkflow.expectedOutputs,
+            pinnedVersionText: "App-pinned version: \(selectedWorkflow.pinnedVersion)",
+            keyParameters: selectedWorkflow.keyParameters
+        )
+    }
+
+    func parameterValue(for name: String) -> String {
+        parameterValues[name] ?? ""
+    }
+
+    func setParameterValue(_ value: String, for name: String) {
+        parameterValues[name] = value
     }
 
     func isInputSelected(_ url: URL) -> Bool {
@@ -72,12 +128,17 @@ final class NFCoreWorkflowDialogModel {
         let outputDirectory = projectURL
             .appendingPathComponent("Analyses", isDirectory: true)
             .appendingPathComponent("nf-core-\(selectedWorkflow.name)-results", isDirectory: true)
+        var params = parameterValues.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if selectedInputs.count == 1 {
+            params[selectedWorkflow.primaryInputParameter] = selectedInputs[0].path
+        }
         return NFCoreRunRequest(
             workflow: selectedWorkflow,
-            version: version.trimmingCharacters(in: .whitespacesAndNewlines),
+            version: version,
             executor: executor,
             inputURLs: selectedInputs,
-            outputDirectory: outputDirectory
+            outputDirectory: outputDirectory,
+            params: params
         )
     }
 
@@ -134,6 +195,16 @@ final class NFCoreWorkflowDialogModel {
             ".fasta", ".fa", ".fna", ".fasta.gz", ".fa.gz",
             ".bam", ".cram", ".vcf", ".vcf.gz", ".csv", ".tsv", ".txt",
         ].contains { name.hasSuffix($0) }
+    }
+
+    private static func filterInputCandidates(
+        _ candidates: [InputCandidate],
+        for workflow: NFCoreSupportedWorkflow
+    ) -> [InputCandidate] {
+        candidates.filter { candidate in
+            let name = candidate.url.lastPathComponent.lowercased()
+            return workflow.acceptedInputSuffixes.contains { name.hasSuffix($0) }
+        }
     }
 
     private static func relativePath(for url: URL, projectURL: URL) -> String {

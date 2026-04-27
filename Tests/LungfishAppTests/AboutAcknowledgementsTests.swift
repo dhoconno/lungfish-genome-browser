@@ -84,8 +84,8 @@ final class AboutAcknowledgementsTests: XCTestCase {
 
         let viralrecon = try XCTUnwrap(nfCore.entries.first(where: { $0.id == "nf-core-viralrecon" }))
         XCTAssertEqual(viralrecon.displayName, "nf-core/viralrecon")
-        XCTAssertEqual(viralrecon.detail, "Easy")
-        XCTAssertEqual(viralrecon.secondaryDetail, "Nextflow workflow")
+        XCTAssertEqual(viralrecon.detail, "Pinned 3.0.0")
+        XCTAssertEqual(viralrecon.secondaryDetail, "Easy Nextflow workflow")
         XCTAssertEqual(viralrecon.sourceURL, "https://nf-co.re/viralrecon")
     }
 }

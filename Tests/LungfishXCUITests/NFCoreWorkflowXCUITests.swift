@@ -4,6 +4,11 @@ final class NFCoreWorkflowXCUITests: XCTestCase {
     @MainActor
     func testNFCoreWorkflowDialogRunsDeterministicWorkflowIntoOperationsPanel() throws {
         let projectURL = try LungfishProjectFixtureBuilder.makeIlluminaAssemblyProject(named: "NFCoreWorkflowFixture")
+        try "sample,run_accession\nfixture,SRR123456\n".write(
+            to: projectURL.appendingPathComponent("accessions.csv"),
+            atomically: true,
+            encoding: .utf8
+        )
         let eventLogURL = makeTemporaryEventLogURL(named: "NFCoreWorkflow")
         let app = XCUIApplication()
         defer {
@@ -26,11 +31,20 @@ final class NFCoreWorkflowXCUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         openNFCoreDialog(in: app)
 
-        XCTAssertTrue(app.popUpButtons["nf-core-workflow-picker"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.tables["nf-core-input-table"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.scrollViews["nf-core-sidebar"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["nf-core-tool-nf-core-fetchngs"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["nf-core-workflow-detail-title"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["nf-core-fetchngs-usage"].waitForExistence(timeout: 5))
+        let versionLabel = app.staticTexts["nf-core-version-label"]
+        XCTAssertTrue(versionLabel.waitForExistence(timeout: 5))
+        let versionText = [versionLabel.label, versionLabel.value as? String]
+            .compactMap { $0 }
+            .joined(separator: " ")
+        XCTAssertTrue(versionText.contains("App-pinned"))
+        XCTAssertTrue(app.checkBoxes["nf-core-input-row-accessions.csv"].waitForExistence(timeout: 5))
 
         app.buttons["nf-core-select-all-inputs"].click()
-        app.buttons["nf-core-run-button"].click()
+        app.buttons["nf-core-primary-action"].click()
 
         let invocation = waitForEvent(prefix: "nfcore.cli.invoked", in: eventLogURL, timeout: 5)
         XCTAssertTrue(invocation.contains("workflow run nf-core/fetchngs"))

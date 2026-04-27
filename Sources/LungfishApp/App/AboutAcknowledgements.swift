@@ -50,8 +50,8 @@ struct AboutAcknowledgements {
             Entry(
                 id: "nf-core-\(workflow.name)",
                 displayName: workflow.fullName,
-                detail: workflow.difficulty.displayName,
-                secondaryDetail: "Nextflow workflow",
+                detail: "Pinned \(workflow.pinnedVersion)",
+                secondaryDetail: "\(workflow.difficulty.displayName) Nextflow workflow",
                 sourceURL: workflow.documentationURL.absoluteString
             )
         }
