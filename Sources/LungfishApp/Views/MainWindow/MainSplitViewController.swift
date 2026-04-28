@@ -425,10 +425,18 @@ public class MainSplitViewController: NSSplitViewController {
     }
 
     @objc private func handleShowInspector(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         let tab = notification.userInfo?[NotificationUserInfoKey.inspectorTab] as? String
         logger.info("handleShowInspector: Showing inspector panel, tab=\(tab ?? "default", privacy: .public)")
         setInspectorVisible(true, animated: false, source: "notification.showInspectorRequested")
         // Tab switching is handled by InspectorViewController observing the same notification
+    }
+
+    private func shouldAcceptScopedNotification(_ notification: Notification) -> Bool {
+        guard let notificationScope = notification.userInfo?[NotificationUserInfoKey.windowStateScope] as? WindowStateScope else {
+            return true
+        }
+        return notificationScope == windowStateScope
     }
 
     @objc private func handleBundleDidLoad(_ notification: Notification) {
@@ -2350,6 +2358,20 @@ public class MainSplitViewController: NSSplitViewController {
         commit()
     }
 
+    func testingBeginDatabaseBuildRequest(
+        tool: String,
+        resultURL: URL
+    ) -> (identity: ContentSelectionIdentity, token: AsyncRequestToken<ContentSelectionIdentity>) {
+        beginDatabaseBuildRequest(tool: tool, resultURL: resultURL)
+    }
+
+    func testingCommitDatabaseBuildCompletion(
+        _ request: (identity: ContentSelectionIdentity, token: AsyncRequestToken<ContentSelectionIdentity>),
+        commit: () -> Void
+    ) {
+        commitDatabaseBuildCompletion(request, commit: commit)
+    }
+
     func testingRequestInspectorDocumentModeAfterDownload() {
         requestInspectorDocumentModeAfterDownload()
     }
@@ -3133,6 +3155,8 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     ///   - tool: Human-readable tool name (e.g. "TaxTriage").
     ///   - resultURL: The batch result directory URL.
     private func showDatabaseBuildPlaceholder(tool: String, resultURL: URL) {
+        let databaseBuildRequest = beginDatabaseBuildRequest(tool: tool, resultURL: resultURL)
+
         // Clear any existing viewport content so the placeholder is the only thing shown.
         viewerController.clearViewport(statusMessage: "")
 
@@ -3154,7 +3178,33 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         )
 
         // Auto-trigger the database build.
-        triggerDatabaseBuild(tool: tool, resultURL: resultURL, placeholder: placeholder)
+        triggerDatabaseBuild(
+            tool: tool,
+            resultURL: resultURL,
+            placeholder: placeholder,
+            request: databaseBuildRequest
+        )
+    }
+
+    private func beginDatabaseBuildRequest(
+        tool: String,
+        resultURL: URL
+    ) -> (identity: ContentSelectionIdentity, token: AsyncRequestToken<ContentSelectionIdentity>) {
+        let identity = ContentSelectionIdentity(
+            url: resultURL,
+            kind: "databaseBuild:\(tool.lowercased())",
+            resultID: resultURL.lastPathComponent,
+            windowID: windowStateScope.id
+        )
+        return (identity, beginDisplayRequest(identity: identity))
+    }
+
+    private func commitDatabaseBuildCompletion(
+        _ request: (identity: ContentSelectionIdentity, token: AsyncRequestToken<ContentSelectionIdentity>),
+        commit: () -> Void
+    ) {
+        guard canCommitDisplayRequest(request.token, identity: request.identity) else { return }
+        commit()
     }
 
     /// Runs `lungfish-cli build-db <tool> <resultDir>` via ``LungfishCLIRunner``.
@@ -3170,9 +3220,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     private func triggerDatabaseBuild(
         tool: String,
         resultURL: URL,
-        placeholder: DatabaseBuildPlaceholderView
+        placeholder: DatabaseBuildPlaceholderView,
+        request: (identity: ContentSelectionIdentity, token: AsyncRequestToken<ContentSelectionIdentity>)
     ) {
         let cliTool = tool.lowercased()
+        let requestIdentity = request.identity
+        let requestGeneration = request.token.generation
 
         // Show the "building" spinner state immediately so the user sees feedback.
         placeholder.showBuilding(tool: tool)
@@ -3184,9 +3237,15 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         guard let self else { return }
-                        placeholder.removeFromSuperview()
-                        // Re-display — the DB should now exist.
-                        self.displayBatchGroup(at: resultURL)
+                        let completionRequest = (
+                            identity: requestIdentity,
+                            token: AsyncRequestToken(generation: requestGeneration, identity: requestIdentity)
+                        )
+                        self.commitDatabaseBuildCompletion(completionRequest) {
+                            placeholder.removeFromSuperview()
+                            // Re-display — the DB should now exist.
+                            self.displayBatchGroup(at: resultURL)
+                        }
                     }
                 }
             } catch {
@@ -3194,22 +3253,28 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         guard let self else { return }
-                        placeholder.showError("Build failed: \(errorDescription)")
-                        // Ensure the placeholder is still in the viewport hierarchy so the error is visible.
-                        if placeholder.superview == nil {
-                            let contentView = self.viewerController.view
-                            contentView.addSubview(placeholder)
-                            placeholder.translatesAutoresizingMaskIntoConstraints = false
-                            NSLayoutConstraint.activate([
-                                placeholder.topAnchor.constraint(equalTo: contentView.topAnchor),
-                                placeholder.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                                placeholder.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-                                placeholder.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-                            ])
-                        }
-                        placeholder.onRetry = { [weak self] in
-                            placeholder.removeFromSuperview()
-                            self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)
+                        let completionRequest = (
+                            identity: requestIdentity,
+                            token: AsyncRequestToken(generation: requestGeneration, identity: requestIdentity)
+                        )
+                        self.commitDatabaseBuildCompletion(completionRequest) {
+                            placeholder.showError("Build failed: \(errorDescription)")
+                            // Ensure the placeholder is still in the viewport hierarchy so the error is visible.
+                            if placeholder.superview == nil {
+                                let contentView = self.viewerController.view
+                                contentView.addSubview(placeholder)
+                                placeholder.translatesAutoresizingMaskIntoConstraints = false
+                                NSLayoutConstraint.activate([
+                                    placeholder.topAnchor.constraint(equalTo: contentView.topAnchor),
+                                    placeholder.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                                    placeholder.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                                    placeholder.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+                                ])
+                            }
+                            placeholder.onRetry = { [weak self] in
+                                placeholder.removeFromSuperview()
+                                self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)
+                            }
                         }
                     }
                 }

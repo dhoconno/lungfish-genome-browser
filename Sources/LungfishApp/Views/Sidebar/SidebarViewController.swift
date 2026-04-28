@@ -668,11 +668,20 @@ public class SidebarViewController: NSViewController {
     /// Extracts the `url` from the notification's `userInfo` and delegates to
     /// `selectItem(forURL:)` which locates the matching sidebar entry and selects it.
     @objc private func handleNavigateToSidebarItem(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         guard let url = notification.userInfo?["url"] as? URL else { return }
         let found = selectItem(forURL: url)
         if !found {
             logger.debug("handleNavigateToSidebarItem: No sidebar item found for \(url.lastPathComponent, privacy: .public)")
         }
+    }
+
+    private func shouldAcceptScopedNotification(_ notification: Notification) -> Bool {
+        guard let notificationScope = notification.userInfo?[NotificationUserInfoKey.windowStateScope] as? WindowStateScope else {
+            return true
+        }
+        guard let windowStateScope else { return true }
+        return notificationScope == windowStateScope
     }
 
     /// Expands all parent items of the given item to ensure it's visible.
@@ -4081,10 +4090,14 @@ extension SidebarViewController: NSMenuDelegate {
         logger.info("contextMenuShowInInspector: Showing '\(item.title, privacy: .public)' in inspector")
 
         // Post notification to show inspector with Document tab
+        var userInfo: [AnyHashable: Any] = [NotificationUserInfoKey.inspectorTab: "document"]
+        if let windowStateScope {
+            userInfo[NotificationUserInfoKey.windowStateScope] = windowStateScope
+        }
         NotificationCenter.default.post(
             name: .showInspectorRequested,
             object: self,
-            userInfo: [NotificationUserInfoKey.inspectorTab: "document"]
+            userInfo: userInfo
         )
     }
 

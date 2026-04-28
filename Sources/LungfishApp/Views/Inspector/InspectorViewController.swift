@@ -167,7 +167,7 @@ public class InspectorViewController: NSViewController {
 
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleMetadataImportRequested),
+            selector: #selector(handleMetadataImportRequested(_:)),
             name: .metagenomicsMetadataImportRequested,
             object: nil
         )
@@ -206,6 +206,10 @@ public class InspectorViewController: NSViewController {
 
     func testingHandleBatchManifestCached(_ notification: Notification) {
         handleBatchManifestCached(notification)
+    }
+
+    func testingHandleMetadataImportRequested(_ notification: Notification) -> Bool {
+        handleMetadataImportRequested(notification, shouldPresentPanel: false)
     }
 
     // MARK: - Setup
@@ -1088,7 +1092,23 @@ public class InspectorViewController: NSViewController {
 
     // MARK: - Metadata Import
 
-    @objc private func handleMetadataImportRequested() {
+    @objc private func handleMetadataImportRequested(_ notification: Notification) {
+        _ = handleMetadataImportRequested(notification, shouldPresentPanel: true)
+    }
+
+    @discardableResult
+    private func handleMetadataImportRequested(
+        _ notification: Notification,
+        shouldPresentPanel: Bool
+    ) -> Bool {
+        guard shouldAcceptScopedNotification(notification) else { return false }
+        guard shouldPresentPanel else { return true }
+
+        presentMetadataImportPanel()
+        return true
+    }
+
+    private func presentMetadataImportPanel() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText]
         panel.allowsMultipleSelection = false

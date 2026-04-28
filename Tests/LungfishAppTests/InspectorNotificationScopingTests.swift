@@ -102,6 +102,34 @@ final class InspectorNotificationScopingTests: XCTestCase {
 
         XCTAssertEqual(capture.userInfo?[NotificationUserInfoKey.windowStateScope] as? WindowStateScope, scope)
     }
+
+    func testInspectorRejectsScopedMetadataImportRequestFromDifferentWindow() {
+        let inspector = InspectorViewController()
+        _ = inspector.view
+        inspector.testingWindowStateScope = WindowStateScope()
+
+        let accepted = inspector.testingHandleMetadataImportRequested(
+            Notification(
+                name: .metagenomicsMetadataImportRequested,
+                object: nil,
+                userInfo: [NotificationUserInfoKey.windowStateScope: WindowStateScope()]
+            )
+        )
+
+        XCTAssertFalse(accepted)
+    }
+
+    func testInspectorStillAcceptsLegacyUnscopedMetadataImportRequest() {
+        let inspector = InspectorViewController()
+        _ = inspector.view
+        inspector.testingWindowStateScope = WindowStateScope()
+
+        let accepted = inspector.testingHandleMetadataImportRequested(
+            Notification(name: .metagenomicsMetadataImportRequested, object: nil)
+        )
+
+        XCTAssertTrue(accepted)
+    }
 }
 
 private final class InspectorNotificationUserInfoCapture: @unchecked Sendable {
