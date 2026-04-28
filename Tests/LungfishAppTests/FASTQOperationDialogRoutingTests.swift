@@ -653,7 +653,7 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         let selection = try ViralReconWizardPrimerStaging.stageGenomePrimerSelection(
             primerBundleURL: primerBundle,
             sourceReferenceFASTAURL: referenceFASTA,
-            genomeAccession: "MN908947.3",
+            genomeAccession: "  MN908947.3  ",
             destinationDirectory: root
         )
 
@@ -664,6 +664,16 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         let stagedFASTA = try String(contentsOf: selection.fastaURL, encoding: .utf8)
         XCTAssertTrue(stagedFASTA.contains(">amplicon_1_LEFT\nAAAA"))
         XCTAssertTrue(stagedFASTA.contains(">amplicon_1_RIGHT\nGGGG"))
+
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let wizardSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/LungfishApp/Views/Mapping/ViralReconWizardSheet.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(wizardSource.contains("genomeAccession: genomeReferenceName ?? genomeAccession"))
     }
 
     func testViralReconReadinessRejectsBlankGenomeBeforeRun() {
@@ -746,6 +756,9 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         )
 
         XCTAssertFalse(source.contains("onRunnerAvailabilityChange(false)"))
+        XCTAssertTrue(source.contains("onRunnerAvailabilityChange(canRun)"))
+        XCTAssertTrue(source.contains(".onChange(of: buildErrorRecoveryKey)"))
+        XCTAssertTrue(source.contains("clearBuildError()"))
     }
 
     func testMinimap2UsesGenericEmbeddedReadinessText() {

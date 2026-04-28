@@ -92,6 +92,25 @@ struct ViralReconWizardSheet: View {
         readinessEvaluation.canRun
     }
 
+    private var buildErrorRecoveryKey: BuildErrorRecoveryKey {
+        BuildErrorRecoveryKey(
+            selectedPrimerID: selectedPrimerID,
+            selectedReferenceMode: selectedReferenceMode,
+            genomeAccession: genomeAccession,
+            selectedReferenceID: selectedReferenceID,
+            browsedReferenceURL: browsedReferenceURL,
+            browsedGFFURL: browsedGFFURL,
+            executor: String(describing: executor),
+            version: version,
+            minimumMappedReads: minimumMappedReads,
+            maxCPUs: maxCPUs,
+            maxMemory: maxMemory,
+            variantCaller: variantCaller.rawValue,
+            consensusCaller: consensusCaller.rawValue,
+            skipOptions: skipOptions.map(\.rawValue).sorted()
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -117,6 +136,9 @@ struct ViralReconWizardSheet: View {
         }
         .onChange(of: canRun) { _, ready in
             onRunnerAvailabilityChange(ready)
+        }
+        .onChange(of: buildErrorRecoveryKey) { _, _ in
+            clearBuildError()
         }
         .onChange(of: selectedPlatformOverride) { _, _ in
             refreshResolvedInputs()
@@ -416,6 +438,7 @@ struct ViralReconWizardSheet: View {
             onRun(request)
         } catch {
             buildError = "Could not prepare Viral Recon: \(error.localizedDescription)"
+            onRunnerAvailabilityChange(canRun)
         }
     }
 
@@ -490,11 +513,16 @@ struct ViralReconWizardSheet: View {
         reference: ViralReconReference,
         stagingDirectory: URL
     ) throws -> ViralReconPrimerSelection {
+        let genomeReferenceName: String?
         if case .genome(let accession) = reference {
+            let trimmed = accession.trimmingCharacters(in: .whitespacesAndNewlines)
             try ViralReconWizardPrimerCompatibility.validateGenomeAccession(
-                accession,
+                trimmed,
                 manifest: option.bundle.manifest
             )
+            genomeReferenceName = trimmed
+        } else {
+            genomeReferenceName = nil
         }
 
         if case .local(let fastaURL, _) = reference {
@@ -524,7 +552,7 @@ struct ViralReconWizardSheet: View {
         return try ViralReconWizardPrimerStaging.stageGenomePrimerSelection(
             primerBundleURL: option.bundle.url,
             sourceReferenceFASTAURL: selectedLocalReferenceURL,
-            genomeAccession: genomeAccession,
+            genomeAccession: genomeReferenceName ?? genomeAccession,
             destinationDirectory: stagingDirectory
         )
     }
@@ -567,6 +595,12 @@ struct ViralReconWizardSheet: View {
             browsedGFFURL = url
             buildError = nil
         }
+    }
+
+    private func clearBuildError() {
+        guard buildError != nil else { return }
+        buildError = nil
+        onRunnerAvailabilityChange(canRun)
     }
 
     private func displayPath(for url: URL) -> String {
@@ -906,6 +940,23 @@ private enum PlatformOverride: String, CaseIterable {
 private enum ReferenceMode {
     case sarsCoV2Genome
     case localFASTA
+}
+
+private struct BuildErrorRecoveryKey: Equatable {
+    let selectedPrimerID: String
+    let selectedReferenceMode: ReferenceMode
+    let genomeAccession: String
+    let selectedReferenceID: String
+    let browsedReferenceURL: URL?
+    let browsedGFFURL: URL?
+    let executor: String
+    let version: String
+    let minimumMappedReads: Int
+    let maxCPUs: Int
+    let maxMemory: String
+    let variantCaller: String
+    let consensusCaller: String
+    let skipOptions: [String]
 }
 
 private struct PrimerOption: Identifiable {
