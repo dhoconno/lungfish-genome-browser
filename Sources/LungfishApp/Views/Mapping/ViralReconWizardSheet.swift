@@ -162,6 +162,7 @@ struct ViralReconWizardSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(inputSummary)
                     .accessibilityIdentifier(ViralReconAccessibilityID.inputSummary)
+                    .accessibilityLabel(inputSummary)
                 Picker("Platform", selection: $selectedPlatformOverride) {
                     ForEach(PlatformOverride.allCases, id: \.self) { option in
                         Text(option.title).tag(option)
