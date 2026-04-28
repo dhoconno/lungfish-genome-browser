@@ -174,6 +174,11 @@ struct RunSubcommand: AsyncParsableCommand {
             }
         }
 
+        let isViralReconWorkflow = Self.normalizedViralReconWorkflowName(workflow) != nil
+        if workflow.contains("nf-core") || isViralReconWorkflow {
+            _ = try validateViralReconWorkflowName()
+        }
+
         if dryRun {
             print(formatter.info("Dry run - workflow would execute with:"))
             print("  Workflow: \(workflow)")
@@ -191,10 +196,10 @@ struct RunSubcommand: AsyncParsableCommand {
 
         // Determine workflow type
         let workflowURL = URL(fileURLWithPath: workflow)
-        let isNextflow = workflowURL.pathExtension == "nf" || workflow.contains("nf-core")
+        let isNextflow = workflowURL.pathExtension == "nf" || workflow.contains("nf-core") || isViralReconWorkflow
         let isSnakemake = workflowURL.lastPathComponent.lowercased().contains("snakefile")
 
-        if workflow.contains("nf-core") {
+        if workflow.contains("nf-core") || isViralReconWorkflow {
             try await runNFCoreWorkflow(
                 workflowParams: workflowParams,
                 formatter: formatter
@@ -219,11 +224,12 @@ struct RunSubcommand: AsyncParsableCommand {
         workflowParams: [String: String],
         formatter: TerminalFormatter
     ) async throws {
-        guard let supportedWorkflow = NFCoreSupportedWorkflowCatalog.workflow(named: workflow) else {
+        let normalizedWorkflow = try validateViralReconWorkflowName()
+        guard let supportedWorkflow = NFCoreSupportedWorkflowCatalog.workflow(named: normalizedWorkflow) else {
             throw CLIError.workflowFailed(reason: "Unsupported nf-core workflow: \(workflow)")
         }
-        guard !input.isEmpty else {
-            throw CLIError.workflowFailed(reason: "At least one --input file is required for nf-core workflows")
+        guard input.count == 1 else {
+            throw CLIError.workflowFailed(reason: "Exactly one --input samplesheet is required for nf-core/viralrecon")
         }
 
         let inputURLs = input.map { URL(fileURLWithPath: $0).standardizedFileURL }
@@ -261,6 +267,22 @@ struct RunSubcommand: AsyncParsableCommand {
             throw CLIError.workflowFailed(reason: "Nextflow exited with status \(processResult.exitCode). See \(runBundleURL.appendingPathComponent("logs/stderr.log").path)")
         }
         print(runBundleURL.path)
+    }
+
+    func validateViralReconWorkflowName() throws -> String {
+        guard let normalized = Self.normalizedViralReconWorkflowName(workflow) else {
+            throw CLIError.workflowFailed(reason: "Unsupported nf-core workflow: \(workflow). Only nf-core/viralrecon is supported.")
+        }
+        return normalized
+    }
+
+    private static func normalizedViralReconWorkflowName(_ workflow: String) -> String? {
+        switch workflow.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "viralrecon", "nf-core/viralrecon":
+            return "viralrecon"
+        default:
+            return nil
+        }
     }
 
     private func resolveRunBundleURL(workflowName: String) throws -> URL {
