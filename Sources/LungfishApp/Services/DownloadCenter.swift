@@ -23,7 +23,6 @@ public enum OperationType: String, Sendable {
     case blastVerification = "BLAST"
     case bamPrimerTrim = "Primer Trim"
     case variantCalling = "Variant Calling"
-    case nfCoreWorkflow = "nf-core Workflow"
     case viralRecon = "Viral Recon"
 }
 

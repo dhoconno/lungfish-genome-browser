@@ -327,7 +327,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     private var aiAssistantService: AIAssistantService?
     private var helpWindowController: HelpWindowController?
     private var windowSizeDialogController: WindowSizeDialogController?
-    private var nfCoreWorkflowDialogController: NFCoreWorkflowDialogController?
 
     /// AI tool registry for the assistant
     private var aiToolRegistry: AIToolRegistry?
@@ -4852,26 +4851,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             bundle: split.viewerController.currentReferenceBundle,
             preferredAlignmentTrackID: nil
         )
-    }
-
-    @objc func showNFCoreWorkflows(_ sender: Any?) {
-        let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL
-        let service: NFCoreWorkflowExecutionService
-        if AppUITestConfiguration.current.isEnabled,
-           AppUITestConfiguration.current.backendMode == .deterministic {
-            service = NFCoreWorkflowExecutionService(processRunner: AppUITestNFCoreWorkflowProcessRunner())
-        } else {
-            service = NFCoreWorkflowExecutionService()
-        }
-        let controller = NFCoreWorkflowDialogController(projectURL: projectURL, executionService: service)
-        nfCoreWorkflowDialogController = controller
-        if let window = mainWindowController?.window {
-            window.beginSheet(controller.window!) { [weak self] _ in
-                self?.nfCoreWorkflowDialogController = nil
-            }
-        } else {
-            controller.showWindow(sender)
-        }
     }
 
     func showFASTQOperationsDialog(
