@@ -534,15 +534,11 @@ struct ViralReconWizardSheet: View {
             )
         }
 
-        if let fastaURL = option.bundle.fastaURL {
-            return ViralReconPrimerSelection(
-                bundleURL: option.bundle.url,
-                displayName: option.bundle.manifest.displayName,
-                bedURL: option.bundle.bedURL,
-                fastaURL: fastaURL,
-                leftSuffix: "_LEFT",
-                rightSuffix: "_RIGHT",
-                derivedFasta: false
+        if option.bundle.fastaURL != nil {
+            return try ViralReconWizardPrimerStaging.stageBundledGenomePrimerSelection(
+                primerBundleURL: option.bundle.url,
+                genomeAccession: genomeReferenceName ?? genomeAccession,
+                destinationDirectory: stagingDirectory
             )
         }
 
@@ -771,6 +767,23 @@ enum ViralReconWizardPrimerCompatibility {
 }
 
 enum ViralReconWizardPrimerStaging {
+    static func stageBundledGenomePrimerSelection(
+        primerBundleURL: URL,
+        genomeAccession: String,
+        destinationDirectory: URL
+    ) throws -> ViralReconPrimerSelection {
+        let bundle = try PrimerSchemeBundle.load(from: primerBundleURL)
+        guard let fastaURL = bundle.fastaURL else {
+            throw WizardError.missingBundledPrimerFASTA
+        }
+        return try ViralReconPrimerStager.stage(
+            primerBundleURL: primerBundleURL,
+            referenceFASTAURL: fastaURL,
+            referenceName: genomeAccession.trimmingCharacters(in: .whitespacesAndNewlines),
+            destinationDirectory: destinationDirectory
+        )
+    }
+
     static func stageGenomePrimerSelection(
         primerBundleURL: URL,
         sourceReferenceFASTAURL: URL,
@@ -995,6 +1008,7 @@ private enum WizardError: Error, LocalizedError {
     case missingGenome
     case missingReference
     case missingReferenceForPrimerFasta
+    case missingBundledPrimerFASTA
 
     var errorDescription: String? {
         switch self {
@@ -1010,6 +1024,8 @@ private enum WizardError: Error, LocalizedError {
             return "select a local SARS-CoV-2 reference FASTA."
         case .missingReferenceForPrimerFasta:
             return "select a local SARS-CoV-2 FASTA so primer sequences can be derived."
+        case .missingBundledPrimerFASTA:
+            return "select a primer scheme with bundled primer FASTA."
         }
     }
 }

@@ -676,6 +676,54 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         XCTAssertTrue(wizardSource.contains("genomeAccession: genomeReferenceName ?? genomeAccession"))
     }
 
+    func testViralReconBundledPrimerFastaKeepsBedAlignedToEquivalentGenomeAccession() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ViralReconBundledPrimerFasta-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let primerBundle = root.appendingPathComponent("sars2.lungfishprimers", isDirectory: true)
+        try FileManager.default.createDirectory(at: primerBundle, withIntermediateDirectories: true)
+        let manifestData = try JSONEncoder().encode(Self.sarsCoV2PrimerManifest())
+        try manifestData.write(to: primerBundle.appendingPathComponent("manifest.json"))
+        try "Test primer scheme\n".write(
+            to: primerBundle.appendingPathComponent("PROVENANCE.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        MN908947.3\t0\t4\tamplicon_1_LEFT\t1\t+
+        MN908947.3\t4\t8\tamplicon_1_RIGHT\t1\t-
+        """.write(to: primerBundle.appendingPathComponent("primers.bed"), atomically: true, encoding: .utf8)
+        try """
+        >amplicon_1_LEFT
+        AAAA
+        >amplicon_1_RIGHT
+        CCCC
+        """.write(to: primerBundle.appendingPathComponent("primers.fasta"), atomically: true, encoding: .utf8)
+
+        let selection = try ViralReconWizardPrimerStaging.stageBundledGenomePrimerSelection(
+            primerBundleURL: primerBundle,
+            genomeAccession: "NC_045512.2",
+            destinationDirectory: root
+        )
+
+        XCTAssertFalse(selection.derivedFasta)
+        let stagedBED = try String(contentsOf: selection.bedURL, encoding: .utf8)
+        XCTAssertTrue(stagedBED.contains("NC_045512.2\t0\t4\tamplicon_1_LEFT"))
+        XCTAssertFalse(stagedBED.contains("MN908947.3\t0\t4\tamplicon_1_LEFT"))
+
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let wizardSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/LungfishApp/Views/Mapping/ViralReconWizardSheet.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(wizardSource.contains("stageBundledGenomePrimerSelection"))
+    }
+
     func testViralReconReadinessRejectsBlankGenomeBeforeRun() {
         let evaluation = ViralReconWizardReadiness.evaluate(
             ViralReconWizardReadiness.State(
