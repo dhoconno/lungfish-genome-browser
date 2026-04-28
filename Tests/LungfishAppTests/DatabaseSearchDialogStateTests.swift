@@ -57,6 +57,41 @@ final class DatabaseSearchDialogStateTests: XCTestCase {
         XCTAssertNotEqual(viewModel.searchPhase, .complete(count: 1))
     }
 
+    func testStaleSearchCompletionResetsProgressSoEditedQueryCanStartNewSearch() async throws {
+        let backend = DelayedDatabaseSearchBackend()
+        let state = DatabaseSearchDialogState(
+            automationBackend: DatabaseSearchAutomationBackend { request in
+                try await backend.search(request)
+            }
+        )
+        let viewModel = state.genBankGenomesViewModel
+
+        viewModel.searchText = "query-A"
+        viewModel.organismFilter = "Protopterus"
+        viewModel.performSearch()
+        await backend.waitUntilStarted("query-A")
+
+        viewModel.searchText = "query-B"
+        viewModel.organismFilter = "Neoceratodus"
+
+        await backend.complete("query-A", accession: "A")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertTrue(viewModel.results.isEmpty)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.searchPhase, .idle)
+        XCTAssertFalse(viewModel.isSearching)
+        XCTAssertFalse(viewModel.testingHasCurrentSearchTask)
+
+        viewModel.performSearch()
+        await backend.waitUntilStarted("query-B")
+        await backend.complete("query-B", accession: "B")
+        try await waitForSearchCompletion(viewModel)
+
+        XCTAssertEqual(viewModel.results.map(\.accession), ["B"])
+        XCTAssertEqual(viewModel.searchPhase, .complete(count: 1))
+    }
+
     func testImportedSRAAccessionListSearchCompletesAfterAccessionsAreCapturedAndCleared() async throws {
         let mockClient = DatabaseSearchDialogMockHTTPClient()
         await mockClient.register(

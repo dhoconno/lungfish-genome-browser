@@ -838,6 +838,10 @@ public class DatabaseBrowserViewModel: ObservableObject {
         searchPhase.isInProgress
     }
 
+    var testingHasCurrentSearchTask: Bool {
+        currentSearchTask != nil
+    }
+
     /// Whether a download is in progress
     @Published var isDownloading = false
 
@@ -1259,6 +1263,18 @@ public class DatabaseBrowserViewModel: ObservableObject {
         return true
     }
 
+    private func finishSearchTask(for token: DatabaseSearchRequestToken) {
+        let requestToken = AsyncRequestToken(
+            generation: token.generation,
+            identity: token.identity
+        )
+        guard searchValidationSession.shouldAccept(resultFor: requestToken) else { return }
+        currentSearchTask = nil
+        if token.identity != currentSearchIdentity(), searchPhase.isInProgress {
+            searchPhase = .idle
+        }
+    }
+
     private func resolveLargeResultAction(
         totalCount: Int,
         sourceLabel: String,
@@ -1345,6 +1361,11 @@ public class DatabaseBrowserViewModel: ObservableObject {
                             self.currentSearchTask = nil
                         }
                     }
+                }
+
+                await MainActor.run {
+                    guard let self else { return }
+                    self.finishSearchTask(for: searchToken)
                 }
             }
             return
@@ -2036,9 +2057,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
             performOnMainRunLoop { [weak self] in
                 guard let self = self else { return }
-                self.applySearchUpdate(for: searchToken) {
-                    self.currentSearchTask = nil
-                }
+                self.finishSearchTask(for: searchToken)
             }
         }
     }
