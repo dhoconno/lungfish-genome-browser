@@ -521,7 +521,7 @@ enum ResultSortOrder: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 }
 
-private enum LargeResultAction {
+enum LargeResultAction: Sendable {
     case firstThousand
     case loadAll
     case cancel
@@ -1043,6 +1043,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
     private let ncbiService: NCBIService
     private let enaService: ENAService
     private let automationBackend: DatabaseSearchAutomationBackend?
+    private let largeResultActionProvider: (@Sendable (_ totalCount: Int, _ sourceLabel: String) async -> LargeResultAction)?
 
     /// View model for genome assembly downloads (FASTA + GFF3 + bundle building).
     private lazy var genomeDownloadViewModel = GenomeDownloadViewModel(ncbiService: ncbiService)
@@ -1056,12 +1057,14 @@ public class DatabaseBrowserViewModel: ObservableObject {
         source: DatabaseSource,
         ncbiService: NCBIService = NCBIService(),
         enaService: ENAService = ENAService(),
-        automationBackend: DatabaseSearchAutomationBackend? = nil
+        automationBackend: DatabaseSearchAutomationBackend? = nil,
+        largeResultActionProvider: (@Sendable (_ totalCount: Int, _ sourceLabel: String) async -> LargeResultAction)? = nil
     ) {
         self.source = source
         self.ncbiService = ncbiService
         self.enaService = enaService
         self.automationBackend = automationBackend
+        self.largeResultActionProvider = largeResultActionProvider
         loadSearchHistory()
     }
 
@@ -1240,15 +1243,40 @@ public class DatabaseBrowserViewModel: ObservableObject {
         for token: DatabaseSearchRequestToken,
         _ update: () -> Void
     ) {
+        guard shouldAcceptSearchResult(for: token) else { return }
+        objectWillChange.send()
+        update()
+    }
+
+    private func shouldAcceptSearchResult(for token: DatabaseSearchRequestToken) -> Bool {
         let requestToken = AsyncRequestToken(
             generation: token.generation,
             identity: token.identity
         )
         guard searchValidationSession.shouldAccept(resultFor: requestToken),
               token.identity == currentSearchIdentity()
-        else { return }
-        objectWillChange.send()
-        update()
+        else { return false }
+        return true
+    }
+
+    private func resolveLargeResultAction(
+        totalCount: Int,
+        sourceLabel: String,
+        for token: DatabaseSearchRequestToken
+    ) async throws -> LargeResultAction {
+        guard shouldAcceptSearchResult(for: token) else {
+            throw CancellationError()
+        }
+        let action: LargeResultAction
+        if let largeResultActionProvider {
+            action = await largeResultActionProvider(totalCount, sourceLabel)
+        } else {
+            action = await confirmLargeResultActionDialog(totalCount: totalCount, sourceLabel: sourceLabel)
+        }
+        guard shouldAcceptSearchResult(for: token) else {
+            throw CancellationError()
+        }
+        return action
     }
 
     /// Initiates a search operation.
@@ -1274,6 +1302,8 @@ public class DatabaseBrowserViewModel: ObservableObject {
         errorMessage = nil
         results = []
         selectedRecords = []
+        let capturedImportedAccessions = importedAccessions
+        importedAccessions = []  // Clear after capture to prevent stale reuse on next search
         let searchToken = beginSearchValidation()
 
         if let automationBackend {
@@ -1374,8 +1404,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let capturedSRAMinMbases: String? = isSRASearch ? sraMinMbases.trimmingCharacters(in: .whitespaces) : nil
         let capturedSRAPubDateFrom: String? = isSRASearch ? sraPubDateFrom.trimmingCharacters(in: .whitespaces) : nil
         let capturedSRAPubDateTo: String? = isSRASearch ? sraPubDateTo.trimmingCharacters(in: .whitespaces) : nil
-        let capturedImportedAccessions = importedAccessions
-        importedAccessions = []  // Clear after capture to prevent stale reuse on next search
         let capturedSRAResultLimit = isSRASearch ? sraResultLimit : 200
 
         // Capture services as they are actors (safe to use across isolation boundaries)
@@ -1437,10 +1465,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
                                 logger.info("performSearch: Nucleotide total count = \(page.totalCount)")
 
                                 if page.totalCount > largeResultThreshold {
-                                    let action = await confirmLargeResultActionDialog(
-                                            totalCount: page.totalCount,
-                                            sourceLabel: "NCBI GenBank"
-                                        )
+                                    guard let self else { throw CancellationError() }
+                                    let action = try await self.resolveLargeResultAction(
+                                        totalCount: page.totalCount,
+                                        sourceLabel: "NCBI GenBank",
+                                        for: searchToken
+                                    )
                                     switch action {
                                     case .cancel:
                                         throw CancellationError()
@@ -1561,10 +1591,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
                                 logger.info("performSearch: Genome total count = \(page.totalCount)")
 
                                 if page.totalCount > largeResultThreshold {
-                                    let action = await confirmLargeResultActionDialog(
-                                            totalCount: page.totalCount,
-                                            sourceLabel: "NCBI Assembly"
-                                        )
+                                    guard let self else { throw CancellationError() }
+                                    let action = try await self.resolveLargeResultAction(
+                                        totalCount: page.totalCount,
+                                        sourceLabel: "NCBI Assembly",
+                                        for: searchToken
+                                    )
                                     switch action {
                                     case .cancel:
                                         throw CancellationError()
@@ -1737,9 +1769,11 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
                         // Large result set confirmation
                         if esearchResult.totalCount > capturedSRAResultLimit {
-                            let action = await confirmLargeResultActionDialog(
+                            guard let self else { throw CancellationError() }
+                            let action = try await self.resolveLargeResultAction(
                                 totalCount: esearchResult.totalCount,
-                                sourceLabel: "NCBI SRA"
+                                sourceLabel: "NCBI SRA",
+                                for: searchToken
                             )
                             switch action {
                             case .cancel:
@@ -1863,10 +1897,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
                     let targetCount: Int
                     if totalCount > largeResultThreshold {
-                        let action = await confirmLargeResultActionDialog(
-                                totalCount: totalCount,
-                                sourceLabel: "Pathoplexus"
-                            )
+                        guard let self else { throw CancellationError() }
+                        let action = try await self.resolveLargeResultAction(
+                            totalCount: totalCount,
+                            sourceLabel: "Pathoplexus",
+                            for: searchToken
+                        )
                         switch action {
                         case .cancel:
                             throw CancellationError()
