@@ -88,6 +88,30 @@ final class NvdResultViewControllerTests: XCTestCase {
         XCTAssertFalse(state.blastEnabled)
     }
 
+    func testContextMenuExtractSequenceTargetsClickedContigWhenSelectionDiffers() throws {
+        let fixture = try NvdMenuFixture(duplicateContigs: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+
+        let vc = NvdResultViewController()
+        var extractedRecords: [String] = []
+        vc.onExtractSequenceRequested = { records, _ in
+            extractedRecords = records
+        }
+        _ = vc.view
+        vc.configure(database: fixture.database, manifest: fixture.manifest, bundleURL: fixture.bundleURL)
+
+        vc.testSelectOutlineRow(1)
+        XCTAssertEqual(vc.testSelectedOutlineContigSamples(), ["sample2"])
+
+        XCTAssertTrue(vc.testInvokeContextMenuItem(title: "Extract Sequence\u{2026}", forContigAt: 0))
+
+        XCTAssertEqual(extractedRecords.count, 1)
+        XCTAssertTrue(extractedRecords[0].contains("AACCGGTT"))
+        XCTAssertFalse(extractedRecords[0].contains("TTGGCCAA"))
+    }
+
     func testContextMenuExposesSharedFastaActionsWhenCallbacksPresent() throws {
         let fixture = try NvdMenuFixture()
         addTeardownBlock {

@@ -1198,8 +1198,17 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
     /// Presents the unified classifier extraction dialog for the current selection.
     private func presentUnifiedExtractionDialog() {
+        presentUnifiedExtractionDialog(selectors: buildNvdSelectors())
+    }
+
+    private func presentUnifiedExtractionDialog(for hit: NvdBlastHit) {
+        presentUnifiedExtractionDialog(selectors: [
+            ClassifierRowSelector(sampleId: hit.sampleId, accessions: [hit.qseqid], taxIds: [])
+        ])
+    }
+
+    private func presentUnifiedExtractionDialog(selectors: [ClassifierRowSelector]) {
         guard let resultPath = database?.databaseURL else { return }
-        let selectors = buildNvdSelectors()
         guard !selectors.isEmpty else { return }
         let firstContig = selectors.first?.accessions.first ?? "extract"
         presentClassifierExtractionDialog(
@@ -1211,6 +1220,11 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     }
 
     @objc private func contextExtractReadsUnified(_ sender: Any?) {
+        if let hit = (sender as? NSMenuItem)?.representedObject as? NvdBlastHit {
+            presentUnifiedExtractionDialog(for: hit)
+            return
+        }
+
         if outlineView.selectedRowIndexes.isEmpty,
            outlineView.clickedRow >= 0 {
             outlineView.selectRowIndexes(IndexSet(integer: outlineView.clickedRow), byExtendingSelection: false)
@@ -1547,28 +1561,30 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             keyEquivalent: ""
         )
         extractReadsItem.target = self
-        extractReadsItem.isEnabled = hasVisibleIdentitySelection() || outlineView.clickedRow >= 0
+        extractReadsItem.representedObject = hit
+        extractReadsItem.isEnabled = database != nil
         menu.addItem(extractReadsItem)
         menu.addItem(NSMenuItem.separator())
 
         let selectedHit = singleIdentityBackedSelectedHit(matching: hit)
+        let contextFASTARecord = contigFASTARecord(for: hit)
         let sharedItems = FASTASequenceActionMenuBuilder.buildItems(
-            selectionCount: visibleIdentitySelectionCount(),
+            selectionCount: contextFASTARecord == nil ? 0 : 1,
             handlers: FASTASequenceActionHandlers(
-                onExtractSequence: { [weak self] in self?.contextExtractSequence(nil) },
+                onExtractSequence: { [weak self] in self?.extractSequence(for: hit) },
                 onBlast: (onBlastVerification != nil && database != nil && selectedHit != nil)
                     ? { [weak self] in
                         self?.performBlastVerification(for: hit)
                     }
                     : nil,
-                onCopy: contigFASTARecord(for: hit) == nil ? nil : { [weak self] in self?.copyContigSequence(hit) },
-                onExport: (onExportFASTARequested == nil || contigFASTARecord(for: hit) == nil) ? nil : { [weak self] in
+                onCopy: contextFASTARecord == nil ? nil : { [weak self] in self?.copyContigSequence(hit) },
+                onExport: (onExportFASTARequested == nil || contextFASTARecord == nil) ? nil : { [weak self] in
                     self?.exportContigSequence(hit)
                 },
-                onCreateBundle: (onCreateBundleRequested == nil || contigFASTARecord(for: hit) == nil) ? nil : { [weak self] in
+                onCreateBundle: (onCreateBundleRequested == nil || contextFASTARecord == nil) ? nil : { [weak self] in
                     self?.createBundle(for: hit)
                 },
-                onRunOperation: (onRunOperationRequested == nil || contigFASTARecord(for: hit) == nil) ? nil : { [weak self] in
+                onRunOperation: (onRunOperationRequested == nil || contextFASTARecord == nil) ? nil : { [weak self] in
                     self?.runOperation(for: hit)
                 }
             )
@@ -1622,6 +1638,16 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             case .taxonGroup:
                 return nil
             }
+        }
+    }
+
+    private func extractSequence(for hit: NvdBlastHit) {
+        guard let record = contigFASTARecord(for: hit) else { return }
+        let records = [record]
+        if let onExtractSequenceRequested {
+            onExtractSequenceRequested(records, suggestedSequenceName(for: records, fallback: "nvd-contig"))
+        } else {
+            presentUnifiedExtractionDialog(for: hit)
         }
     }
 
@@ -2342,6 +2368,20 @@ extension NvdResultViewController {
         let menu = NSMenu(title: "Test Menu")
         populateContextMenu(menu, for: displayedContigs[0])
         return menu.items.map(\.title)
+    }
+
+    func testInvokeContextMenuItem(title: String, forContigAt index: Int) -> Bool {
+        guard displayedContigs.indices.contains(index) else { return false }
+        let menu = NSMenu(title: "Test Menu")
+        populateContextMenu(menu, for: displayedContigs[index])
+        guard let item = menu.items.first(where: { $0.title == title }),
+              item.isEnabled,
+              let action = item.action,
+              let target = item.target else {
+            return false
+        }
+        NSApp.sendAction(action, to: target, from: item)
+        return true
     }
 }
 
