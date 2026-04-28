@@ -35,12 +35,14 @@ final class ViralReconWorkflowExecutionService {
             cliCommand: commandPreview
         )
         logPreparation(for: persistedRequest, bundleURL: bundleURL, commandPreview: commandPreview, operationID: operationID)
+        let outputReplayState = ViralReconProcessOutputReplayState()
 
         do {
             let processResult = try await processRunner.runLungfishCLI(
                 arguments: persistedRequest.cliArguments(bundlePath: bundleURL),
                 workingDirectory: bundleURL,
                 outputHandler: { [operationCenter] output in
+                    outputReplayState.didStreamOutput = true
                     switch output {
                     case .standardOutput(let line):
                         operationCenter.log(id: operationID, level: .info, message: line)
@@ -50,7 +52,9 @@ final class ViralReconWorkflowExecutionService {
                 }
             )
             try writeProcessLogs(processResult, to: bundleURL.appendingPathComponent("logs", isDirectory: true))
-            logProcessOutput(processResult, operationID: operationID)
+            if !outputReplayState.didStreamOutput {
+                logProcessOutput(processResult, operationID: operationID)
+            }
 
             if processResult.exitCode == 0 {
                 operationCenter.log(id: operationID, level: .info, message: "Viral Recon completed")
@@ -261,17 +265,10 @@ final class ViralReconWorkflowExecutionService {
     }
 
     private func cliCommandPreview(for request: ViralReconRunRequest, bundleURL: URL) -> String {
-        (["lungfish-cli"] + request.cliArguments(bundlePath: bundleURL))
-            .map(Self.shellEscaped)
-            .joined(separator: " ")
-    }
-
-    private static func shellEscaped(_ value: String) -> String {
-        let safeCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+-=.,/:@%")
-        if value.unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
-            return value
-        }
-        return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+        ViralReconWorkflowCommandPreview.build(
+            executableName: "lungfish-cli",
+            arguments: request.cliArguments(bundlePath: bundleURL)
+        )
     }
 
     private func stderrTail(_ stderr: String) -> String {
@@ -318,6 +315,30 @@ final class ViralReconWorkflowExecutionService {
             withIntermediateDirectories: true
         )
         try FileManager.default.copyItem(at: source, to: destination)
+    }
+}
+
+@MainActor
+private final class ViralReconProcessOutputReplayState {
+    var didStreamOutput = false
+}
+
+enum ViralReconWorkflowCommandPreview {
+    static func build(executableName: String, arguments: [String]) -> String {
+        ([executableName] + arguments)
+            .map(shellEscaped)
+            .joined(separator: " ")
+    }
+
+    static func shellEscaped(_ value: String) -> String {
+        guard !value.isEmpty else {
+            return "''"
+        }
+        let safeCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+-=.,/:@%")
+        if value.unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
+            return value
+        }
+        return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
 

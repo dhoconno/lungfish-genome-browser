@@ -200,6 +200,40 @@ final class ViralReconWorkflowExecutionServiceTests: XCTestCase {
         XCTAssertFalse(command.contains(" --input \(persistedSamplesheet.path)"))
     }
 
+    func testCommandPreviewQuotesEmptyArguments() {
+        XCTAssertEqual(
+            ViralReconWorkflowCommandPreview.build(
+                executableName: "lungfish-cli",
+                arguments: ["workflow", ""]
+            ),
+            "lungfish-cli workflow ''"
+        )
+    }
+
+    func testServiceDoesNotDuplicateProcessLinesWhenRunnerStreamsAndReturnsOutput() async throws {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("viral-recon-service-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let request = try ViralReconAppTestFixtures.illuminaRequest(root: temp)
+        let operationCenter = OperationCenter()
+        let runner = StreamingStubViralReconProcessRunner(result: .init(
+            exitCode: 0,
+            standardOutput: "streamed stdout\n",
+            standardError: "streamed stderr\n"
+        ))
+        let service = ViralReconWorkflowExecutionService(operationCenter: operationCenter, processRunner: runner)
+
+        let result = try await service.run(
+            request,
+            bundleRoot: temp.appendingPathComponent("Analyses", isDirectory: true)
+        )
+
+        let item = try XCTUnwrap(operationCenter.items.first { $0.id == result.operationID })
+        XCTAssertEqual(item.logEntries.map(\.message).filter { $0 == "streamed stdout" }.count, 1)
+        XCTAssertEqual(item.logEntries.map(\.message).filter { $0 == "streamed stderr" }.count, 1)
+    }
+
     func testConcreteRunnerStreamsOutputBeforeProcessReturns() async throws {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("viral-recon-runner-\(UUID().uuidString)", isDirectory: true)
@@ -253,6 +287,25 @@ private final class StubViralReconProcessRunner: ViralReconWorkflowProcessRunnin
     ) async throws -> ViralReconWorkflowProcessResult {
         invocations.append(Invocation(arguments: arguments, workingDirectory: workingDirectory))
         try onRun?()
+        return result
+    }
+}
+
+@MainActor
+private final class StreamingStubViralReconProcessRunner: ViralReconWorkflowProcessRunning {
+    let result: ViralReconWorkflowProcessResult
+
+    init(result: ViralReconWorkflowProcessResult) {
+        self.result = result
+    }
+
+    func runLungfishCLI(
+        arguments: [String],
+        workingDirectory: URL,
+        outputHandler: (@MainActor @Sendable (ViralReconWorkflowProcessOutput) -> Void)?
+    ) async throws -> ViralReconWorkflowProcessResult {
+        outputHandler?(.standardOutput("streamed stdout"))
+        outputHandler?(.standardError("streamed stderr"))
         return result
     }
 }
