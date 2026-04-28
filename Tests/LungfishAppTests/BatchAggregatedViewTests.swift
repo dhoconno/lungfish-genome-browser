@@ -563,6 +563,38 @@ final class BatchTableSelectionIdentityTests: XCTestCase {
         XCTAssertEqual(table.selectedAssemblyAccessions(), ["NC_B"])
     }
 
+    func testEsVirituSelectorsPreserveSampleAccessionPairsForDuplicateAccessions() {
+        let viewController = EsVirituResultViewController()
+        _ = viewController.view
+        viewController.isBatchMode = true
+
+        let table = viewController.testDetectionTableView
+        table.resultIdentity = "/project/Analyses/esviritu-visible-run-a"
+        table.result = Self.esvirituResult([
+            Self.viralAssembly(sampleId: "sample-A", assembly: "GCF_A", accession: "NC_DUP", reads: 40),
+            Self.viralAssembly(sampleId: "sample-B", assembly: "GCF_B", accession: "NC_DUP", reads: 20),
+        ])
+
+        let sampleARow = Self.row(in: table.testOutlineView) { item in
+            guard let assemblyItem = item as? ViralDetectionTableView.ViralAssemblyItem else { return false }
+            return assemblyItem.assembly.contigs.first?.sampleId == "sample-A"
+        }
+        let sampleBRow = Self.row(in: table.testOutlineView) { item in
+            guard let assemblyItem = item as? ViralDetectionTableView.ViralAssemblyItem else { return false }
+            return assemblyItem.assembly.contigs.first?.sampleId == "sample-B"
+        }
+        table.testOutlineView.selectRowIndexes(IndexSet([sampleARow, sampleBRow]), byExtendingSelection: false)
+        table.outlineViewSelectionDidChange(Notification(name: NSOutlineView.selectionDidChangeNotification, object: table.testOutlineView))
+
+        XCTAssertEqual(
+            viewController.testBuildEsVirituSelectors(),
+            [
+                ClassifierRowSelector(sampleId: "sample-A", accessions: ["NC_DUP"], taxIds: []),
+                ClassifierRowSelector(sampleId: "sample-B", accessions: ["NC_DUP"], taxIds: []),
+            ]
+        )
+    }
+
     func testVisibleKrakenSelectionSurvivesTreeReplacementWithDuplicateTaxonAcrossSamples() {
         let table = TaxonomyTableView(frame: .zero)
         table.resultIdentity = "/project/Analyses/kraken-visible-run-a"

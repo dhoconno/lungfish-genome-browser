@@ -1551,14 +1551,13 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         menu.addItem(extractReadsItem)
         menu.addItem(NSMenuItem.separator())
 
-        let selectedHit = singleIdentityBackedSelectedHit()
+        let selectedHit = singleIdentityBackedSelectedHit(matching: hit)
         let sharedItems = FASTASequenceActionMenuBuilder.buildItems(
             selectionCount: visibleIdentitySelectionCount(),
             handlers: FASTASequenceActionHandlers(
                 onExtractSequence: { [weak self] in self?.contextExtractSequence(nil) },
                 onBlast: (onBlastVerification != nil && database != nil && selectedHit != nil)
                     ? { [weak self] in
-                        guard let hit = self?.singleIdentityBackedSelectedHit() else { return }
                         self?.performBlastVerification(for: hit)
                     }
                     : nil,
@@ -2188,6 +2187,16 @@ extension NvdResultViewController {
         }
     }
 
+    private func singleIdentityBackedSelectedHit(matching contextHit: NvdBlastHit) -> NvdBlastHit? {
+        guard let selected = singleIdentityBackedSelectedHit(),
+              selected.sampleId == contextHit.sampleId,
+              selected.qseqid == contextHit.qseqid,
+              selected.hitRank == contextHit.hitRank else {
+            return nil
+        }
+        return selected
+    }
+
     private func selectedOutlineItemsFromCurrentIndexes() -> [NvdOutlineItem] {
         outlineView.selectedRowIndexes.compactMap { row in
             guard row >= 0 else { return nil }
@@ -2308,12 +2317,12 @@ extension NvdResultViewController {
         let blastEnabled: Bool
     }
 
-    func testContextMenuActionStateForFirstContig() -> TestContextMenuActionState {
-        guard !displayedContigs.isEmpty else {
+    func testContextMenuActionStateForContig(at index: Int) -> TestContextMenuActionState {
+        guard displayedContigs.indices.contains(index) else {
             return TestContextMenuActionState(identitySelectionCount: 0, menuSelectionCount: 0, blastEnabled: false)
         }
         let menu = NSMenu(title: "Test Menu")
-        populateContextMenu(menu, for: displayedContigs[0])
+        populateContextMenu(menu, for: displayedContigs[index])
         let blastItem = menu.items.first { $0.title == "Verify with BLAST\u{2026}" }
         let count = visibleIdentitySelectionCount()
         return TestContextMenuActionState(
@@ -2321,6 +2330,10 @@ extension NvdResultViewController {
             menuSelectionCount: count,
             blastEnabled: blastItem?.isEnabled == true
         )
+    }
+
+    func testContextMenuActionStateForFirstContig() -> TestContextMenuActionState {
+        testContextMenuActionStateForContig(at: 0)
     }
 
     func testContextMenuTitlesForFirstContig() -> [String] {

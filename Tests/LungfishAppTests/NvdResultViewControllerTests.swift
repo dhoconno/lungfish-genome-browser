@@ -61,11 +61,31 @@ final class NvdResultViewControllerTests: XCTestCase {
         XCTAssertEqual(vc.testSelectedOutlineContigSamples(), ["sample2"])
 
         vc.testSelectOutlineRowsWithoutIdentitySync(IndexSet([0, 1]))
-        let state = vc.testContextMenuActionStateForFirstContig()
+        let state = vc.testContextMenuActionStateForContig(at: 1)
 
         XCTAssertEqual(state.identitySelectionCount, 1)
         XCTAssertEqual(state.menuSelectionCount, 1)
         XCTAssertTrue(state.blastEnabled)
+    }
+
+    func testContextMenuBlastDisabledWhenClickedContigDiffersFromIdentitySelection() throws {
+        let fixture = try NvdMenuFixture(duplicateContigs: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+
+        let vc = NvdResultViewController()
+        vc.onBlastVerification = { _, _ in }
+        _ = vc.view
+        vc.configure(database: fixture.database, manifest: fixture.manifest, bundleURL: fixture.bundleURL)
+
+        vc.testSelectOutlineRow(1)
+        XCTAssertEqual(vc.testSelectedOutlineContigSamples(), ["sample2"])
+
+        let state = vc.testContextMenuActionStateForFirstContig()
+
+        XCTAssertEqual(state.identitySelectionCount, 1)
+        XCTAssertFalse(state.blastEnabled)
     }
 
     func testContextMenuExposesSharedFastaActionsWhenCallbacksPresent() throws {

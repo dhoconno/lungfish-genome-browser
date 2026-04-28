@@ -159,6 +159,29 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         return accessions
     }
 
+    /// Returns sample/accession pairs represented by the current selection.
+    ///
+    /// Assembly rows expand to one pair per contig. Detection rows contribute
+    /// their own `(sampleId, accession)` pair. Callers that dispatch per-sample
+    /// extraction must use this API instead of independently combining
+    /// `selectedAssemblyAccessions()` with `selectedSampleIDs()`.
+    public func selectedSampleAccessions() -> [(sampleId: String, accession: String)] {
+        var pairs: [(sampleId: String, accession: String)] = []
+        for item in selectedVisibleItemsByIdentity() {
+            if let assemblyItem = item as? ViralAssemblyItem {
+                pairs.append(contentsOf: assemblyItem.assembly.contigs.map { detection in
+                    (sampleId: detection.sampleId, accession: detection.accession)
+                })
+            } else if let detectionItem = item as? ViralDetectionItem {
+                pairs.append((
+                    sampleId: detectionItem.detection.sampleId,
+                    accession: detectionItem.detection.accession
+                ))
+            }
+        }
+        return pairs
+    }
+
     /// Returns sample IDs represented by the current selection.
     ///
     /// Assembly rows contribute the sample ID of their first contig.
