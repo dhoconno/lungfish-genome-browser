@@ -48,6 +48,7 @@ struct FastqCommand: AsyncParsableCommand {
             FastqOrientSubcommand.self,
             FastqScrubHumanSubcommand.self,
             FastqSequenceFilterSubcommand.self,
+            FastqRiboDetectorSubcommand.self,
         ]
     )
 }

@@ -1246,10 +1246,10 @@ final class FastqCommandTests: XCTestCase {
         XCTAssertEqual(FastqCommand.configuration.commandName, "fastq")
     }
 
-    /// Verifies that FastqCommand has all 22 subcommands registered.
+    /// Verifies that FastqCommand has all 23 subcommands registered.
     func testFastqSubcommandCount() {
         let subcommands = FastqCommand.configuration.subcommands
-        XCTAssertEqual(subcommands.count, 22, "FastqCommand should have 22 subcommands")
+        XCTAssertEqual(subcommands.count, 23, "FastqCommand should have 23 subcommands")
     }
 
     /// Verifies that all expected subcommand names are registered.
@@ -1261,7 +1261,7 @@ final class FastqCommandTests: XCTestCase {
             "subsample", "length-filter", "quality-trim", "adapter-trim", "fixed-trim",
             "contaminant-filter", "primer-remove", "error-correct",
             "merge", "repair", "deinterleave", "interleave", "deduplicate",
-            "demultiplex", "import-ont",
+            "demultiplex", "import-ont", "ribodetector",
         ]
         for name in expected {
             XCTAssertTrue(names.contains(name), "Missing subcommand: \(name)")
@@ -1423,6 +1423,42 @@ final class FastqCommandTests: XCTestCase {
 
         XCTAssertTrue(args.contains("ref=\(phixReference.path)"))
         XCTAssertFalse(args.contains("ref=phix174_ill.ref.fa.gz"))
+    }
+
+    // MARK: - RiboDetector Argument Parsing
+
+    func testRiboDetectorParsesRetainEnsureReadLengthAndOutputDirectory() throws {
+        let cmd = try FastqRiboDetectorSubcommand.parse([
+            "input.fasta",
+            "--retain", "rrna",
+            "--ensure", "rrna",
+            "--read-length", "100",
+            "--threads", "4",
+            "-o", "/tmp/ribodetector-out",
+        ])
+
+        XCTAssertEqual(cmd.input, "input.fasta")
+        XCTAssertEqual(cmd.retain, "rrna")
+        XCTAssertEqual(cmd.ensure, "rrna")
+        XCTAssertEqual(cmd.readLength, 100)
+        XCTAssertEqual(cmd.threads, 4)
+        XCTAssertEqual(cmd.outputDirectory, "/tmp/ribodetector-out")
+    }
+
+    func testRiboDetectorPlansFASTAOutputsForBothReadClasses() throws {
+        let outputDirectory = URL(fileURLWithPath: "/tmp/ribodetector-out", isDirectory: true)
+        let outputs = try FastqRiboDetectorSubcommand.plannedOutputs(
+            inputURL: URL(fileURLWithPath: "/data/sample.fasta"),
+            outputDirectory: outputDirectory,
+            retention: .both
+        )
+
+        XCTAssertEqual(outputs.retainedOutputURLs.map(\.lastPathComponent), [
+            "sample.norrna.fasta",
+            "sample.rrna.fasta",
+        ])
+        XCTAssertEqual(outputs.nonRRNAOutputURL.lastPathComponent, "sample.norrna.fasta")
+        XCTAssertEqual(outputs.rRNAOutputURL?.lastPathComponent, "sample.rrna.fasta")
     }
 
     // MARK: - Primer Removal Argument Parsing

@@ -119,7 +119,7 @@ public enum OperationContract {
                 acceptedFormats: [.fastq, .fasta],
                 requiredPairing: nil
             )
-        case .humanReadScrub:
+        case .humanReadScrub, .ribosomalRNAFilter:
             return OperationInput(
                 acceptedFormats: [.fastq, .fasta],
                 requiredPairing: nil

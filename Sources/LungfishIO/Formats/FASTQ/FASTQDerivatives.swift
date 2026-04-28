@@ -252,6 +252,27 @@ public enum FASTQDerivativePayload: Codable, Sendable, Equatable {
 }
 
 /// Transformation used to create a derived FASTQ pointer dataset.
+public enum FASTQRiboDetectorRetention: String, Codable, Sendable, CaseIterable {
+    case nonRRNA = "norrna"
+    case rRNA = "rrna"
+    case both
+
+    public var displayName: String {
+        switch self {
+        case .nonRRNA: return "non-rRNA"
+        case .rRNA: return "rRNA"
+        case .both: return "Both"
+        }
+    }
+}
+
+public enum FASTQRiboDetectorEnsure: String, Codable, Sendable, CaseIterable {
+    case rrna
+    case norrna
+    case both
+    case none
+}
+
 public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterable {
     // Subset operations (produce read ID list)
     case subsampleProportion
@@ -288,6 +309,9 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
     // Human read removal using NCBI sra-human-scrubber
     case humanReadScrub
 
+    // Ribosomal RNA classification/removal using RiboDetector
+    case ribosomalRNAFilter
+
     /// Whether this operation produces a subset (read IDs) or trim (positions).
     public var isSubsetOperation: Bool {
         switch self {
@@ -298,6 +322,8 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
         case .deduplicate:
             return false  // clumpify writes a full output file
         case .qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval:
+            return false
+        case .ribosomalRNAFilter:
             return false
         case .pairedEndMerge, .pairedEndRepair,
              .errorCorrection, .interleaveReformat, .reverseComplement,
@@ -311,7 +337,8 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
         switch self {
         case .pairedEndMerge, .pairedEndRepair,
              .errorCorrection, .interleaveReformat, .demultiplex,
-             .deduplicate, .humanReadScrub, .reverseComplement, .translate:
+             .deduplicate, .humanReadScrub, .reverseComplement, .translate,
+             .ribosomalRNAFilter:
             return true
         default:
             return false
@@ -331,6 +358,7 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
              .fixedTrim, .contaminantFilter, .primerRemoval,
              .reverseComplement, .translate,
              .demultiplex, .orient, .sequencePresenceFilter,
+             .ribosomalRNAFilter,
              .humanReadScrub:
             return true
         case .qualityTrim, .pairedEndMerge,
@@ -449,6 +477,12 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
     /// Database ID to use (default "human-scrubber"). Resolves via DatabaseRegistry.
     public var humanScrubDatabaseID: String?
 
+    // RiboDetector parameters
+    /// Which RiboDetector read class outputs were retained.
+    public var riboDetectorRetention: FASTQRiboDetectorRetention?
+    /// Conservative class-assurance mode passed to RiboDetector.
+    public var riboDetectorEnsure: FASTQRiboDetectorEnsure?
+
     // Orient parameters
     /// Relative path to the reference FASTA used for orientation (within Reference Sequences/).
     public var orientReferencePath: String?
@@ -539,6 +573,8 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
         demuxRunID: UUID? = nil,
         humanScrubRemoveReads: Bool? = nil,
         humanScrubDatabaseID: String? = nil,
+        riboDetectorRetention: FASTQRiboDetectorRetention? = nil,
+        riboDetectorEnsure: FASTQRiboDetectorEnsure? = nil,
         orientReferencePath: String? = nil,
         orientWordLength: Int? = nil,
         orientDbMask: String? = nil,
@@ -613,6 +649,8 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
         self.demuxRunID = demuxRunID
         self.humanScrubRemoveReads = humanScrubRemoveReads
         self.humanScrubDatabaseID = humanScrubDatabaseID
+        self.riboDetectorRetention = riboDetectorRetention
+        self.riboDetectorEnsure = riboDetectorEnsure
         self.orientReferencePath = orientReferencePath
         self.orientWordLength = orientWordLength
         self.orientDbMask = orientDbMask
@@ -695,6 +733,9 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
             let dbID = humanScrubDatabaseID ?? "human-scrubber"
             let mode = humanScrubRemoveReads == true ? "remove" : "mask"
             return "human-scrub-\(dbID)-\(mode)"
+        case .ribosomalRNAFilter:
+            let retention = riboDetectorRetention ?? .nonRRNA
+            return "ribodetector-\(retention.rawValue)"
         }
     }
 
@@ -836,6 +877,9 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
             let mode = humanScrubRemoveReads == true ? "remove" : "mask with N"
             let dbID = humanScrubDatabaseID ?? "human-scrubber"
             return "Human read scrub (\(mode), db: \(dbID))"
+        case .ribosomalRNAFilter:
+            let retention = riboDetectorRetention ?? .nonRRNA
+            return "RiboDetector (retain: \(retention.displayName))"
         }
     }
 }
@@ -1593,6 +1637,10 @@ extension FASTQDerivativeOperation {
             let dbID = humanScrubDatabaseID ?? "human-scrubber"
             let mode = humanScrubRemoveReads == true ? "removed" : "masked with N"
             return "Human reads were identified\(tool) using the '\(dbID)' k-mer database and \(mode)."
+
+        case .ribosomalRNAFilter:
+            let retention = riboDetectorRetention ?? .nonRRNA
+            return "Ribosomal RNA sequences were classified\(tool), retaining \(retention.displayName) reads."
         }
     }
 }

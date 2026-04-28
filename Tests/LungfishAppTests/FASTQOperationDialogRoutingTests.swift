@@ -405,6 +405,70 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         )
     }
 
+    func testRiboDetectorDefaultsToRetainingNonRRNAWithConservativeEnsureMode() throws {
+        let inputURL = URL(fileURLWithPath: "/tmp/sample.lungfishfastq")
+        let state = FASTQOperationDialogState(
+            initialCategory: .decontamination,
+            selectedInputURLs: [inputURL]
+        )
+
+        state.selectTool(.removeRibosomalRNA)
+
+        XCTAssertEqual(state.requiredInputKinds, [.fastqDataset])
+        XCTAssertTrue(state.isRunEnabled)
+        XCTAssertEqual(state.riboDetectorRetention, .nonRRNA)
+        XCTAssertFalse(state.showsOutputStrategyPicker)
+
+        state.prepareForRun()
+
+        XCTAssertEqual(
+            state.pendingLaunchRequest,
+            .derivative(
+                request: .ribosomalRNAFilter(retention: .nonRRNA, ensure: .rrna),
+                inputURLs: [inputURL],
+                outputMode: .perInput
+            )
+        )
+
+        let launchRequest = try XCTUnwrap(state.pendingLaunchRequest)
+        let invocation = try FASTQOperationExecutionService().buildInvocation(for: launchRequest)
+        XCTAssertEqual(invocation.subcommand, "fastq")
+        XCTAssertEqual(
+            invocation.arguments,
+            [
+                "ribodetector",
+                "/tmp/sample.lungfishfastq",
+                "--retain",
+                "norrna",
+                "--ensure",
+                "rrna",
+                "-o",
+                "<derived>",
+            ]
+        )
+    }
+
+    func testRiboDetectorCanRetainBothRRNAAndNonRRNA() {
+        let inputURL = URL(fileURLWithPath: "/tmp/sample.lungfishfastq")
+        let state = FASTQOperationDialogState(
+            initialCategory: .decontamination,
+            selectedInputURLs: [inputURL]
+        )
+
+        state.selectTool(.removeRibosomalRNA)
+        state.riboDetectorRetention = .both
+        state.prepareForRun()
+
+        XCTAssertEqual(
+            state.pendingLaunchRequest,
+            .derivative(
+                request: .ribosomalRNAFilter(retention: .both, ensure: .rrna),
+                inputURLs: [inputURL],
+                outputMode: .perInput
+            )
+        )
+    }
+
     func testDemultiplexBuiltInKitDoesNotRequireBarcodeDefinitionSelection() {
         let state = FASTQOperationDialogState(
             initialCategory: .demultiplexing,

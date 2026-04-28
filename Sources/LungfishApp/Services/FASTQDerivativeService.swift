@@ -69,6 +69,9 @@ public enum FASTQDerivativeRequest: Sendable, Equatable {
     // but the managed Deacon path always removes matched reads.
     case humanReadScrub(databaseID: String, removeReads: Bool)
 
+    // RiboDetector CPU operation for retaining non-rRNA, rRNA, or both classes.
+    case ribosomalRNAFilter(retention: FASTQRiboDetectorRetention, ensure: FASTQRiboDetectorEnsure)
+
     /// Human-readable label for this operation, used in the Operations panel.
     var operationLabel: String {
         switch self {
@@ -93,6 +96,7 @@ public enum FASTQDerivativeRequest: Sendable, Equatable {
         case .demultiplex: return "Demultiplex"
         case .orient: return "Orient Sequences"
         case .humanReadScrub: return "Human Read Scrub"
+        case .ribosomalRNAFilter: return "Remove ribosomal RNA sequences"
         }
     }
 
@@ -103,7 +107,7 @@ public enum FASTQDerivativeRequest: Sendable, Equatable {
             return true
         case .subsampleProportion, .subsampleCount, .lengthFilter,
              .searchText, .searchMotif, .deduplicate, .contaminantFilter,
-             .sequencePresenceFilter:
+             .sequencePresenceFilter, .ribosomalRNAFilter:
             return false
         case .pairedEndMerge, .pairedEndRepair,
              .errorCorrection, .interleaveReformat, .reverseComplement,
@@ -117,7 +121,7 @@ public enum FASTQDerivativeRequest: Sendable, Equatable {
         switch self {
         case .pairedEndMerge, .pairedEndRepair,
              .errorCorrection, .interleaveReformat, .demultiplex, .humanReadScrub,
-             .reverseComplement, .translate:
+             .reverseComplement, .translate, .ribosomalRNAFilter:
             return true
         default:
             return false
@@ -189,6 +193,7 @@ public enum FASTQDerivativeRequest: Sendable, Equatable {
         case .demultiplex: return "demultiplex"
         case .orient: return "orient"
         case .humanReadScrub: return "humanReadScrub"
+        case .ribosomalRNAFilter: return "ribosomalRNAFilter"
         }
     }
 
@@ -265,6 +270,8 @@ public enum FASTQDerivativeRequest: Sendable, Equatable {
             return ["wordLength": "\(wordLength)"]
         case .humanReadScrub(let databaseID, _):
             return ["databaseID": Self.canonicalHumanScrubDatabaseID(for: databaseID)]
+        case .ribosomalRNAFilter(let retention, let ensure):
+            return ["retention": retention.rawValue, "ensure": ensure.rawValue]
         }
     }
 }
@@ -470,6 +477,14 @@ extension FASTQDerivativeRequest {
             let resolvedDatabaseID = Self.canonicalHumanScrubDatabaseID(for: databaseID)
             return buildToolCommand(parts: [
                 "deacon", "filter", "-d", resolvedDatabaseID, inputPath, "-o", outputPath,
+            ])
+
+        case .ribosomalRNAFilter(let retention, let ensure):
+            return buildLungfishCommand(subcommand: "fastq ribodetector", args: [
+                inputPath,
+                "--retain", retention.rawValue,
+                "--ensure", ensure.rawValue,
+                "-o", outputPath,
             ])
         }
     }
@@ -2050,6 +2065,11 @@ public actor FASTQDerivativeService {
                 humanScrubRemoveReads: true,
                 humanScrubDatabaseID: Self.canonicalHumanScrubDatabaseID(for: databaseID),
                 toolUsed: "deacon"
+            )
+
+        case .ribosomalRNAFilter:
+            throw FASTQDerivativeError.invalidOperation(
+                "RiboDetector is handled by FASTQOperationExecutionService."
             )
         }
     }

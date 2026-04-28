@@ -74,6 +74,7 @@ final class FASTQOperationDialogState {
     var removeContaminantsMode: FASTQContaminantFilterMode
     var removeContaminantsKmerSize: Int
     var removeContaminantsHammingDistance: Int
+    var riboDetectorRetention: FASTQRiboDetectorRetention
 
     var removeDuplicatesPreset: FASTQDeduplicatePreset
     var removeDuplicatesSubstitutions: Int
@@ -159,6 +160,7 @@ final class FASTQOperationDialogState {
         self.removeContaminantsMode = .phix
         self.removeContaminantsKmerSize = 31
         self.removeContaminantsHammingDistance = 1
+        self.riboDetectorRetention = .nonRRNA
         self.removeDuplicatesPreset = .exactPCR
         self.removeDuplicatesSubstitutions = 0
         self.removeDuplicatesOptical = false
@@ -381,6 +383,13 @@ final class FASTQOperationDialogState {
                     kmerSize: removeContaminantsKmerSize,
                     hammingDistance: removeContaminantsHammingDistance
                 ),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .removeRibosomalRNA:
+            return .derivative(
+                request: .ribosomalRNAFilter(retention: riboDetectorRetention, ensure: .rrna),
                 inputURLs: selectedInputURLs,
                 outputMode: outputMode
             )
@@ -672,15 +681,15 @@ final class FASTQOperationDialogState {
             return "Ready to configure output."
         }
 
-        return "Batch output is fixed for this tool."
+        return "Output is fixed for this tool."
     }
 
     var outputStrategyOptions: [FASTQOperationOutputMode] {
-        showsOutputStrategyPicker ? [.perInput, .groupedResult] : [.fixedBatch]
+        showsOutputStrategyPicker ? [.perInput, .groupedResult] : [selectedToolID.defaultOutputMode]
     }
 
     var showsOutputStrategyPicker: Bool {
-        selectedToolID.categoryID != .classification
+        selectedToolID.supportsConfigurableOutput
     }
 
     var requiredInputKinds: [FASTQOperationInputKind] {
@@ -766,6 +775,8 @@ final class FASTQOperationDialogState {
             return "Keep reads in the requested length range."
         case .removeHumanReads:
             return "Filter reads that match the configured human database."
+        case .removeRibosomalRNA:
+            return "Run RiboDetector in CPU mode and retain selected rRNA read classes."
         case .removeContaminants:
             return "Filter reads that match a contaminant reference."
         case .removeDuplicates:
@@ -849,7 +860,7 @@ final class FASTQOperationDialogState {
         case .trimmingFiltering:
             return [.qualityTrim, .adapterRemoval, .primerTrimming, .trimFixedBases, .filterByReadLength]
         case .decontamination:
-            return [.removeHumanReads, .removeContaminants, .removeDuplicates]
+            return [.removeHumanReads, .removeRibosomalRNA, .removeContaminants, .removeDuplicates]
         case .readProcessing:
             return [.mergeOverlappingPairs, .repairPairedEndFiles, .reverseComplement, .translate, .orientReads, .correctSequencingErrors]
         case .searchSubsetting:
@@ -916,6 +927,9 @@ final class FASTQOperationDialogState {
             return nil
 
         case .removeContaminants:
+            return nil
+
+        case .removeRibosomalRNA:
             return nil
 
         case .removeDuplicates:
@@ -1200,6 +1214,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
     case trimFixedBases
     case filterByReadLength
     case removeHumanReads
+    case removeRibosomalRNA
     case removeContaminants
     case removeDuplicates
     case mergeOverlappingPairs
@@ -1237,6 +1252,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
         case .trimFixedBases: return "Trim Fixed Bases"
         case .filterByReadLength: return "Filter by Read Length"
         case .removeHumanReads: return "Remove Human Reads"
+        case .removeRibosomalRNA: return "Remove ribosomal RNA sequences"
         case .removeContaminants: return "Remove Contaminants"
         case .removeDuplicates: return "Remove Duplicates"
         case .mergeOverlappingPairs: return "Merge Overlapping Pairs"
@@ -1276,6 +1292,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
         case .trimFixedBases: return "Remove a fixed number of bases from either end."
         case .filterByReadLength: return "Keep reads in a requested length range."
         case .removeHumanReads: return "Remove reads against a human database."
+        case .removeRibosomalRNA: return "Run RiboDetector in CPU mode and retain non-rRNA, rRNA, or both read classes."
         case .removeContaminants: return "Remove spike-ins or other contaminant sequences."
         case .removeDuplicates: return "Collapse duplicate reads."
         case .mergeOverlappingPairs: return "Merge overlapping paired-end reads."
@@ -1313,7 +1330,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
             return .demultiplexing
         case .qualityTrim, .adapterRemoval, .primerTrimming, .trimFixedBases, .filterByReadLength:
             return .trimmingFiltering
-        case .removeHumanReads, .removeContaminants, .removeDuplicates:
+        case .removeHumanReads, .removeRibosomalRNA, .removeContaminants, .removeDuplicates:
             return .decontamination
         case .mergeOverlappingPairs, .repairPairedEndFiles, .reverseComplement, .translate, .orientReads, .correctSequencingErrors:
             return .readProcessing
@@ -1335,7 +1352,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
         case .demultiplexBarcodes:
             return [.fastqDataset, .barcodeDefinition]
         case .qualityTrim, .adapterRemoval, .trimFixedBases, .filterByReadLength,
-             .removeDuplicates, .mergeOverlappingPairs, .repairPairedEndFiles,
+             .removeRibosomalRNA, .removeDuplicates, .mergeOverlappingPairs, .repairPairedEndFiles,
              .reverseComplement, .translate, .correctSequencingErrors, .subsampleByProportion, .subsampleByCount,
              .extractReadsByID, .extractReadsByMotif, .selectReadsBySequence, .viralRecon,
              .spades, .megahit, .skesa, .flye, .hifiasm:
@@ -1376,7 +1393,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
     }
 
     var supportsConfigurableOutput: Bool {
-        categoryID != .classification
+        categoryID != .classification && self != .removeRibosomalRNA
     }
 
     var defaultEmbeddedReadiness: Bool {
@@ -1428,7 +1445,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
         switch self {
         case .demultiplexBarcodes, .adapterRemoval, .primerTrimming,
              .trimFixedBases, .filterByReadLength, .removeHumanReads,
-             .removeContaminants, .removeDuplicates, .reverseComplement, .translate, .orientReads,
+             .removeRibosomalRNA, .removeContaminants, .removeDuplicates, .reverseComplement, .translate, .orientReads,
              .subsampleByProportion, .subsampleByCount, .extractReadsByID,
              .extractReadsByMotif, .selectReadsBySequence, .minimap2,
              .bwaMem2, .bowtie2, .bbmap, .spades, .megahit, .skesa,
