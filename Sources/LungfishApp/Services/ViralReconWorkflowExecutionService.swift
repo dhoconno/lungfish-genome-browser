@@ -70,7 +70,7 @@ final class ViralReconWorkflowExecutionService {
                 operationCenter.fail(
                     id: operationID,
                     detail: failureDetail,
-                    errorMessage: "Viral Recon failed (exit code \(processResult.exitCode))",
+                    errorMessage: "Viral Recon failed",
                     errorDetail: "exit code \(processResult.exitCode)\n\n\(tail)"
                 )
                 throw ViralReconWorkflowExecutionError.nonZeroExit(processResult.exitCode)
@@ -267,7 +267,8 @@ final class ViralReconWorkflowExecutionService {
     }
 
     private static func shellEscaped(_ value: String) -> String {
-        guard value.rangeOfCharacter(from: .whitespacesAndNewlines) != nil else {
+        let safeCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+-=.,/:@%")
+        if value.unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
             return value
         }
         return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
@@ -346,52 +347,66 @@ enum ViralReconWorkflowExecutionError: Error, Equatable {
 }
 
 struct ProcessViralReconWorkflowProcessRunner: ViralReconWorkflowProcessRunning {
+    private let executableURL: URL?
+
+    init(executableURL: URL? = nil) {
+        self.executableURL = executableURL
+    }
+
     func runLungfishCLI(
         arguments: [String],
         workingDirectory: URL,
         outputHandler: (@MainActor @Sendable (ViralReconWorkflowProcessOutput) -> Void)?
     ) async throws -> ViralReconWorkflowProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            do {
-                try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
-                let captureID = UUID().uuidString
-                let stdoutURL = workingDirectory.appendingPathComponent(".viralrecon-\(captureID)-stdout.log")
-                let stderrURL = workingDirectory.appendingPathComponent(".viralrecon-\(captureID)-stderr.log")
-                _ = FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
-                _ = FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
-                let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
-                let stderrHandle = try FileHandle(forWritingTo: stderrURL)
-
-                let process = Process()
-                if let cliURL = Self.lungfishCLIURL() {
-                    process.executableURL = cliURL
-                    process.arguments = arguments
-                } else {
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = ["lungfish-cli"] + arguments
-                }
-                process.currentDirectoryURL = workingDirectory
-                process.standardOutput = stdoutHandle
-                process.standardError = stderrHandle
-                process.terminationHandler = { process in
-                    try? stdoutHandle.close()
-                    try? stderrHandle.close()
-                    let outputData = (try? Data(contentsOf: stdoutURL)) ?? Data()
-                    let errorData = (try? Data(contentsOf: stderrURL)) ?? Data()
-                    try? FileManager.default.removeItem(at: stdoutURL)
-                    try? FileManager.default.removeItem(at: stderrURL)
-                    continuation.resume(returning: ViralReconWorkflowProcessResult(
-                        exitCode: process.terminationStatus,
-                        standardOutput: String(data: outputData, encoding: .utf8) ?? "",
-                        standardError: String(data: errorData, encoding: .utf8) ?? ""
-                    ))
-                }
-
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        let process = Process()
+        let collector = ProcessOutputCollector(outputHandler: outputHandler)
+        if let cliURL = executableURL ?? Self.lungfishCLIURL() {
+            process.executableURL = cliURL
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["lungfish-cli"] + arguments
         }
+        process.currentDirectoryURL = workingDirectory
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            collector.append(data, source: .standardOutput)
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            collector.append(data, source: .standardError)
+        }
+
+        let termination = ProcessTermination()
+        process.terminationHandler = { process in
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            collector.flushPendingLines()
+            termination.finish(process.terminationStatus)
+        }
+
+        do {
+            try process.run()
+        } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            throw error
+        }
+
+        let exitCode = await termination.wait()
+        return ViralReconWorkflowProcessResult(
+            exitCode: exitCode,
+            standardOutput: collector.standardOutput,
+            standardError: collector.standardError
+        )
     }
 
     private static func lungfishCLIURL() -> URL? {
@@ -408,5 +423,136 @@ struct ProcessViralReconWorkflowProcessRunner: ViralReconWorkflowProcessRunning 
         }
 
         return nil
+    }
+}
+
+private final class ProcessOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var standardOutputData = Data()
+    private var standardErrorData = Data()
+    private var pendingStandardOutput = ""
+    private var pendingStandardError = ""
+    private let outputHandler: (@MainActor @Sendable (ViralReconWorkflowProcessOutput) -> Void)?
+
+    init(outputHandler: (@MainActor @Sendable (ViralReconWorkflowProcessOutput) -> Void)?) {
+        self.outputHandler = outputHandler
+    }
+
+    var standardOutput: String {
+        lock.withLock {
+            String(data: standardOutputData, encoding: .utf8) ?? ""
+        }
+    }
+
+    var standardError: String {
+        lock.withLock {
+            String(data: standardErrorData, encoding: .utf8) ?? ""
+        }
+    }
+
+    func append(_ data: Data, source: ViralReconWorkflowProcessOutput.Source) {
+        guard !data.isEmpty else { return }
+        let lines: [String]
+        lock.lock()
+        switch source {
+        case .standardOutput:
+            standardOutputData.append(data)
+            lines = Self.completeLines(from: data, pending: &pendingStandardOutput)
+        case .standardError:
+            standardErrorData.append(data)
+            lines = Self.completeLines(from: data, pending: &pendingStandardError)
+        }
+        lock.unlock()
+
+        for line in lines {
+            emit(line, source: source)
+        }
+    }
+
+    func flushPendingLines() {
+        let outputLine: String?
+        let errorLine: String?
+        lock.lock()
+        outputLine = pendingStandardOutput.isEmpty ? nil : pendingStandardOutput
+        errorLine = pendingStandardError.isEmpty ? nil : pendingStandardError
+        pendingStandardOutput = ""
+        pendingStandardError = ""
+        lock.unlock()
+
+        if let outputLine {
+            emit(outputLine, source: .standardOutput)
+        }
+        if let errorLine {
+            emit(errorLine, source: .standardError)
+        }
+    }
+
+    private func emit(_ line: String, source: ViralReconWorkflowProcessOutput.Source) {
+        guard let outputHandler else { return }
+        let output: ViralReconWorkflowProcessOutput
+        switch source {
+        case .standardOutput:
+            output = .standardOutput(line)
+        case .standardError:
+            output = .standardError(line)
+        }
+        Task { @MainActor in
+            outputHandler(output)
+        }
+    }
+
+    private static func completeLines(from data: Data, pending: inout String) -> [String] {
+        guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else {
+            return []
+        }
+
+        pending += chunk
+        let components = pending.components(separatedBy: .newlines)
+        let completeComponents = components.prefix(max(0, components.count - 1))
+        if pending.last?.isNewline == true {
+            pending = ""
+            return Array(completeComponents)
+        }
+
+        pending = components.last ?? ""
+        return Array(completeComponents)
+    }
+}
+
+private final class ProcessTermination: @unchecked Sendable {
+    private let lock = NSLock()
+    private var exitCode: Int32?
+    private var continuation: CheckedContinuation<Int32, Never>?
+
+    func finish(_ code: Int32) {
+        let continuationToResume: CheckedContinuation<Int32, Never>?
+        lock.lock()
+        exitCode = code
+        continuationToResume = continuation
+        continuation = nil
+        lock.unlock()
+        continuationToResume?.resume(returning: code)
+    }
+
+    func wait() async -> Int32 {
+        await withCheckedContinuation { continuation in
+            let code: Int32?
+            lock.lock()
+            code = exitCode
+            if code == nil {
+                self.continuation = continuation
+            }
+            lock.unlock()
+            if let code {
+                continuation.resume(returning: code)
+            }
+        }
+    }
+}
+
+private extension ViralReconWorkflowProcessOutput {
+    enum Source {
+        case standardOutput
+        case standardError
     }
 }

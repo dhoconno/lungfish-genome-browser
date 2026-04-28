@@ -115,7 +115,7 @@ final class ViralReconWorkflowExecutionServiceTests: XCTestCase {
         let item = try XCTUnwrap(operationCenter.items.first)
         XCTAssertEqual(item.state, .failed)
         XCTAssertTrue(item.detail.contains("exit code 2"))
-        XCTAssertTrue(item.errorMessage?.contains("exit code 2") == true)
+        XCTAssertEqual(item.errorMessage, "Viral Recon failed")
         XCTAssertTrue(item.errorDetail?.contains("exit code 2") == true)
         XCTAssertTrue(item.errorDetail?.contains("bad params") == true)
         XCTAssertFalse(item.errorDetail?.components(separatedBy: .newlines).contains("stderr line 1") == true)
@@ -175,6 +175,60 @@ final class ViralReconWorkflowExecutionServiceTests: XCTestCase {
         XCTAssertEqual(manifest.params["fastq_dir"], persistedFastqPass.path)
         XCTAssertEqual(manifest.params["sequencing_summary"], persistedSummary.path)
     }
+
+    func testCommandPreviewQuotesShellMetacharactersWithoutWhitespace() async throws {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("viral&recon'\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let request = try ViralReconAppTestFixtures.illuminaRequest(root: temp)
+        let operationCenter = OperationCenter()
+        let service = ViralReconWorkflowExecutionService(
+            operationCenter: operationCenter,
+            processRunner: StubViralReconProcessRunner(result: .init(exitCode: 0, standardOutput: "", standardError: ""))
+        )
+
+        let result = try await service.run(
+            request,
+            bundleRoot: temp.appendingPathComponent("Analyses", isDirectory: true)
+        )
+
+        let item = try XCTUnwrap(operationCenter.items.first { $0.id == result.operationID })
+        let command = try XCTUnwrap(item.cliCommand)
+        let persistedSamplesheet = result.bundleURL.appendingPathComponent("inputs/samplesheet.csv")
+        XCTAssertTrue(command.contains("'\(shellEscapedInner(persistedSamplesheet.path))'"))
+        XCTAssertFalse(command.contains(" --input \(persistedSamplesheet.path)"))
+    }
+
+    func testConcreteRunnerStreamsOutputBeforeProcessReturns() async throws {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("viral-recon-runner-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+
+        let runner = ProcessViralReconWorkflowProcessRunner(executableURL: URL(fileURLWithPath: "/bin/sh"))
+        var received: [ViralReconWorkflowProcessOutput] = []
+
+        let task = Task {
+            try await runner.runLungfishCLI(
+                arguments: ["-c", "printf 'stdout-ready\\n'; printf 'stderr-ready\\n' >&2; sleep 1; printf 'stdout-done\\n'"],
+                workingDirectory: temp,
+                outputHandler: { output in
+                    received.append(output)
+                }
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertTrue(received.contains(.standardOutput("stdout-ready")))
+        XCTAssertTrue(received.contains(.standardError("stderr-ready")))
+        XCTAssertFalse(received.contains(.standardOutput("stdout-done")))
+        let result = try await task.value
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.standardOutput.contains("stdout-ready"))
+        XCTAssertTrue(result.standardOutput.contains("stdout-done"))
+        XCTAssertTrue(result.standardError.contains("stderr-ready"))
+    }
 }
 
 @MainActor
@@ -201,4 +255,8 @@ private final class StubViralReconProcessRunner: ViralReconWorkflowProcessRunnin
         try onRun?()
         return result
     }
+}
+
+private func shellEscapedInner(_ value: String) -> String {
+    value.replacingOccurrences(of: "'", with: "'\\''")
 }
