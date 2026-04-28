@@ -933,7 +933,9 @@ public class ViewerViewController: NSViewController {
         }
 
         // Force read refetch if fetch-time filters changed
-        if userInfo[NotificationUserInfoKey.minMapQ] != nil
+        if userInfo[NotificationUserInfoKey.showReads] != nil
+            || userInfo[NotificationUserInfoKey.limitReadRows] != nil
+            || userInfo[NotificationUserInfoKey.minMapQ] != nil
             || userInfo[NotificationUserInfoKey.consensusMinMapQ] != nil
             || userInfo[NotificationUserInfoKey.consensusMinBaseQ] != nil
             || userInfo[NotificationUserInfoKey.consensusMinDepth] != nil

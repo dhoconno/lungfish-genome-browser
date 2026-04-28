@@ -1130,6 +1130,7 @@ public class SequenceViewerView: NSView {
             "consensusMode=\(consensusModeSetting.rawValue)",
             consensusUseAmbiguitySetting ? "ambiguity=1" : "ambiguity=0",
             "excludeFlags=\(excludeFlagsSetting)",
+            limitReadRowsSetting ? "limitRows=1" : "limitRows=0",
             "readGroups=\(selectedReadGroupsSetting.sorted().joined(separator: ","))",
         ].joined(separator: "|")
     }
@@ -1867,6 +1868,10 @@ public class SequenceViewerView: NSView {
         self.readFetchGeneration = 0
         self.depthFetchGeneration = 0
         self.consensusFetchGeneration = 0
+        self.readFetchGate.invalidate()
+        self.depthFetchGate.invalidate()
+        self.consensusFetchGate.invalidate()
+        self.activeAlignmentFetchIdentity = nil
         self.cachedSampleCount = 0
         self.variantChromosomeAliasMap = [:]
         self.variantTrackChromosomeMap = [:]

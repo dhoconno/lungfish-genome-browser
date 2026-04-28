@@ -72,6 +72,83 @@ final class SequenceViewerFetchInvalidationTests: XCTestCase {
         XCTAssertFalse(view.testIsFetchingConsensus)
     }
 
+    func testClearReferenceBundleInvalidatesAlignmentFetchGates() {
+        let view = SequenceViewerView(frame: NSRect(x: 0, y: 0, width: 800, height: 320))
+        let region = GenomicRegion(chromosome: "chr4", start: 100, end: 200)
+        let readFetch = view.testBeginReadFetch(bundleURL: bundleURL("A"), trackID: "track-A", region: region)
+        let depthFetch = view.testBeginDepthFetch(bundleURL: bundleURL("A"), trackID: "track-A", region: region)
+        let consensusFetch = view.testBeginConsensusFetch(bundleURL: bundleURL("A"), trackID: "track-A", region: region)
+
+        view.clearReferenceBundle()
+
+        XCTAssertFalse(view.testCommitReadFetch(readFetch, reads: [makeRead(name: "stale-read", position: 120)], region: region))
+        XCTAssertFalse(view.testCommitDepthFetch(depthFetch, points: [.init(position: 125, depth: 3)], region: region))
+        XCTAssertFalse(view.testCommitConsensusFetch(consensusFetch, sequence: "AAAA", region: region))
+        XCTAssertNil(view.cachedReadRegion)
+        XCTAssertNil(view.cachedDepthRegion)
+        XCTAssertNil(view.cachedConsensusRegion)
+    }
+
+    func testShowReadsSettingsChangeInvalidatesInFlightReadFetch() {
+        let viewer = ViewerViewController()
+        _ = viewer.view
+        let region = GenomicRegion(chromosome: "chr5", start: 100, end: 200)
+        viewer.viewerView.showReads = true
+        let staleFetch = viewer.viewerView.testBeginReadFetch(bundleURL: bundleURL("A"), trackID: "track-A", region: region)
+
+        viewer.applyReadDisplaySettings([NotificationUserInfoKey.showReads: false])
+
+        XCTAssertFalse(
+            viewer.viewerView.testCommitReadFetch(
+                staleFetch,
+                reads: [makeRead(name: "stale-read", position: 120)],
+                region: region
+            )
+        )
+        XCTAssertNil(viewer.viewerView.cachedReadRegion)
+        XCTAssertFalse(viewer.viewerView.testIsFetchingReads)
+
+        let currentFetch = viewer.viewerView.testBeginReadFetch(bundleURL: bundleURL("A"), trackID: "track-A", region: region)
+        XCTAssertNotEqual(staleFetch.identity, currentFetch.identity)
+        XCTAssertTrue(
+            viewer.viewerView.testCommitReadFetch(
+                currentFetch,
+                reads: [makeRead(name: "current-read", position: 130)],
+                region: region
+            )
+        )
+    }
+
+    func testLimitReadRowsSettingsChangeInvalidatesInFlightReadFetch() {
+        let viewer = ViewerViewController()
+        _ = viewer.view
+        let region = GenomicRegion(chromosome: "chr6", start: 100, end: 200)
+        viewer.viewerView.limitReadRowsSetting = false
+        let staleFetch = viewer.viewerView.testBeginReadFetch(bundleURL: bundleURL("A"), trackID: "track-A", region: region)
+
+        viewer.applyReadDisplaySettings([NotificationUserInfoKey.limitReadRows: true])
+
+        XCTAssertFalse(
+            viewer.viewerView.testCommitReadFetch(
+                staleFetch,
+                reads: [makeRead(name: "stale-read", position: 120)],
+                region: region
+            )
+        )
+        XCTAssertNil(viewer.viewerView.cachedReadRegion)
+        XCTAssertFalse(viewer.viewerView.testIsFetchingReads)
+
+        let currentFetch = viewer.viewerView.testBeginReadFetch(bundleURL: bundleURL("A"), trackID: "track-A", region: region)
+        XCTAssertNotEqual(staleFetch.identity, currentFetch.identity)
+        XCTAssertTrue(
+            viewer.viewerView.testCommitReadFetch(
+                currentFetch,
+                reads: [makeRead(name: "current-read", position: 130)],
+                region: region
+            )
+        )
+    }
+
     private func bundleURL(_ suffix: String) -> URL {
         URL(fileURLWithPath: "/tmp/viewer-fetch-\(suffix).lungfishref", isDirectory: true)
     }
