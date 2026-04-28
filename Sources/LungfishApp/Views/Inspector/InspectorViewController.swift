@@ -144,6 +144,9 @@ public class InspectorViewController: NSViewController {
     /// Tracks last split-view visibility reported by MainSplitViewController.
     private var wasInspectorVisible = true
 
+    var windowStateScope: WindowStateScope?
+    private var activeContentSelectionIdentity: ContentSelectionIdentity?
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -186,6 +189,15 @@ public class InspectorViewController: NSViewController {
     /// view model instances, restoring slider/toggle/picker interactivity.
     public func refreshHostingView() {
         hostingView.rootView = InspectorView(viewModel: viewModel)
+    }
+
+    var testingWindowStateScope: WindowStateScope? {
+        get { windowStateScope }
+        set { windowStateScope = newValue }
+    }
+
+    func testingHandleSidebarSelectionChanged(_ notification: Notification) {
+        selectionDidChange(notification)
     }
 
     // MARK: - Setup
@@ -463,13 +475,18 @@ public class InspectorViewController: NSViewController {
     /// Document loading is handled exclusively by MainSplitViewController to avoid race conditions
     /// where both controllers attempt to load the same document concurrently.
     @objc private func selectionDidChange(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
+
         // Handle empty selection (items array is empty, no "item" key)
         if let items = notification.userInfo?["items"] as? [SidebarItem], items.isEmpty {
+            activeContentSelectionIdentity = nil
             clearTransientSelectionState()
             return
         }
 
         guard let item = notification.userInfo?["item"] as? SidebarItem else { return }
+        activeContentSelectionIdentity = notification.userInfo?[NotificationUserInfoKey.contentSelectionIdentity]
+            as? ContentSelectionIdentity
 
         // Update UI state only - document loading is handled by MainSplitViewController
         viewModel.selectedItem = item.title
@@ -488,6 +505,7 @@ public class InspectorViewController: NSViewController {
     /// Resets the sidebar item display, annotation selection, variant details, document
     /// metadata, and read selection to their default empty states.
     private func clearTransientSelectionState() {
+        activeContentSelectionIdentity = nil
         // Clear sidebar selection display
         viewModel.selectedItem = nil
         viewModel.selectedType = nil
@@ -540,6 +558,7 @@ public class InspectorViewController: NSViewController {
     /// Updates the selection section with the newly selected annotation.
     /// Passing nil in userInfo clears the selection.
     @objc private func handleAnnotationSelected(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         let selectedAnnotation = notification.userInfo?[NotificationUserInfoKey.annotation] as? SequenceAnnotation
 
         // Translation track persists across annotation selection changes.
@@ -566,6 +585,7 @@ public class InspectorViewController: NSViewController {
 
     /// Handles variant selection notifications carrying row/track identity.
     @objc private func handleVariantSelected(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         guard let result = notification.userInfo?[NotificationUserInfoKey.searchResult] as? AnnotationSearchIndex.SearchResult else {
             viewModel.variantSectionViewModel.clear()
             return
@@ -576,6 +596,7 @@ public class InspectorViewController: NSViewController {
 
     /// Handles read selection from the viewer.
     @objc private func handleReadSelected(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         let read = notification.userInfo?[NotificationUserInfoKey.alignedRead] as? AlignedRead
         viewModel.readStyleSectionViewModel.selectedRead = read
         if read != nil {
@@ -588,6 +609,7 @@ public class InspectorViewController: NSViewController {
     /// Extracts the manifest and bundle URL from the notification's userInfo
     /// and updates the document section view model.
     @objc private func handleBundleDidLoad(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         guard let userInfo = notification.userInfo else { return }
 
         let bundleURL = userInfo[NotificationUserInfoKey.bundleURL] as? URL
@@ -605,6 +627,7 @@ public class InspectorViewController: NSViewController {
 
     /// Handles requests to show/focus inspector with a specific tab.
     @objc private func handleShowInspectorRequested(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         applyInspectorTabSelection(from: notification)
     }
 
@@ -613,6 +636,7 @@ public class InspectorViewController: NSViewController {
     /// Always switches to the Bundle tab when a chromosome is selected so the
     /// chromosome metadata is immediately visible in the inspector.
     @objc private func handleChromosomeInspectorRequested(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         let chromosome = notification.userInfo?[NotificationUserInfoKey.chromosome] as? ChromosomeInfo
         updateSelectedChromosome(chromosome)
         if chromosome != nil {
@@ -621,6 +645,7 @@ public class InspectorViewController: NSViewController {
     }
 
     @objc private func handleFASTQDatasetLoaded(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         guard let stats = notification.userInfo?["statistics"] as? FASTQDatasetStatistics else { return }
         viewModel.documentSectionViewModel.updateFASTQStatistics(stats)
 
@@ -674,6 +699,7 @@ public class InspectorViewController: NSViewController {
     /// for the new mode. If the current tab is no longer available, switches to the
     /// first available tab.
     @objc private func handleContentModeChanged(_ notification: Notification) {
+        guard shouldAcceptScopedNotification(notification) else { return }
         guard let rawMode = notification.userInfo?[NotificationUserInfoKey.contentMode] as? String,
               let mode = ViewportContentMode(rawValue: rawMode) else { return }
 
@@ -704,6 +730,14 @@ public class InspectorViewController: NSViewController {
             return
         }
         viewModel.selectedTab = tab
+    }
+
+    private func shouldAcceptScopedNotification(_ notification: Notification) -> Bool {
+        guard let notificationScope = notification.userInfo?[NotificationUserInfoKey.windowStateScope] as? WindowStateScope else {
+            return true
+        }
+        guard let windowStateScope else { return true }
+        return notificationScope == windowStateScope
     }
 
     // MARK: - Annotation Editing Handlers

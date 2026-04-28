@@ -197,6 +197,8 @@ public class SidebarViewController: NSViewController {
     /// concurrency issues where Tasks don't execute from notification handlers.
     public weak var selectionDelegate: SidebarSelectionDelegate?
 
+    var windowStateScope: WindowStateScope?
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -3157,7 +3159,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
             NotificationCenter.default.post(
                 name: .sidebarSelectionChanged,
                 object: self,
-                userInfo: ["items": [] as [SidebarItem]]
+                userInfo: sidebarSelectionUserInfo(items: [])
             )
             return
         }
@@ -3179,12 +3181,28 @@ extension SidebarViewController: NSOutlineViewDelegate {
         NotificationCenter.default.post(
             name: .sidebarSelectionChanged,
             object: self,
-            userInfo: [
-                "item": items.first as Any,
-                "items": items
-            ]
+            userInfo: sidebarSelectionUserInfo(items: items)
         )
         logger.debug("\(source, privacy: .public): Called delegate and posted notification with \(items.count) items")
+    }
+
+    private func sidebarSelectionUserInfo(items: [SidebarItem]) -> [String: Any] {
+        var userInfo: [String: Any] = ["items": items]
+        if let first = items.first {
+            userInfo["item"] = first
+            if let scope = windowStateScope {
+                userInfo[NotificationUserInfoKey.contentSelectionIdentity] = ContentSelectionIdentity(
+                    url: first.url,
+                    kind: first.type.description,
+                    resultID: first.title,
+                    windowID: scope.id
+                )
+            }
+        }
+        if let scope = windowStateScope {
+            userInfo[NotificationUserInfoKey.windowStateScope] = scope
+        }
+        return userInfo
     }
 }
 
@@ -3607,11 +3625,13 @@ extension SidebarViewController: NSMenuDelegate {
 
         logger.info("contextMenuOpen: Opening '\(item.title, privacy: .public)'")
 
-        // Post notification to open the document
+        selectionDelegate?.sidebarDidSelectItem(item)
+
+        // Keep notification for other observers; display routes through the delegate.
         NotificationCenter.default.post(
             name: .sidebarSelectionChanged,
             object: self,
-            userInfo: ["item": item]
+            userInfo: sidebarSelectionUserInfo(items: [item])
         )
     }
 
@@ -4476,4 +4496,9 @@ public extension Notification.Name {
     /// Posted from the Inspector when the user clicks a source sample link to navigate the sidebar.
     /// userInfo: `["url": URL]` — the bundle URL to navigate to.
     static let navigateToSidebarItem = Notification.Name("NavigateToSidebarItem")
+}
+
+public extension NotificationUserInfoKey {
+    static let windowStateScope = "windowStateScope"
+    static let contentSelectionIdentity = "contentSelectionIdentity"
 }
