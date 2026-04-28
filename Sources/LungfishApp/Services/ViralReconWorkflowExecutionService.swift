@@ -23,34 +23,45 @@ final class ViralReconWorkflowExecutionService {
     func run(_ request: ViralReconRunRequest, bundleRoot: URL) async throws -> RunResult {
         try FileManager.default.createDirectory(at: bundleRoot, withIntermediateDirectories: true)
         let bundleURL = try availableBundleURL(in: bundleRoot)
-        try writeRunBundle(for: request, to: bundleURL)
+        let persistedRequest = try persistGeneratedInputs(from: request, in: bundleURL)
+        try writeRunBundle(for: persistedRequest, to: bundleURL)
 
-        let commandPreview = cliCommandPreview(for: request, bundleURL: bundleURL)
+        let commandPreview = cliCommandPreview(for: persistedRequest, bundleURL: bundleURL)
         let operationID = operationCenter.start(
             title: "Viral Recon",
-            detail: "\(request.platform.rawValue) · \(request.samples.count) sample(s)",
+            detail: initialDetail(for: persistedRequest),
             operationType: .viralRecon,
             targetBundleURL: bundleURL,
             cliCommand: commandPreview
         )
-        logPreparation(for: request, bundleURL: bundleURL, commandPreview: commandPreview, operationID: operationID)
+        logPreparation(for: persistedRequest, bundleURL: bundleURL, commandPreview: commandPreview, operationID: operationID)
 
         do {
             let processResult = try await processRunner.runLungfishCLI(
-                arguments: request.cliArguments(bundlePath: bundleURL),
-                workingDirectory: bundleURL
+                arguments: persistedRequest.cliArguments(bundlePath: bundleURL),
+                workingDirectory: bundleURL,
+                outputHandler: { [operationCenter] output in
+                    switch output {
+                    case .standardOutput(let line):
+                        operationCenter.log(id: operationID, level: .info, message: line)
+                    case .standardError(let line):
+                        operationCenter.log(id: operationID, level: .warning, message: line)
+                    }
+                }
             )
             try writeProcessLogs(processResult, to: bundleURL.appendingPathComponent("logs", isDirectory: true))
+            logProcessOutput(processResult, operationID: operationID)
 
             if processResult.exitCode == 0 {
                 operationCenter.log(id: operationID, level: .info, message: "Viral Recon completed")
                 operationCenter.complete(
                     id: operationID,
-                    detail: "Viral Recon completed",
+                    detail: completionDetail(for: persistedRequest, bundleURL: bundleURL),
                     bundleURLs: [bundleURL]
                 )
             } else {
                 let tail = stderrTail(processResult.standardError)
+                let failureDetail = failureDetail(exitCode: processResult.exitCode, stderrTail: tail)
                 operationCenter.log(
                     id: operationID,
                     level: .error,
@@ -58,9 +69,9 @@ final class ViralReconWorkflowExecutionService {
                 )
                 operationCenter.fail(
                     id: operationID,
-                    detail: "Viral Recon failed",
-                    errorMessage: "Viral Recon failed",
-                    errorDetail: tail
+                    detail: failureDetail,
+                    errorMessage: "Viral Recon failed (exit code \(processResult.exitCode))",
+                    errorDetail: "exit code \(processResult.exitCode)\n\n\(tail)"
                 )
                 throw ViralReconWorkflowExecutionError.nonZeroExit(processResult.exitCode)
             }
@@ -80,6 +91,66 @@ final class ViralReconWorkflowExecutionService {
             operationID: operationID,
             bundleURL: bundleURL,
             operationItem: operationCenter.items.first { $0.id == operationID }
+        )
+    }
+
+    private func persistGeneratedInputs(from request: ViralReconRunRequest, in bundleURL: URL) throws -> ViralReconRunRequest {
+        let inputsURL = bundleURL.appendingPathComponent("inputs", isDirectory: true)
+        let primersURL = inputsURL.appendingPathComponent("primers", isDirectory: true)
+        let nanoporeURL = inputsURL.appendingPathComponent("nanopore", isDirectory: true)
+        try FileManager.default.createDirectory(at: primersURL, withIntermediateDirectories: true)
+
+        let samplesheetURL = inputsURL.appendingPathComponent("samplesheet.csv")
+        let primerBEDURL = primersURL.appendingPathComponent("primers.bed")
+        let primerFASTAURL = primersURL.appendingPathComponent("primers.fasta")
+        try copyItem(from: request.samplesheetURL, to: samplesheetURL)
+        try copyItem(from: request.primer.bedURL, to: primerBEDURL)
+        try copyItem(from: request.primer.fastaURL, to: primerFASTAURL)
+
+        var fastqPassDirectoryURL: URL?
+        var sequencingSummaryURL: URL?
+        if request.platform == .nanopore {
+            if let sourceFastqPass = request.fastqPassDirectoryURL {
+                try FileManager.default.createDirectory(at: nanoporeURL, withIntermediateDirectories: true)
+                let destinationFastqPass = nanoporeURL.appendingPathComponent("fastq_pass", isDirectory: true)
+                try copyItem(from: sourceFastqPass, to: destinationFastqPass)
+                fastqPassDirectoryURL = destinationFastqPass
+            }
+            if let sourceSummary = request.sequencingSummaryURL {
+                try FileManager.default.createDirectory(at: nanoporeURL, withIntermediateDirectories: true)
+                let destinationSummary = nanoporeURL.appendingPathComponent(sourceSummary.lastPathComponent)
+                try copyItem(from: sourceSummary, to: destinationSummary)
+                sequencingSummaryURL = destinationSummary
+            }
+        }
+
+        let primer = ViralReconPrimerSelection(
+            bundleURL: request.primer.bundleURL,
+            displayName: request.primer.displayName,
+            bedURL: primerBEDURL,
+            fastaURL: primerFASTAURL,
+            leftSuffix: request.primer.leftSuffix,
+            rightSuffix: request.primer.rightSuffix,
+            derivedFasta: request.primer.derivedFasta
+        )
+
+        return try ViralReconRunRequest(
+            samples: request.samples,
+            platform: request.platform,
+            protocol: request.protocol,
+            samplesheetURL: samplesheetURL,
+            outputDirectory: request.outputDirectory,
+            executor: request.executor,
+            version: request.version,
+            reference: request.reference,
+            primer: primer,
+            minimumMappedReads: request.minimumMappedReads,
+            variantCaller: request.variantCaller,
+            consensusCaller: request.consensusCaller,
+            skipOptions: request.skipOptions,
+            advancedParams: request.advancedParams,
+            fastqPassDirectoryURL: fastqPassDirectoryURL ?? request.fastqPassDirectoryURL,
+            sequencingSummaryURL: sequencingSummaryURL ?? request.sequencingSummaryURL
         )
     }
 
@@ -140,6 +211,15 @@ final class ViralReconWorkflowExecutionService {
         operationCenter.log(id: operationID, level: .info, message: commandPreview)
     }
 
+    private func logProcessOutput(_ result: ViralReconWorkflowProcessResult, operationID: UUID) {
+        for line in result.standardOutput.split(whereSeparator: \.isNewline) {
+            operationCenter.log(id: operationID, level: .info, message: String(line))
+        }
+        for line in result.standardError.split(whereSeparator: \.isNewline) {
+            operationCenter.log(id: operationID, level: .warning, message: String(line))
+        }
+    }
+
     private func availableBundleURL(in root: URL) throws -> URL {
         let base = root.appendingPathComponent("viralrecon.\(NFCoreRunBundleStore.directoryExtension)", isDirectory: true)
         guard FileManager.default.fileExists(atPath: base.path) else {
@@ -197,6 +277,47 @@ final class ViralReconWorkflowExecutionService {
         let lines = stderr.split(separator: "\n", omittingEmptySubsequences: false)
         return lines.suffix(40).joined(separator: "\n")
     }
+
+    private func initialDetail(for request: ViralReconRunRequest) -> String {
+        "\(request.platform.rawValue) · \(request.samples.count) sample(s) · \(referenceDisplayName(request.reference))"
+    }
+
+    private func completionDetail(for request: ViralReconRunRequest, bundleURL: URL) -> String {
+        "Viral Recon completed. Output: \(request.outputDirectory.path). Run bundle: \(bundleURL.path)"
+    }
+
+    private func failureDetail(exitCode: Int32, stderrTail: String) -> String {
+        let trimmedTail = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTail.isEmpty else {
+            return "Viral Recon failed with exit code \(exitCode)"
+        }
+        return "Viral Recon failed with exit code \(exitCode). \(trimmedTail)"
+    }
+
+    private func referenceDisplayName(_ reference: ViralReconReference) -> String {
+        switch reference {
+        case .genome(let accession):
+            return accession
+        case .local(let fastaURL, _):
+            return fastaURL.lastPathComponent
+        }
+    }
+
+    private func copyItem(from sourceURL: URL, to destinationURL: URL) throws {
+        let source = sourceURL.standardizedFileURL
+        let destination = destinationURL.standardizedFileURL
+        if source.path == destination.path {
+            return
+        }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.copyItem(at: source, to: destination)
+    }
 }
 
 struct ViralReconWorkflowProcessResult: Sendable, Equatable {
@@ -205,9 +326,18 @@ struct ViralReconWorkflowProcessResult: Sendable, Equatable {
     let standardError: String
 }
 
+enum ViralReconWorkflowProcessOutput: Sendable, Equatable {
+    case standardOutput(String)
+    case standardError(String)
+}
+
 @MainActor
 protocol ViralReconWorkflowProcessRunning {
-    func runLungfishCLI(arguments: [String], workingDirectory: URL) async throws -> ViralReconWorkflowProcessResult
+    func runLungfishCLI(
+        arguments: [String],
+        workingDirectory: URL,
+        outputHandler: (@MainActor @Sendable (ViralReconWorkflowProcessOutput) -> Void)?
+    ) async throws -> ViralReconWorkflowProcessResult
 }
 
 enum ViralReconWorkflowExecutionError: Error, Equatable {
@@ -216,7 +346,11 @@ enum ViralReconWorkflowExecutionError: Error, Equatable {
 }
 
 struct ProcessViralReconWorkflowProcessRunner: ViralReconWorkflowProcessRunning {
-    func runLungfishCLI(arguments: [String], workingDirectory: URL) async throws -> ViralReconWorkflowProcessResult {
+    func runLungfishCLI(
+        arguments: [String],
+        workingDirectory: URL,
+        outputHandler: (@MainActor @Sendable (ViralReconWorkflowProcessOutput) -> Void)?
+    ) async throws -> ViralReconWorkflowProcessResult {
         try await withCheckedThrowingContinuation { continuation in
             do {
                 try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
