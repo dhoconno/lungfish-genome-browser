@@ -474,7 +474,7 @@ public extension PluginPack {
             name: "Metagenomics",
             description: "Taxonomic classification and pathogen detection from metagenomic samples",
             sfSymbol: "leaf.fill",
-            packages: ["kraken2", "bracken", "esviritu"],
+            packages: ["kraken2", "bracken", "esviritu", "ribodetector"],
             category: "Metagenomics",
             isActive: true,
             requirements: [
@@ -510,6 +510,22 @@ public extension PluginPack {
                     version: "1.2.0",
                     license: "MIT",
                     sourceURL: "https://github.com/cmmr/EsViritu"
+                ),
+                PackToolRequirement(
+                    id: "ribodetector",
+                    displayName: "RiboDetector",
+                    environment: "ribodetector",
+                    installPackages: ["bioconda::ribodetector=0.3.3"],
+                    executables: ["ribodetector_cpu"],
+                    smokeTest: .command(
+                        executable: "ribodetector_cpu",
+                        arguments: ["--help"],
+                        timeoutSeconds: 10,
+                        requiredOutputSubstring: "usage:"
+                    ),
+                    version: "0.3.3",
+                    license: "GPL-3.0-or-later",
+                    sourceURL: "https://github.com/hzi-bifo/RiboDetector"
                 ),
             ],
             estimatedSizeMB: 1200

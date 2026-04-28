@@ -301,6 +301,78 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
         XCTAssertEqual(runner.invocations.count, 1)
     }
 
+    func testExecuteRiboDetectorPreservesFASTAInputAndDiscoversFASTAOutputs() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecRiboFASTA")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let referenceBundleURL = try makeReferenceBundle(
+            named: "reference-input",
+            in: tempDir,
+            records: [
+                (id: "contig1", sequence: "AACCGGTTAACC"),
+                (id: "contig2", sequence: "TTGGCCAATTGG"),
+            ]
+        )
+
+        let runner = SpyCommandRunner { invocation, outputDirectory in
+            XCTAssertEqual(invocation.subcommand, "fastq")
+            XCTAssertEqual(invocation.arguments.first, "ribodetector")
+            let resolvedInputURL = URL(fileURLWithPath: try XCTUnwrap(invocation.arguments[safe: 1]))
+            XCTAssertEqual(SequenceFormat.from(url: resolvedInputURL), .fasta)
+            XCTAssertFalse(resolvedInputURL.lastPathComponent.hasSuffix(".fastq"))
+            XCTAssertEqual(invocation.arguments[safe: 2], "--retain")
+            XCTAssertEqual(invocation.arguments[safe: 3], "both")
+            XCTAssertEqual(invocation.arguments[safe: 4], "--ensure")
+            XCTAssertEqual(invocation.arguments[safe: 5], "rrna")
+
+            guard
+                let outputIndex = invocation.arguments.firstIndex(of: "-o"),
+                let outputPath = invocation.arguments[safe: outputIndex + 1]
+            else {
+                XCTFail("Expected -o output directory in CLI invocation")
+                throw NSError(
+                    domain: "FASTQOperationExecutionServiceTests",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "Missing -o output directory in RiboDetector invocation"]
+                )
+            }
+            XCTAssertEqual(URL(fileURLWithPath: outputPath), outputDirectory)
+
+            try ">contig1\nAACCGGTTAACC\n".write(
+                to: outputDirectory.appendingPathComponent("reference-input.norrna.fasta"),
+                atomically: true,
+                encoding: .utf8
+            )
+            try ">contig2\nTTGGCCAATTGG\n".write(
+                to: outputDirectory.appendingPathComponent("reference-input.rrna.fasta"),
+                atomically: true,
+                encoding: .utf8
+            )
+            return FASTQCLIExecutionResult(outputURLs: [])
+        }
+        let importer = SpyDirectImporter()
+        let service = FASTQOperationExecutionService(
+            commandRunner: runner,
+            directImporter: importer
+        )
+
+        _ = try await service.execute(
+            request: .derivative(
+                request: .ribosomalRNAFilter(retention: .both, ensure: .rrna),
+                inputURLs: [referenceBundleURL],
+                outputMode: .perInput
+            ),
+            workingDirectory: tempDir
+        )
+
+        XCTAssertEqual(runner.invocations.count, 1)
+        XCTAssertEqual(importer.calls.count, 1)
+        XCTAssertEqual(importer.calls[0].map(\.lastPathComponent), [
+            "reference-input.norrna.fasta",
+            "reference-input.rrna.fasta",
+        ])
+    }
+
     func testExecuteForwardsResolvedInputsIntoBuiltInvocation() async throws {
         let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecService")
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -452,6 +524,51 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
         let bundledFASTQ = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL))
         XCTAssertTrue(FileManager.default.fileExists(atPath: bundledFASTQ.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: stagedFASTQ.path))
+    }
+
+    func testBundleImporterWrapsRawFASTAOutputsIntoReferenceBundles() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecImportFASTA")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sourceBundle = try makeReferenceBundle(
+            named: "source",
+            in: tempDir,
+            records: [
+                (id: "seq1", sequence: "AACCGGTTAACC"),
+            ]
+        )
+        let stagingDir = tempDir.appendingPathComponent("staging", isDirectory: true)
+        let destinationDir = tempDir.appendingPathComponent("results", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationDir, withIntermediateDirectories: true)
+
+        let stagedFASTA = stagingDir.appendingPathComponent("filtered.rrna.fasta")
+        try ">seq1\nAACCGGTTAACC\n".write(to: stagedFASTA, atomically: true, encoding: .utf8)
+
+        let referenceWrapper = SpyReferenceBundleWrapper()
+        let importedReferenceBundle = destinationDir.appendingPathComponent("source-ribodetector-rrna.lungfishref", isDirectory: true)
+        referenceWrapper.resultURLs = [importedReferenceBundle]
+        let importer = BundleFASTQOperationImporter(
+            destinationDirectory: destinationDir,
+            referenceBundleWrapper: referenceWrapper
+        )
+        let request = FASTQOperationLaunchRequest.derivative(
+            request: .ribosomalRNAFilter(retention: .rRNA, ensure: .rrna),
+            inputURLs: [sourceBundle],
+            outputMode: .perInput
+        )
+
+        let imported = try await importer.importOutputs(
+            at: [stagedFASTA],
+            forResolvedRequest: request,
+            originalRequest: request,
+            outputDirectory: stagingDir
+        )
+
+        XCTAssertEqual(imported, [importedReferenceBundle])
+        XCTAssertEqual(referenceWrapper.calls.map(\.sourceURL), [stagedFASTA])
+        XCTAssertEqual(referenceWrapper.calls.map(\.outputDirectory), [destinationDir])
+        XCTAssertEqual(referenceWrapper.calls.map(\.preferredBundleName), ["source-ribodetector-rrna"])
     }
 
     func testBundleImporterRefreshesDerivedManifestStatisticsFromQCSummary() async throws {
@@ -1349,6 +1466,33 @@ private final class SpyCommandRunner: @unchecked Sendable, FASTQOperationCommand
     func run(invocation: CLIInvocation, outputDirectory: URL) async throws -> FASTQCLIExecutionResult {
         invocations.append(invocation)
         return try handler(invocation, outputDirectory)
+    }
+}
+
+private final class SpyReferenceBundleWrapper: @unchecked Sendable, ReferenceBundleWrapping {
+    struct Call: Equatable {
+        let sourceURL: URL
+        let outputDirectory: URL
+        let preferredBundleName: String?
+    }
+
+    private(set) var calls: [Call] = []
+    var resultURLs: [URL] = []
+
+    func importReferenceBundle(
+        sourceURL: URL,
+        outputDirectory: URL,
+        preferredBundleName: String?
+    ) async throws -> URL {
+        calls.append(Call(
+            sourceURL: sourceURL,
+            outputDirectory: outputDirectory,
+            preferredBundleName: preferredBundleName
+        ))
+        let resultURL = resultURLs[safe: calls.count - 1]
+            ?? outputDirectory.appendingPathComponent("\(preferredBundleName ?? sourceURL.deletingPathExtension().lastPathComponent).lungfishref")
+        try FileManager.default.createDirectory(at: resultURL, withIntermediateDirectories: true)
+        return resultURL
     }
 }
 

@@ -728,6 +728,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
             "kraken2": "kraken2",
             "bracken": "bracken",
             "esviritu": "EsViritu",
+            "ribodetector": "ribodetector_cpu",
         ]
 
         for requirement in pack.toolRequirements {
@@ -738,9 +739,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
                 at: executableURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let script = "#!/bin/sh\nexit 0\n"
-            try script.write(to: executableURL, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+            try writeSmokeReadyExecutable(for: requirement, executable: executable, at: executableURL)
         }
 
         let service = PluginPackStatusService(condaManager: manager)
@@ -768,10 +767,17 @@ final class PluginPackStatusServiceTests: XCTestCase {
         )
         _ = try await manager.ensureMicromamba()
 
-        let kraken2 = await manager.environmentURL(named: "kraken2").appendingPathComponent("bin/kraken2")
-        try FileManager.default.createDirectory(at: kraken2.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try "#!/bin/sh\nexit 0\n".write(to: kraken2, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: kraken2.path)
+        for requirement in pack.toolRequirements where requirement.environment != "bracken" {
+            for executable in requirement.executables {
+                let executableURL = await manager.environmentURL(named: requirement.environment)
+                    .appendingPathComponent("bin/\(executable)")
+                try FileManager.default.createDirectory(
+                    at: executableURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try writeSmokeReadyExecutable(for: requirement, executable: executable, at: executableURL)
+            }
+        }
 
         let brackenBin = await manager.environmentURL(named: "bracken").appendingPathComponent("bin")
         try FileManager.default.createDirectory(at: brackenBin, withIntermediateDirectories: true)
@@ -789,11 +795,6 @@ final class PluginPackStatusServiceTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-
-        let esviritu = await manager.environmentURL(named: "esviritu").appendingPathComponent("bin/EsViritu")
-        try FileManager.default.createDirectory(at: esviritu.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try "#!/bin/sh\nexit 0\n".write(to: esviritu, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: esviritu.path)
 
         let service = PluginPackStatusService(condaManager: manager)
         let status = await service.status(for: pack)

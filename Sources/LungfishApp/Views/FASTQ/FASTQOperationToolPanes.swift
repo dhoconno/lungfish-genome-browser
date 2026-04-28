@@ -271,6 +271,14 @@ private struct FASTQOperationPrimarySettingsSection: View {
                         .foregroundStyle(.secondary)
                 }
 
+            case .removeRibosomalRNA:
+                Picker("Retain Reads", selection: $state.riboDetectorRetention) {
+                    ForEach(FASTQRiboDetectorRetention.allCases, id: \.self) { retention in
+                        Text(retention.displayName).tag(retention)
+                    }
+                }
+                .pickerStyle(.segmented)
+
             case .removeDuplicates:
                 Picker("Preset", selection: $state.removeDuplicatesPreset) {
                     ForEach(FASTQDeduplicatePreset.allCases, id: \.self) { preset in
@@ -482,6 +490,9 @@ private struct FASTQOperationAdvancedSettingsSection: View {
                     .foregroundStyle(.secondary)
             case .removeContaminants:
                 Text("Custom contaminant mode expects the reference FASTA in the Inputs section.")
+                    .foregroundStyle(.secondary)
+            case .removeRibosomalRNA:
+                Text("RiboDetector runs in CPU mode with conservative rRNA assurance; additional parameters remain unexposed pending expert review.")
                     .foregroundStyle(.secondary)
             case .removeDuplicates:
                 Text("The deduplication preset selects the CLI-compatible parameter set.")

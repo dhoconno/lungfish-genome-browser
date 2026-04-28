@@ -86,9 +86,10 @@ final class PluginPackRegistryTests: XCTestCase {
         }
         let environments = pack.toolRequirements.map(\.environment)
 
-        XCTAssertEqual(environments, ["kraken2", "bracken", "esviritu"])
+        XCTAssertEqual(environments, ["kraken2", "bracken", "esviritu", "ribodetector"])
         XCTAssertTrue(pack.toolRequirements.allSatisfy { $0.smokeTest != nil })
         XCTAssertEqual(pack.toolRequirements.first(where: { $0.environment == "esviritu" })?.executables, ["EsViritu"])
+        XCTAssertEqual(pack.toolRequirements.first(where: { $0.environment == "ribodetector" })?.executables, ["ribodetector_cpu"])
     }
 
     func testMetagenomicsPackPinsExactToolMetadata() throws {
@@ -111,6 +112,16 @@ final class PluginPackRegistryTests: XCTestCase {
         XCTAssertEqual(esviritu.version, "1.2.0")
         XCTAssertEqual(esviritu.license, "MIT")
         XCTAssertEqual(esviritu.sourceURL, "https://github.com/cmmr/EsViritu")
+
+        let ribodetector = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "ribodetector" }))
+        XCTAssertEqual(ribodetector.installPackages, ["bioconda::ribodetector=0.3.3"])
+        XCTAssertEqual(ribodetector.executables, ["ribodetector_cpu"])
+        XCTAssertEqual(ribodetector.smokeTest?.executable, "ribodetector_cpu")
+        XCTAssertEqual(ribodetector.smokeTest?.arguments, ["--help"])
+        XCTAssertEqual(ribodetector.smokeTest?.requiredOutputSubstring, "usage:")
+        XCTAssertEqual(ribodetector.version, "0.3.3")
+        XCTAssertEqual(ribodetector.license, "GPL-3.0-or-later")
+        XCTAssertEqual(ribodetector.sourceURL, "https://github.com/hzi-bifo/RiboDetector")
     }
 
     func testAssemblyPackDefinesSmokeChecksForVisibleTools() {

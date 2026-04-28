@@ -637,6 +637,11 @@ public actor BatchProcessingEngine {
                 databaseID: step.humanScrubDatabaseID ?? "deacon-panhuman",
                 removeReads: true
             )
+        case .ribosomalRNAFilter:
+            return .ribosomalRNAFilter(
+                retention: step.riboDetectorRetention ?? .nonRRNA,
+                ensure: step.riboDetectorEnsure ?? .rrna
+            )
         }
     }
 

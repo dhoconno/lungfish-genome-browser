@@ -38,6 +38,14 @@ protocol FASTQOperationDirectImporting: Sendable {
     ) async throws -> [URL]
 }
 
+protocol ReferenceBundleWrapping: Sendable {
+    func importReferenceBundle(
+        sourceURL: URL,
+        outputDirectory: URL,
+        preferredBundleName: String?
+    ) async throws -> URL
+}
+
 enum FASTQOperationExecutionError: Error, LocalizedError {
     case unsupportedAdapterTrim(String)
     case unsupportedPrimerRemoval(String)
@@ -288,7 +296,7 @@ struct FASTQOperationExecutionService {
         case .refreshQCSummary:
             return .jsonReport
         case .derivative(let derivativeRequest, _, _):
-            return derivativeRequest.isDemultiplexRequest ? .directory : .fastqFile
+            return derivativeRequest.usesDirectoryOutput ? .directory : .fastqFile
         case .map, .assemble, .classify:
             return .directory
         }
@@ -324,6 +332,9 @@ struct FASTQOperationExecutionService {
             let directory = plan.outputTarget.standardizedFileURL
             if (try? AssemblyResult.load(from: directory)) != nil {
                 return [directory]
+            }
+            if plan.originalRequest.isRibosomalRNAFilterRequest {
+                return Self.discoverSequenceFiles(in: directory)
             }
             return Self.discoverFASTQBundles(in: directory)
         case .fastqFile, .jsonReport:
@@ -838,6 +849,32 @@ struct FASTQOperationExecutionService {
                 "-o",
                 outputTarget,
             ]
+
+        case .ribosomalRNAFilter(let retention, let ensure):
+            return [
+                "ribodetector",
+                inputURL.path,
+                "--retain",
+                retention.rawValue,
+                "--ensure",
+                ensure.rawValue,
+                "-o",
+                outputTarget,
+            ]
+        }
+    }
+
+    fileprivate static func discoverSequenceFiles(in directory: URL) -> [URL] {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return contents.filter { SequenceFormat.from(url: $0) != nil }.sorted {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
         }
     }
 
@@ -1142,8 +1179,32 @@ private struct IdentityFASTQOperationImporter: FASTQOperationDirectImporting {
     }
 }
 
+private struct AppReferenceBundleWrapper: ReferenceBundleWrapping {
+    func importReferenceBundle(
+        sourceURL: URL,
+        outputDirectory: URL,
+        preferredBundleName: String?
+    ) async throws -> URL {
+        let result = try await ReferenceBundleImportService.importAsReferenceBundleViaCLI(
+            sourceURL: sourceURL,
+            outputDirectory: outputDirectory,
+            preferredBundleName: preferredBundleName
+        )
+        return result.bundleURL
+    }
+}
+
 struct BundleFASTQOperationImporter: FASTQOperationDirectImporting {
     let destinationDirectory: URL
+    let referenceBundleWrapper: any ReferenceBundleWrapping
+
+    init(
+        destinationDirectory: URL,
+        referenceBundleWrapper: any ReferenceBundleWrapping = AppReferenceBundleWrapper()
+    ) {
+        self.destinationDirectory = destinationDirectory
+        self.referenceBundleWrapper = referenceBundleWrapper
+    }
 
     func importOutputs(
         at outputURLs: [URL],
@@ -1163,31 +1224,42 @@ struct BundleFASTQOperationImporter: FASTQOperationDirectImporting {
             return [outputDirectory]
 
         case .derivative:
-            return try importFASTQOutputs(outputURLs, originalRequest: originalRequest)
+            return try await importSequenceOutputs(outputURLs, originalRequest: originalRequest)
 
         default:
             return outputURLs
         }
     }
 
-    private func importFASTQOutputs(
+    private func importSequenceOutputs(
         _ outputURLs: [URL],
         originalRequest: FASTQOperationLaunchRequest
-    ) throws -> [URL] {
+    ) async throws -> [URL] {
         guard !outputURLs.isEmpty else { return [] }
 
         var importedBundleURLs: [URL] = []
         for (index, outputURL) in outputURLs.enumerated() {
-            guard FASTQBundle.isFASTQFileURL(outputURL) else {
-                importedBundleURLs.append(outputURL)
-                continue
-            }
-
             let bundleBaseName = bundleNameStem(
                 for: originalRequest,
                 outputURL: outputURL,
                 index: index
             )
+
+            if SequenceFormat.from(url: outputURL) == .fasta {
+                let referenceBundleURL = try await referenceBundleWrapper.importReferenceBundle(
+                    sourceURL: outputURL,
+                    outputDirectory: destinationDirectory,
+                    preferredBundleName: bundleBaseName
+                )
+                importedBundleURLs.append(referenceBundleURL)
+                continue
+            }
+
+            guard FASTQBundle.isFASTQFileURL(outputURL) else {
+                importedBundleURLs.append(outputURL)
+                continue
+            }
+
             let bundleURL = uniqueBundleURL(named: bundleBaseName)
             try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
 
@@ -1402,12 +1474,19 @@ private extension FASTQOperationLaunchRequest {
         return false
     }
 
+    var isRibosomalRNAFilterRequest: Bool {
+        if case .derivative(let request, _, _) = self {
+            return request.isRibosomalRNAFilterRequest
+        }
+        return false
+    }
+
     var outputNameStem: String {
         switch self {
         case .refreshQCSummary:
             return "qc-summary"
         case .derivative(let request, _, _):
-            return request.operationKindString
+            return request.outputNameStem
         case .map:
             return "mapping"
         case .assemble(let request, _):
@@ -1431,7 +1510,7 @@ private extension FASTQOperationLaunchRequest {
         case .refreshQCSummary:
             return false
         case .derivative:
-            return true
+            return !isRibosomalRNAFilterRequest
         case .classify(let tool, _, _):
             switch tool {
             case .esViritu, .taxTriage:
@@ -1469,6 +1548,26 @@ private extension FASTQDerivativeRequest {
             return true
         }
         return false
+    }
+
+    var isRibosomalRNAFilterRequest: Bool {
+        if case .ribosomalRNAFilter = self {
+            return true
+        }
+        return false
+    }
+
+    var usesDirectoryOutput: Bool {
+        isDemultiplexRequest || isRibosomalRNAFilterRequest
+    }
+
+    var outputNameStem: String {
+        switch self {
+        case .ribosomalRNAFilter(let retention, _):
+            return "ribodetector-\(retention.rawValue)"
+        default:
+            return operationKindString
+        }
     }
 }
 
