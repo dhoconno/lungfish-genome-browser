@@ -97,11 +97,24 @@ public enum ViralReconInputResolver {
     }
 
     private static func resolvePlatform(for sourceURL: URL, fastqURLs: [URL]) -> ViralReconPlatform? {
+        for fastqURL in fastqURLs {
+            if let persisted = FASTQMetadataStore.load(for: fastqURL) {
+                if let platform = persisted.sequencingPlatform,
+                   let normalized = normalize(platform: platform) {
+                    return normalized
+                }
+                if let assemblyReadType = persisted.assemblyReadType,
+                   let normalized = normalize(assemblyReadType: assemblyReadType) {
+                    return normalized
+                }
+            }
+        }
+
         if FASTQBundle.isBundleURL(sourceURL),
            let metadata = FASTQBundleCSVMetadata.load(from: sourceURL) {
-            for key in ["sequencing_platform", "platform", "vendor", "read_type"] {
-                if let value = metadata.value(forKey: key),
-                   let platform = normalize(platform: LungfishIO.SequencingPlatform(vendor: value)) {
+            let sampleMetadata = FASTQSampleMetadata(from: metadata, fallbackName: fallbackSampleName(for: sourceURL))
+            for value in persistedPlatformValues(from: sampleMetadata, legacy: metadata) {
+                if let platform = normalize(platform: LungfishIO.SequencingPlatform(vendor: value)) {
                     return platform
                 }
             }
@@ -127,17 +140,65 @@ public enum ViralReconInputResolver {
         }
     }
 
+    private static func normalize(assemblyReadType: FASTQAssemblyReadType) -> ViralReconPlatform? {
+        switch assemblyReadType {
+        case .illuminaShortReads:
+            return .illumina
+        case .ontReads:
+            return .nanopore
+        case .pacBioHiFi:
+            return nil
+        }
+    }
+
     private static func sampleName(for sourceURL: URL) -> String {
         if FASTQBundle.isBundleURL(sourceURL),
            let metadata = FASTQBundleCSVMetadata.load(from: sourceURL),
-           let label = metadata.displayLabel, !label.isEmpty {
-            return label
+           let sampleName = typedSampleName(from: metadata, fallbackName: fallbackSampleName(for: sourceURL)) {
+            return sampleName
         }
+        let name = fallbackSampleName(for: sourceURL)
+        return name.isEmpty ? "sample" : name
+    }
+
+    private static func fallbackSampleName(for sourceURL: URL) -> String {
         var name = sourceURL.deletingPathExtension().lastPathComponent
         if name.hasSuffix(".fastq") || name.hasSuffix(".fq") {
             name = URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
         }
-        return name.isEmpty ? "sample" : name
+        return name
+    }
+
+    private static func typedSampleName(from metadata: FASTQBundleCSVMetadata, fallbackName: String) -> String? {
+        let sampleMetadata = FASTQSampleMetadata(from: metadata, fallbackName: fallbackName)
+        if !sampleMetadata.sampleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           sampleMetadata.sampleName != fallbackName {
+            return sampleMetadata.sampleName
+        }
+        if let label = metadata.displayLabel, !label.isEmpty {
+            return label
+        }
+        return nil
+    }
+
+    private static func persistedPlatformValues(
+        from sampleMetadata: FASTQSampleMetadata,
+        legacy: FASTQBundleCSVMetadata
+    ) -> [String] {
+        let keys = ["sequencing_platform", "platform", "vendor", "read_type", "assembly_read_type"]
+        var values: [String] = []
+        for key in keys {
+            if let value = sampleMetadata.customFields[key], !value.isEmpty {
+                values.append(value)
+            }
+            if let value = legacy.value(forKey: key), !value.isEmpty {
+                values.append(value)
+            }
+        }
+        if let libraryStrategy = sampleMetadata.libraryStrategy, !libraryStrategy.isEmpty {
+            values.append(libraryStrategy)
+        }
+        return values
     }
 
     private static func barcode(for sourceURL: URL) -> String? {

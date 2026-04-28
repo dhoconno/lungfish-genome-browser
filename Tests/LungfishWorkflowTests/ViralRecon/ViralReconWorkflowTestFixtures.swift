@@ -43,4 +43,29 @@ enum ViralReconWorkflowTestFixtures {
         try "Test fixture.\n".write(to: bundleURL.appendingPathComponent("PROVENANCE.md"), atomically: true, encoding: .utf8)
         return bundleURL
     }
+
+    static func writeFastqBundle(
+        named name: String,
+        in directory: URL,
+        fastqText: String,
+        metadataCSV: String?,
+        sidecarJSON: String?
+    ) throws -> URL {
+        let bundleURL = directory.appendingPathComponent("\(name).lungfishfastq", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        let fastqURL = bundleURL.appendingPathComponent("\(name).fastq")
+        try fastqText.write(to: fastqURL, atomically: true, encoding: .utf8)
+        if let metadataCSV {
+            try (metadataCSV.trimmingCharacters(in: .whitespacesAndNewlines) + "\n")
+                .write(to: bundleURL.appendingPathComponent("metadata.csv"), atomically: true, encoding: .utf8)
+        }
+        if let sidecarJSON {
+            try sidecarJSON.write(
+                to: fastqURL.appendingPathExtension("lungfish-meta.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        return bundleURL
+    }
 }

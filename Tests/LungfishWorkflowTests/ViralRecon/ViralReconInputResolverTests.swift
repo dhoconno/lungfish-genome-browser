@@ -24,4 +24,55 @@ final class ViralReconInputResolverTests: XCTestCase {
             XCTAssertEqual(error as? ViralReconInputResolver.ResolveError, .mixedPlatforms)
         }
     }
+
+    func testResolverPrefersPersistedSequencingPlatformOverFastqHeader() throws {
+        let temp = try ViralReconWorkflowTestFixtures.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let bundle = try ViralReconWorkflowTestFixtures.writeFastqBundle(
+            named: "PersistedONT",
+            in: temp,
+            fastqText: "@INST:1:FC:1:1101:1000:1000\nACGT\n+\n!!!!\n",
+            metadataCSV: nil,
+            sidecarJSON: #"{"sequencingPlatform":"oxfordNanopore"}"#
+        )
+
+        let resolved = try ViralReconInputResolver.resolveInputs(from: [bundle])
+
+        XCTAssertEqual(resolved.first?.platform, .nanopore)
+    }
+
+    func testResolverUsesPersistedAssemblyReadTypeWhenPlatformIsMissing() throws {
+        let temp = try ViralReconWorkflowTestFixtures.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let bundle = try ViralReconWorkflowTestFixtures.writeFastqBundle(
+            named: "AssemblyONT",
+            in: temp,
+            fastqText: "@INST:1:FC:1:1101:1000:1000\nACGT\n+\n!!!!\n",
+            metadataCSV: nil,
+            sidecarJSON: #"{"assemblyReadType":"ontReads"}"#
+        )
+
+        let resolved = try ViralReconInputResolver.resolveInputs(from: [bundle])
+
+        XCTAssertEqual(resolved.first?.platform, .nanopore)
+    }
+
+    func testResolverPrefersSampleMetadataSampleNameBeforeBundleFilename() throws {
+        let temp = try ViralReconWorkflowTestFixtures.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let bundle = try ViralReconWorkflowTestFixtures.writeFastqBundle(
+            named: "FilenameFallback",
+            in: temp,
+            fastqText: "@INST:1:FC:1:1101:1000:1000\nACGT\n+\n!!!!\n",
+            metadataCSV: """
+            sample_id,sample_name,sequencing_platform
+            display-id,Clinical Sample 42,illumina
+            """,
+            sidecarJSON: nil
+        )
+
+        let resolved = try ViralReconInputResolver.resolveInputs(from: [bundle])
+
+        XCTAssertEqual(resolved.first?.sampleName, "Clinical Sample 42")
+    }
 }

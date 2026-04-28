@@ -106,6 +106,8 @@ public struct ViralReconRunRequest: Codable, Sendable, Equatable {
     public let consensusCaller: ViralReconConsensusCaller
     public let skipOptions: [ViralReconSkipOption]
     public let advancedParams: [String: String]
+    public let fastqPassDirectoryURL: URL?
+    public let sequencingSummaryURL: URL?
 
     public var effectiveParams: [String: String] {
         var params: [String: String] = [
@@ -121,6 +123,13 @@ public struct ViralReconRunRequest: Codable, Sendable, Equatable {
             "variant_caller": variantCaller.rawValue,
             "consensus_caller": consensusCaller.rawValue,
         ]
+
+        if platform == .nanopore, let fastqPassDirectoryURL {
+            params["fastq_dir"] = fastqPassDirectoryURL.path
+        }
+        if platform == .nanopore, let sequencingSummaryURL {
+            params["sequencing_summary"] = sequencingSummaryURL.path
+        }
 
         switch reference {
         case .genome(let genome):
@@ -155,10 +164,16 @@ public struct ViralReconRunRequest: Codable, Sendable, Equatable {
         variantCaller: ViralReconVariantCaller,
         consensusCaller: ViralReconConsensusCaller,
         skipOptions: [ViralReconSkipOption],
-        advancedParams: [String: String] = [:]
+        advancedParams: [String: String] = [:],
+        fastqPassDirectoryURL: URL? = nil,
+        sequencingSummaryURL: URL? = nil
     ) throws {
         guard !samples.isEmpty else { throw ValidationError.emptySamples }
         try Self.validateAdvancedParams(advancedParams)
+        let resolvedSequencingSummaryURL = Self.validSequencingSummaryURL(
+            explicit: sequencingSummaryURL,
+            samples: samples
+        )
         self.samples = samples
         self.platform = platform
         self.protocol = `protocol`
@@ -173,11 +188,14 @@ public struct ViralReconRunRequest: Codable, Sendable, Equatable {
         self.consensusCaller = consensusCaller
         self.skipOptions = skipOptions
         self.advancedParams = advancedParams
+        self.fastqPassDirectoryURL = fastqPassDirectoryURL
+        self.sequencingSummaryURL = resolvedSequencingSummaryURL
     }
 
     public static func validateAdvancedParams(_ params: [String: String]) throws {
         let generatedKeys = Set([
             "input", "outdir", "platform", "protocol", "genome", "fasta", "gff",
+            "fastq_dir", "sequencing_summary",
             "primer_bed", "primer_fasta", "primer_left_suffix", "primer_right_suffix",
             "min_mapped_reads", "variant_caller", "consensus_caller",
         ] + ViralReconSkipOption.allCases.map(\.rawValue))
@@ -185,6 +203,28 @@ public struct ViralReconRunRequest: Codable, Sendable, Equatable {
         for key in params.keys.sorted() where generatedKeys.contains(key) {
             throw ValidationError.conflictingAdvancedParam(key)
         }
+    }
+
+    private static func validSequencingSummaryURL(
+        explicit: URL?,
+        samples: [ViralReconSample]
+    ) -> URL? {
+        let candidates: [URL]
+        if let explicit {
+            candidates = [explicit]
+        } else {
+            candidates = Array(Set(samples.compactMap(\.sequencingSummaryURL)))
+                .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        }
+
+        for url in candidates {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+               !isDirectory.boolValue {
+                return url
+            }
+        }
+        return nil
     }
 
     public func cliArguments(bundlePath: URL, prepareOnly: Bool = false) -> [String] {
