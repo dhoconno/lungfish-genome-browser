@@ -19,13 +19,18 @@ if [ "${LUNGFISH_XCUI_SKIP_CLI_BUILD:-0}" != "1" ]; then
   swift build --package-path "$ROOT_DIR" --product lungfish-cli
 fi
 
-xcodebuild \
+BUILD_FOR_TESTING_CMD=(
+  xcodebuild
   build-for-testing \
   -project "$PROJECT_PATH" \
   -scheme "$SCHEME_NAME" \
   -destination "$DESTINATION" \
-  -derivedDataPath "$DERIVED_DATA_PATH" \
-  "${ONLY_TESTING_ARGS[@]}"
+  -derivedDataPath "$DERIVED_DATA_PATH"
+)
+if [ "${#ONLY_TESTING_ARGS[@]}" -gt 0 ]; then
+  BUILD_FOR_TESTING_CMD+=("${ONLY_TESTING_ARGS[@]}")
+fi
+"${BUILD_FOR_TESTING_CMD[@]}"
 
 XCTESTRUN_FILE="$(find "$DERIVED_DATA_PATH/Build/Products" -maxdepth 1 -name '*.xctestrun' -print -quit)"
 if [ -z "$XCTESTRUN_FILE" ]; then
@@ -51,8 +56,13 @@ fi
 /usr/libexec/PlistBuddy -c "Delete :$UI_TEST_TARGET:UITargetAppPath" "$PATCHED_XCTESTRUN_FILE" >/dev/null 2>&1 || true
 /usr/libexec/PlistBuddy -c "Add :$UI_TEST_TARGET:UITargetAppPath string $UI_TARGET_APP_PATH" "$PATCHED_XCTESTRUN_FILE"
 
-xcodebuild \
+TEST_WITHOUT_BUILDING_CMD=(
+  xcodebuild
   test-without-building \
   -xctestrun "$PATCHED_XCTESTRUN_FILE" \
-  -destination "$DESTINATION" \
-  "${ONLY_TESTING_ARGS[@]}"
+  -destination "$DESTINATION"
+)
+if [ "${#ONLY_TESTING_ARGS[@]}" -gt 0 ]; then
+  TEST_WITHOUT_BUILDING_CMD+=("${ONLY_TESTING_ARGS[@]}")
+fi
+"${TEST_WITHOUT_BUILDING_CMD[@]}"
