@@ -5,6 +5,7 @@
 import AppKit
 import XCTest
 @testable import LungfishApp
+@testable import LungfishIO
 @testable import LungfishWorkflow
 
 /// Phase 7 Task 7.2 — Verifies that a context-menu "Extract Reads…" click
@@ -183,4 +184,83 @@ final class ClassifierExtractionMenuWiringTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - NAO-MGS segmented targets
+
+    func testNaoMgsSelectorsUseAllTaxonAccessionsNotJustTopFive() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-selector-accessions-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let sample = "rotavirus_sample"
+        let taxId = 10941
+        let accessions = (1...6).map { "RV_SEGMENT_\($0)" }
+        let tsvURL = workspace.appendingPathComponent("virus_hits_final.tsv")
+        let dbURL = workspace.appendingPathComponent("naomgs.sqlite")
+
+        var lines = [
+            [
+                "sample",
+                "seq_id",
+                "aligner_taxid_lca",
+                "query_seq",
+                "query_qual",
+                "prim_align_genome_id_all",
+                "prim_align_ref_start",
+                "prim_align_edit_distance",
+                "query_len",
+                "prim_align_query_rc",
+                "prim_align_pair_status",
+                "prim_align_best_alignment_score",
+                "prim_align_cigar",
+                "stitle"
+            ].joined(separator: "\t")
+        ]
+        for (index, accession) in accessions.enumerated() {
+            lines.append([
+                sample,
+                "read_\(index + 1)",
+                String(taxId),
+                "ACGTACGT",
+                "IIIIIIII",
+                accession,
+                String(100 + index * 20),
+                "0",
+                "8",
+                "False",
+                "CP",
+                "90",
+                "8M",
+                "Rotavirus A segment \(index + 1)"
+            ].joined(separator: "\t"))
+        }
+        try lines.joined(separator: "\n").write(to: tsvURL, atomically: true, encoding: .utf8)
+
+        _ = try await NaoMgsDatabase.createStreaming(at: dbURL, from: [tsvURL])
+        let db = try NaoMgsDatabase(at: dbURL)
+        let manifest = NaoMgsManifest(
+            sampleName: sample,
+            sourceFilePath: tsvURL.path,
+            hitCount: accessions.count,
+            taxonCount: 1,
+            topTaxon: "Rotavirus A",
+            topTaxonId: taxId
+        )
+
+        let controller = NaoMgsResultViewController()
+        _ = controller.view
+        controller.configure(database: db, manifest: manifest, bundleURL: workspace)
+        controller.testTaxonomyTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+
+        let selector = try XCTUnwrap(controller.testBuildNaoMgsSelectors().first)
+        XCTAssertEqual(Set(selector.accessions), Set(accessions))
+        XCTAssertEqual(selector.accessions.count, accessions.count)
+        XCTAssertEqual(selector.readNameAllowlist, Set((1...6).map { "read_\($0)" }))
+    }
+}
+
+private func makeTemporaryDirectory(prefix: String) -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(prefix)\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
 }

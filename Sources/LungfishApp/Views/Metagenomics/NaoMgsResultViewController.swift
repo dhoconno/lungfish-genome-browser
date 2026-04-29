@@ -1540,8 +1540,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     // MARK: - Classifier extraction wiring
 
     /// Builds per-sample selectors from the current taxonomy-table selection.
-    /// NAO-MGS rows carry a `sample`, a `taxId`, and `topAccessions`. We group
-    /// by sample so the resolver can run one samtools invocation per sample.
+    /// NAO-MGS rows carry display-limited `topAccessions`, but extraction must
+    /// use every accession contributing to the selected taxon. We group by
+    /// sample so the resolver can run one samtools invocation per sample.
     ///
     /// Each selector includes a `readNameAllowlist` queried from the SQLite
     /// database so that the extraction pipeline only keeps reads that actually
@@ -1554,7 +1555,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         for idx in indexes where idx < displayedRows.count {
             let row = displayedRows[idx]
             var bucket = bySample[row.sample] ?? (accessions: [], taxIds: [], readNames: [])
-            bucket.accessions.append(contentsOf: row.topAccessions)
+            bucket.accessions.append(contentsOf: extractionAccessions(for: row))
             bucket.taxIds.append(row.taxId)
             // Query the database for the read names belonging to this specific taxon.
             if let db = database {
@@ -1567,11 +1568,34 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         return bySample.map { (sid, bucket) in
             ClassifierRowSelector(
                 sampleId: sid,
-                accessions: bucket.accessions,
-                taxIds: bucket.taxIds,
+                accessions: orderedUnique(bucket.accessions),
+                taxIds: orderedUnique(bucket.taxIds),
                 readNameAllowlist: bucket.readNames.isEmpty ? nil : bucket.readNames
             )
         }.sorted { ($0.sampleId ?? "") < ($1.sampleId ?? "") }
+    }
+
+    private func extractionAccessions(for row: NaoMgsTaxonSummaryRow) -> [String] {
+        guard let database else {
+            return row.topAccessions
+        }
+
+        do {
+            let accessions = try database.fetchAccessionSummaries(sample: row.sample, taxId: row.taxId)
+                .map(\.accession)
+            let uniqueAccessions = orderedUnique(accessions)
+            return uniqueAccessions.isEmpty ? row.topAccessions : uniqueAccessions
+        } catch {
+            logger.error(
+                "Failed to fetch NAO-MGS accessions for extraction: \(error.localizedDescription, privacy: .public)"
+            )
+            return row.topAccessions
+        }
+    }
+
+    private func orderedUnique<Value: Hashable>(_ values: [Value]) -> [Value] {
+        var seen = Set<Value>()
+        return values.filter { seen.insert($0).inserted }
     }
 
     /// Presents the unified classifier extraction dialog for the current selection.
@@ -2132,6 +2156,8 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     var testTableContainer: NSView? { tableContainer }
     var testSplitView: NSSplitView { splitView }
     var testBlastDrawerContainer: BlastResultsDrawerContainerView? { blastDrawerContainer }
+    var testTaxonomyTableView: NSTableView { taxonomyTableView }
+    func testBuildNaoMgsSelectors() -> [ClassifierRowSelector] { buildNaoMgsSelectors() }
 
     // MARK: - Multi-Selection Helpers
 
