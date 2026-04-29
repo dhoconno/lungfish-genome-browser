@@ -657,6 +657,51 @@ struct ReleaseBuildConfigurationTests {
         #expect(agent.contains(".dmg"))
     }
 
+    @Test("Release agent documents versioning release notes and GitHub publication")
+    func releaseAgentDocumentsVersioningReleaseNotesAndGitHubPublication() throws {
+        let agent = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent(".codex/agents/release-agent.md"),
+            encoding: .utf8
+        )
+        let requiredPhrases = [
+            "Determine the next version",
+            "CFBundleShortVersionString",
+            "lungfish-cli --version",
+            "docs/release-notes/v",
+            "git tag",
+            "gh release create",
+            "gh release view",
+            "git status --short --branch"
+        ]
+
+        for phrase in requiredPhrases {
+            #expect(agent.contains(phrase), "release agent is missing: \(phrase)")
+        }
+    }
+
+    @Test("Release agent documents independent post build verification")
+    func releaseAgentDocumentsIndependentPostBuildVerification() throws {
+        let agent = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent(".codex/agents/release-agent.md"),
+            encoding: .utf8
+        )
+        let requiredPhrases = [
+            "codesign --verify --deep --strict",
+            "xcrun stapler validate",
+            "spctl -a -vv -t open",
+            "notary-app-log.json",
+            "notary-dmg-log.json",
+            "shasum -a 256",
+            "release-metadata.txt"
+        ]
+
+        for phrase in requiredPhrases {
+            #expect(agent.contains(phrase), "release agent is missing: \(phrase)")
+        }
+    }
+
     @Test("Production runtime resource lookups avoid SwiftPM Bundle.module accessors")
     func productionRuntimeResourceLookupsAvoidSwiftPMBundleModuleAccessors() throws {
         let repositoryRoot = Self.repositoryRoot()
