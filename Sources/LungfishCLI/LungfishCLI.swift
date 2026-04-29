@@ -26,9 +26,9 @@ struct LungfishCLI: AsyncParsableCommand {
             Container support uses Apple Containerization framework (macOS 26+) for
             running bioinformatics tools in isolated OCI containers.
 
-            For more information, see: https://github.com/lungfish/genome-browser
+            For more information, see: https://github.com/dhoconno/lungfish-genome-explorer
             """,
-        version: "0.4.0-alpha.4",
+        version: "0.4.0-alpha.5",
         subcommands: [
             ConvertCommand.self,
             AnalyzeCommand.self,

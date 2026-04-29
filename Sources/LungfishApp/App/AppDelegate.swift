@@ -8080,7 +8080,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc func openReleaseNotes(_ sender: Any?) {
-        if let url = URL(string: "https://github.com/dho/lungfish-genome-browser/releases") {
+        if let url = URL(string: "https://github.com/dhoconno/lungfish-genome-explorer/releases") {
             NSWorkspace.shared.open(url)
         }
     }
