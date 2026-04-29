@@ -405,6 +405,14 @@ struct ProcessViralReconWorkflowProcessRunner: ViralReconWorkflowProcessRunning 
         process.terminationHandler = { process in
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
+            collector.append(
+                stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
+                source: .standardOutput
+            )
+            collector.append(
+                stderrPipe.fileHandleForReading.readDataToEndOfFile(),
+                source: .standardError
+            )
             collector.flushPendingLines()
             termination.finish(process.terminationStatus)
         }
