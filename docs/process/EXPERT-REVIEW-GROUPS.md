@@ -37,6 +37,7 @@ Expert Review Groups are assembled by the Project Lead Agent to evaluate complet
 - **Strand handling**: Are strand-specific operations (complement, translation) correct?
 - **Provenance completeness**: Does the provenance record include all parameters, tool versions, and input checksums?
 - **Provenance accuracy**: Does the provenance record match what was actually executed?
+- **Bundle provenance**: Do CLI and GUI paths write provenance into final output bundles/directories, with records pointing at the stored payloads rather than temporary staging files?
 - **Data loss detection**: Can the user tell if data was lost or truncated during import?
 - **Format compliance**: Do exported files pass format validators (VCF spec, BAM spec, etc.)?
 - **Idempotency**: Running the same operation twice produces the same result?

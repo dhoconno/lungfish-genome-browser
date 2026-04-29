@@ -658,6 +658,120 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
         }
     }
 
+    func testAppFASTQOutputBundleWriterPreservesRiboDetectorProvenanceInImportedBundle() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecImportRiboProvenance")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sourceBundle = try FASTQOperationTestHelper.makeBundle(named: "source", in: tempDir)
+        try FASTQOperationTestHelper.writeSyntheticFASTQ(
+            to: sourceBundle.fastqURL,
+            readCount: 4,
+            readLength: 20
+        )
+
+        let stagingDir = tempDir.appendingPathComponent("staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        let stagedFASTQ = stagingDir.appendingPathComponent("source.norrna.fastq")
+        try FASTQOperationTestHelper.writeSyntheticFASTQ(
+            to: stagedFASTQ,
+            readCount: 2,
+            readLength: 14
+        )
+        try writeSyntheticProvenance(
+            to: stagingDir,
+            name: "RiboDetector FASTQ filter",
+            toolName: "RiboDetector",
+            toolVersion: "0.3.3",
+            command: [
+                "micromamba", "run", "-n", "ribodetector", "ribodetector_cpu",
+                "-t", "4", "-l", "20", "-i", sourceBundle.fastqURL.path,
+                "-e", "rrna", "-o", stagedFASTQ.path,
+            ],
+            inputURL: sourceBundle.fastqURL,
+            outputURL: stagedFASTQ,
+            parameters: [
+                "retain": .string("norrna"),
+                "ensure": .string("rrna"),
+                "readLength": .integer(20),
+                "threads": .integer(4),
+            ]
+        )
+
+        let destinationBundle = tempDir.appendingPathComponent(
+            "source-ribodetector-norrna.\(FASTQBundle.directoryExtension)",
+            isDirectory: true
+        )
+        let writer = AppFASTQOutputBundleWriter(ingestor: SpyFASTQOutputIngestor())
+        let request = FASTQOperationLaunchRequest.derivative(
+            request: .ribosomalRNAFilter(retention: .nonRRNA, ensure: .rrna),
+            inputURLs: [sourceBundle.bundleURL],
+            outputMode: .perInput
+        )
+
+        let bundleURL = try await writer.importFASTQOutput(
+            sourceURL: stagedFASTQ,
+            bundleURL: destinationBundle,
+            originalRequest: request,
+            sourceInputURL: sourceBundle.bundleURL
+        )
+
+        let bundledFASTQ = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL))
+        let provenance = try XCTUnwrap(ProvenanceRecorder.load(from: bundleURL))
+        let step = try XCTUnwrap(provenance.steps.first)
+        XCTAssertEqual(provenance.name, "RiboDetector FASTQ filter")
+        XCTAssertEqual(provenance.status, .completed)
+        XCTAssertEqual(step.toolName, "RiboDetector")
+        XCTAssertEqual(step.toolVersion, "0.3.3")
+        XCTAssertEqual(step.command.prefix(5), ["micromamba", "run", "-n", "ribodetector", "ribodetector_cpu"])
+        XCTAssertEqual(step.outputs.map(\.filename), [bundledFASTQ.lastPathComponent])
+        XCTAssertEqual(step.outputs.first?.format, .fastq)
+        XCTAssertNotNil(ProvenanceRecorder.findProvenance(forFile: bundledFASTQ))
+    }
+
+    func testAppFASTQOutputBundleWriterCreatesFallbackProvenanceForDerivativeBundles() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecImportFallbackProvenance")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sourceBundle = try FASTQOperationTestHelper.makeBundle(named: "source", in: tempDir)
+        try FASTQOperationTestHelper.writeSyntheticFASTQ(
+            to: sourceBundle.fastqURL,
+            readCount: 3,
+            readLength: 20
+        )
+        let stagedFASTQ = tempDir.appendingPathComponent("source.length.fastq")
+        try FASTQOperationTestHelper.writeSyntheticFASTQ(
+            to: stagedFASTQ,
+            readCount: 2,
+            readLength: 14
+        )
+
+        let destinationBundle = tempDir.appendingPathComponent(
+            "source-length-filtered.\(FASTQBundle.directoryExtension)",
+            isDirectory: true
+        )
+        let writer = AppFASTQOutputBundleWriter(ingestor: SpyFASTQOutputIngestor())
+        let request = FASTQOperationLaunchRequest.derivative(
+            request: .lengthFilter(min: 10, max: 50),
+            inputURLs: [sourceBundle.bundleURL],
+            outputMode: .perInput
+        )
+
+        let bundleURL = try await writer.importFASTQOutput(
+            sourceURL: stagedFASTQ,
+            bundleURL: destinationBundle,
+            originalRequest: request,
+            sourceInputURL: sourceBundle.bundleURL
+        )
+
+        let bundledFASTQ = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL))
+        let provenance = try XCTUnwrap(ProvenanceRecorder.load(from: bundleURL))
+        let step = try XCTUnwrap(provenance.steps.first)
+        XCTAssertEqual(step.toolName, "lungfish-cli")
+        XCTAssertTrue(step.command.joined(separator: " ").contains("length-filter"))
+        XCTAssertEqual(step.outputs.map(\.filename), [bundledFASTQ.lastPathComponent])
+        XCTAssertNotNil(ProvenanceRecorder.findProvenance(forFile: bundledFASTQ))
+    }
+
     func testBundleImporterWrapsRawFASTAOutputsIntoReferenceBundles() async throws {
         let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecImportFASTA")
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -1697,6 +1811,46 @@ private final class SpyFASTQOutputIngestor: @unchecked Sendable, FASTQOutputInge
             pairingMode: config.pairingMode
         )
     }
+}
+
+private func writeSyntheticProvenance(
+    to directory: URL,
+    name: String,
+    toolName: String,
+    toolVersion: String,
+    command: [String],
+    inputURL: URL,
+    outputURL: URL,
+    parameters: [String: ParameterValue] = [:]
+) throws {
+    let run = WorkflowRun(
+        name: name,
+        endTime: Date(),
+        status: .completed,
+        steps: [
+            StepExecution(
+                toolName: toolName,
+                toolVersion: toolVersion,
+                command: command,
+                inputs: [
+                    ProvenanceRecorder.fileRecord(url: inputURL, format: .fastq, role: .input),
+                ],
+                outputs: [
+                    ProvenanceRecorder.fileRecord(url: outputURL, format: .fastq, role: .output),
+                ],
+                exitCode: 0,
+                wallTime: 1.25,
+                stderr: nil,
+                endTime: Date()
+            ),
+        ],
+        parameters: parameters
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(run)
+    try data.write(to: directory.appendingPathComponent(ProvenanceRecorder.provenanceFilename), options: .atomic)
 }
 
 private func makeFullFASTABundle(

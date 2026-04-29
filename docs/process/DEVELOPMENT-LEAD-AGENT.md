@@ -92,6 +92,8 @@ Activated for **every operation** that has GUI exposure. Their job is to ensure 
 - CLI output formats are documented and stable (JSON for structured data, TSV for tabular)
 - CLI exit codes follow conventions (0 = success, 1 = error, 2 = invalid input)
 - CLI commands support `--verbose` and `--quiet` flags
+- CLI commands that create, transform, import, export, or wrap scientific data write `.lungfish-provenance.json` into the output directory or bundle. The record includes tool/workflow version, exact command/options including resolved defaults, runtime/container or conda environment, inputs/outputs, checksums, exit status, wall time, and stderr when useful.
+- GUI wrappers preserve or rehydrate CLI provenance so final `.lungfish*` bundles reference the stored payloads rather than temporary staging files.
 - CLI tests cover the same edge cases as GUI tests, plus headless-specific cases
 
 **Output**: For each operation, a CLI test plan listing the subcommand, expected inputs/outputs, and edge cases.

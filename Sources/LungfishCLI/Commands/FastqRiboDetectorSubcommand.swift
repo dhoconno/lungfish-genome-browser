@@ -60,6 +60,18 @@ struct FastqRiboDetectorSubcommand: AsyncParsableCommand {
             arguments += ["-r", rRNAOutputURL.path]
         }
 
+        let provenanceCommand = CLIProvenanceSupport.condaCommand(
+            toolName: "ribodetector_cpu",
+            environment: "ribodetector",
+            arguments: arguments
+        )
+        let toolVersion = await CLIProvenanceSupport.detectCondaToolVersion(
+            toolName: "ribodetector_cpu",
+            environment: "ribodetector",
+            flags: ["--version", "-h", "--help"],
+            fallback: "0.3.3"
+        )
+        let startedAt = Date()
         let result = try await CondaManager.shared.runTool(
             name: "ribodetector_cpu",
             arguments: arguments,
@@ -67,7 +79,23 @@ struct FastqRiboDetectorSubcommand: AsyncParsableCommand {
             workingDirectory: outputDirectoryURL,
             timeout: 7200
         )
+        let wallTime = Date().timeIntervalSince(startedAt)
         guard result.exitCode == 0 else {
+            try? await recordProvenance(
+                inputURL: inputURL,
+                outputDirectoryURL: outputDirectoryURL,
+                retention: retention,
+                ensureMode: ensureMode,
+                effectiveReadLength: effectiveReadLength,
+                effectiveThreads: effectiveThreads,
+                command: provenanceCommand,
+                toolVersion: toolVersion,
+                outputs: outputs.retainedOutputURLs.filter { FileManager.default.fileExists(atPath: $0.path) },
+                exitCode: result.exitCode,
+                wallTime: wallTime,
+                stderr: result.stderr,
+                status: .failed
+            )
             throw CLIError.conversionFailed(reason: "RiboDetector failed: \(result.stderr)")
         }
 
@@ -75,8 +103,79 @@ struct FastqRiboDetectorSubcommand: AsyncParsableCommand {
             try? FileManager.default.removeItem(at: outputs.nonRRNAOutputURL)
         }
 
+        try await recordProvenance(
+            inputURL: inputURL,
+            outputDirectoryURL: outputDirectoryURL,
+            retention: retention,
+            ensureMode: ensureMode,
+            effectiveReadLength: effectiveReadLength,
+            effectiveThreads: effectiveThreads,
+            command: provenanceCommand,
+            toolVersion: toolVersion,
+            outputs: outputs.retainedOutputURLs,
+            exitCode: result.exitCode,
+            wallTime: wallTime,
+            stderr: result.stderr,
+            status: .completed
+        )
+
         let retained = outputs.retainedOutputURLs.map(\.path).joined(separator: ", ")
         FileHandle.standardError.write(Data("RiboDetector outputs written to \(retained)\n".utf8))
+    }
+
+    private func recordProvenance(
+        inputURL: URL,
+        outputDirectoryURL: URL,
+        retention: FASTQRiboDetectorRetention,
+        ensureMode: FASTQRiboDetectorEnsure,
+        effectiveReadLength: Int,
+        effectiveThreads: Int,
+        command: [String],
+        toolVersion: String,
+        outputs: [URL],
+        exitCode: Int32,
+        wallTime: TimeInterval,
+        stderr: String,
+        status: RunStatus
+    ) async throws {
+        let format = SequenceFormat.from(url: inputURL)
+        let fileFormat: FileFormat = {
+            switch format {
+            case .fastq:
+                return .fastq
+            case .fasta:
+                return .fasta
+            case .none:
+                return .unknown
+            }
+        }()
+
+        try await CLIProvenanceSupport.recordSingleStepRun(
+            name: "RiboDetector FASTQ filter",
+            parameters: [
+                "input": .file(inputURL),
+                "outputDirectory": .file(outputDirectoryURL),
+                "retain": .string(retention.rawValue),
+                "ensure": .string(ensureMode.rawValue),
+                "readLength": .integer(effectiveReadLength),
+                "threads": .integer(effectiveThreads),
+                "condaEnvironment": .string("ribodetector"),
+            ],
+            toolName: "RiboDetector",
+            toolVersion: toolVersion,
+            command: command,
+            inputs: [
+                ProvenanceRecorder.fileRecord(url: inputURL, format: fileFormat, role: .input),
+            ],
+            outputs: outputs.map {
+                ProvenanceRecorder.fileRecord(url: $0, format: fileFormat, role: .output)
+            },
+            exitCode: exitCode,
+            wallTime: wallTime,
+            stderr: stderr,
+            status: status,
+            outputDirectory: outputDirectoryURL
+        )
     }
 
     static func plannedOutputs(

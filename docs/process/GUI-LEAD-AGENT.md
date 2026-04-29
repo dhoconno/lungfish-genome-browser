@@ -79,7 +79,7 @@ Simulates a power user who is comfortable with command-line tools and expects pr
 - **Parameter exposure**: Can they see and modify all tool parameters, not just defaults?
 - **Reproducibility**: Can they see exactly what command was run and repeat it via CLI?
 - **Performance**: Does the app handle large datasets (multi-GB VCFs, whole genomes) without hanging?
-- **Provenance**: Is the provenance record complete and accurate?
+- **Provenance**: Is the provenance record complete and accurate, and does it survive GUI wrapping/import so the final bundle references the stored payload?
 - **Keyboard efficiency**: Can common workflows be done without touching the mouse?
 - **Integration**: Can they copy coordinates, accession numbers, or sequences to clipboard easily?
 - **Batch operations**: Can they process multiple files at once?

@@ -108,7 +108,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         // Find and reload the assembly row
         let items = sortedDisplayItems
         if let idx = items.firstIndex(where: { $0.assembly.assembly == accession }) {
-            reloadItemPreservingSelection(items[idx], reloadChildren: false)
+            reloadItemPreservingSelection(items[idx], reloadChildren: false, notifySelectionCallbacks: false)
         }
     }
 
@@ -134,7 +134,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             uniqueReadCountsBySampleAssembly[assemblyKey(for: item.assembly)] = assemblyTotal
 
             // Reload the assembly row and its children
-            reloadItemPreservingSelection(item, reloadChildren: true)
+            reloadItemPreservingSelection(item, reloadChildren: true, notifySelectionCallbacks: false)
         }
     }
 
@@ -200,11 +200,15 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         return sampleIds
     }
 
-    private func reloadItemPreservingSelection(_ item: Any, reloadChildren: Bool) {
+    private func reloadItemPreservingSelection(
+        _ item: Any,
+        reloadChildren: Bool,
+        notifySelectionCallbacks: Bool = true
+    ) {
         suppressSelectionCallback = true
         outlineView.reloadItem(item, reloadChildren: reloadChildren)
         suppressSelectionCallback = false
-        restoreSelectionAfterDisplayedItemsChanged()
+        restoreSelectionAfterDisplayedItemsChanged(notifySelectionCallbacks: notifySelectionCallbacks)
     }
 
     /// Called when the user selects an assembly row.
@@ -1282,7 +1286,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         }
     }
 
-    private func restoreSelectionAfterDisplayedItemsChanged() {
+    private func restoreSelectionAfterDisplayedItemsChanged(notifySelectionCallbacks: Bool = true) {
         guard let visibleIDs = visibleSelectionIdentities() else { return }
         let previousIDs = selectionIdentities.selectedIDs
         guard !previousIDs.isEmpty else {
@@ -1293,8 +1297,10 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         selectionIdentities.removeSelectionsNotVisible(in: visibleIDs)
         restoreOutlineSelection(selectionIdentities.visibleIndexes(in: visibleIDs))
         if selectionIdentities.selectedIDs.isEmpty {
-            onAssemblySelected?(nil)
-        } else {
+            if notifySelectionCallbacks {
+                onAssemblySelected?(nil)
+            }
+        } else if notifySelectionCallbacks {
             emitSelectionCallbacks(for: selectedVisibleItemsByIdentity())
         }
     }

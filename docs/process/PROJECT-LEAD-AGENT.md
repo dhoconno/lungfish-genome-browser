@@ -154,6 +154,7 @@ All operations log to os.log using `LogSubsystem` constants:
 
 ### Provenance
 All data transformations MUST record provenance (tool, version, parameters, inputs, outputs, checksums, runtime).
+For CLI-backed workflows, provenance MUST be saved into the output directory or final `.lungfish*` bundle and must include the exact command/options, resolved defaults, conda/container/runtime identity, input and output checksums, exit status, wall time, and stderr when useful. GUI wrappers must preserve or rehydrate CLI provenance so records point to the final stored payload, not only temporary staging files.
 
 ### Concurrency Patterns
 - `DispatchQueue.main.async { MainActor.assumeIsolated { } }` for UI updates from background

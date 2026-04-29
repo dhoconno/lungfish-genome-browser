@@ -1261,7 +1261,7 @@ struct AppFASTQOutputBundleWriter: FASTQOutputBundleWriting {
         )
         FASTQMetadataStore.save(metadata, for: result.outputFile)
 
-        try writeDerivedManifest(
+        let operation = try writeDerivedManifest(
             for: result.outputFile,
             in: bundleURL,
             sourceURL: sourceURL,
@@ -1269,6 +1269,14 @@ struct AppFASTQOutputBundleWriter: FASTQOutputBundleWriting {
             sourceInputURL: sourceInputURL,
             stats: stats,
             pairingMode: metadata.ingestion?.pairingMode
+        )
+        try await writeOperationProvenance(
+            for: result.outputFile,
+            in: bundleURL,
+            sourceURL: sourceURL,
+            originalRequest: originalRequest,
+            sourceInputURL: sourceInputURL,
+            operation: operation
         )
 
         return bundleURL
@@ -1340,7 +1348,7 @@ struct AppFASTQOutputBundleWriter: FASTQOutputBundleWriting {
         sourceInputURL: URL?,
         stats: FASTQDatasetStatistics,
         pairingMode: IngestionMetadata.PairingMode?
-    ) throws {
+    ) throws -> FASTQDerivativeOperation {
         let operation = derivativeOperation(
             for: originalRequest,
             sourceURL: sourceURL,
@@ -1384,6 +1392,116 @@ struct AppFASTQOutputBundleWriter: FASTQOutputBundleWriting {
             materializationState: .materialized(checksum: checksum)
         )
         try FASTQBundle.saveDerivedManifest(manifest, in: bundleURL)
+        return operation
+    }
+
+    private func writeOperationProvenance(
+        for outputFASTQ: URL,
+        in bundleURL: URL,
+        sourceURL: URL,
+        originalRequest: FASTQOperationLaunchRequest,
+        sourceInputURL: URL?,
+        operation: FASTQDerivativeOperation
+    ) async throws {
+        let sourceRun = ProvenanceRecorder.load(from: sourceURL.deletingLastPathComponent())
+        let sourceStep = sourceRun.flatMap { sourceRun in
+            sourceRun.steps.first { step in
+                step.outputs.contains { output in
+                    output.path == sourceURL.path || output.filename == sourceURL.lastPathComponent
+                }
+            } ?? sourceRun.steps.last
+        }
+
+        var parameters = sourceRun?.parameters ?? [:]
+        for (key, value) in fallbackProvenanceParameters(
+            for: outputFASTQ,
+            bundleURL: bundleURL,
+            sourceURL: sourceURL,
+            sourceInputURL: sourceInputURL,
+            originalRequest: originalRequest,
+            operation: operation
+        ) where parameters[key] == nil {
+            parameters[key] = value
+        }
+
+        let runID = await ProvenanceRecorder.shared.beginRun(
+            name: sourceRun?.name ?? "\(operation.kind.rawValue) FASTQ operation",
+            parameters: parameters
+        )
+        await ProvenanceRecorder.shared.recordStep(
+            runID: runID,
+            toolName: sourceStep?.toolName ?? operation.toolUsed ?? "lungfish-cli",
+            toolVersion: sourceStep?.toolVersion ?? operation.toolVersion ?? "unknown",
+            command: sourceStep?.command ?? fallbackProvenanceCommand(for: operation),
+            inputs: sourceStep?.inputs ?? [
+                ProvenanceRecorder.fileRecord(
+                    url: primaryInputForProvenance(sourceInputURL: sourceInputURL, sourceURL: sourceURL),
+                    format: .fastq,
+                    role: .input
+                ),
+            ],
+            outputs: [
+                ProvenanceRecorder.fileRecord(url: outputFASTQ, format: .fastq, role: .output),
+            ],
+            exitCode: sourceStep?.exitCode ?? 0,
+            wallTime: sourceStep?.wallTime ?? 0,
+            stderr: sourceStep?.stderr
+        )
+        await ProvenanceRecorder.shared.completeRun(runID, status: sourceRun?.status ?? .completed)
+        try await ProvenanceRecorder.shared.save(runID: runID, to: bundleURL)
+    }
+
+    private func fallbackProvenanceParameters(
+        for outputFASTQ: URL,
+        bundleURL: URL,
+        sourceURL: URL,
+        sourceInputURL: URL?,
+        originalRequest: FASTQOperationLaunchRequest,
+        operation: FASTQDerivativeOperation
+    ) -> [String: ParameterValue] {
+        var parameters: [String: ParameterValue] = [
+            "operationKind": .string(operation.kind.rawValue),
+            "stagedOutput": .file(sourceURL),
+            "bundleURL": .file(bundleURL),
+            "outputFASTQ": .file(outputFASTQ),
+        ]
+        if let sourceInputURL {
+            parameters["sourceInput"] = .file(sourceInputURL)
+        }
+        if let command = operation.toolCommand {
+            parameters["command"] = .string(command)
+        }
+
+        if case .derivative(let derivativeRequest, _, _) = originalRequest {
+            parameters["derivativeRequest"] = .string(derivativeRequest.operationKindString)
+        }
+        if let retention = operation.riboDetectorRetention {
+            parameters["retain"] = .string(retention.rawValue)
+        }
+        if let ensure = operation.riboDetectorEnsure {
+            parameters["ensure"] = .string(ensure.rawValue)
+        }
+        return parameters
+    }
+
+    private func fallbackProvenanceCommand(for operation: FASTQDerivativeOperation) -> [String] {
+        if let command = operation.toolCommand, !command.isEmpty {
+            return ["/bin/sh", "-lc", command]
+        }
+        return ["lungfish-cli", operation.kind.rawValue]
+    }
+
+    private func primaryInputForProvenance(sourceInputURL: URL?, sourceURL: URL) -> URL {
+        guard let sourceInputURL else { return sourceURL }
+        if FASTQBundle.isBundleURL(sourceInputURL),
+           let primaryURL = FASTQBundle.resolvePrimarySequenceURL(for: sourceInputURL) {
+            return primaryURL
+        }
+        if let bundleURL = enclosingFASTQBundleURL(for: sourceInputURL),
+           let primaryURL = FASTQBundle.resolvePrimarySequenceURL(for: bundleURL) {
+            return primaryURL
+        }
+        return sourceInputURL
     }
 
     private func derivativeOperation(
