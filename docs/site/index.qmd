@@ -1,6 +1,5 @@
 ---
 title: "Lungfish Genome Explorer"
-subtitle: "An open-source, native Mac app for genomic data"
 ---
 
 <!-- The download card is regenerated from the GitHub Releases API by
