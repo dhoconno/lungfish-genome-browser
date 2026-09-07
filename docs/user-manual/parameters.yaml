@@ -4243,8 +4243,8 @@ operations:
       - label: Run Mode
         control: radio
         default: Run separately per bundle
-        allowed: Run separately per bundle
-        effect: Shows how several selected samples are handled. The choice is locked because pooling reads across samples would mix up the per-virus coverage and abundance numbers.
+        allowed: Run separately per bundle, with a second Combine all inputs and run once row shown but disabled, under a title that names the number of selected bundles
+        effect: Shows how several selected samples are handled. Only the per-bundle row can be chosen, and the caption beneath it says each bundle gets its own operations entry and the results are merged into one summary (corrected 2026-09-07 at the chapter 34 review, the earlier pooling rationale was a source comment rather than on-screen text).
         when_to_change: rarely
         cli_flag: null
       - label: Enable quality filtering (fastp)

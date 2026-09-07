@@ -150,7 +150,7 @@ The Databases tab is where reference databases are downloaded, updated, and remo
 
 The Databases tab groups its rows by the tool that reads them. Each row reports the database's size, the memory it wants, its install state, the install date, the version, and whether the local copy is up to date. An installed row reads **Installed**, and one you have not fetched yet shows a **Download** button in that place instead. The memory figure is there because a database is not only a stored file. Kraken2 loads the whole thing into RAM before it classifies a single read, which is the memory question Before you start raised. A banner at the top reads "Recommended for your system" and names the database that fits your Mac's memory. Any database asking for more memory than you have reads "(exceeds system RAM)" inline, so you do not load one by mistake.
 
-Thirteen databases are listed. Kraken2 is the classifier that reads a database of reference genomes and reports which organism each sequencing read most likely came from. Nine of the thirteen rows are Kraken2 collections, which differ in what organisms they cover and how much memory they need.
+Thirteen databases are listed. Kraken2 is the classifier that reads a database of reference genomes and reports which organism each sequencing read most likely came from. Eleven of the thirteen rows are Kraken2 databases, nine of them RefSeq collections that differ in what organisms they cover and how much memory they need, plus the SILVA and Greengenes ribosomal builds for 16S work.
 
 | Database | Memory it wants | What it covers |
 |---|---|---|

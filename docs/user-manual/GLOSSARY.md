@@ -142,6 +142,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Demultiplex**{#demultiplex}. Separating a mixed sequencing run into per-sample read sets by their barcode. See also: barcode, barcode kit.
 
+**Demixing**{#demixing}. Solving for the blend of known viral lineages whose combined mutation profile best explains the allele frequencies measured in one sample, which is how Freyja reports several lineages with a proportion each instead of picking a single name. See also: Freyja, lineage, lineage barcode, allele frequency.
+
 **Depth**{#depth}. Synonym for coverage in this manual. The number of reads stacked at one reference position. See also: coverage.
 
 **Docker**{#docker}. The container software that nf-core pipelines run their tool steps inside, installed on a Mac as the separate Docker Desktop application rather than through the Lungfish Genome Explorer Plugin Manager, and the only execution profile the Viral Recon wizard will accept. See also: container, nf-core, Nextflow.
@@ -262,7 +264,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Kraken 2**{#kraken2}. A read classifier that assigns each read to a taxon by matching the read's minimizers against a database of reference genomes, chosen for breadth rather than depth and run in Lungfish Genome Explorer from **Tools > Classification > Kraken2...**, usually with Bracken estimating abundances from its assignments afterwards. See also: read classification, minimizer, lowest common ancestor, taxon.
 
-**Kreport**{#kreport}. The six-column summary file Kraken 2 writes beside its per-read output, holding one row per taxon with the percentage of reads under it, its clade count, its direct count, a one-letter rank code, its numeric taxonomy identifier, and its name indented by depth. It is the file the taxonomy viewport reads, and the file `lungfish-cli import kraken2` takes when you bring in a classification produced elsewhere. See also: Kraken 2, clade count, taxon, taxonomic rank.
+**Kreport**{#kreport}. The summary file Kraken 2 writes beside its per-read output, holding one row per taxon with the percentage of reads under it, its clade count, its direct count, a one-letter rank code, its numeric taxonomy identifier, and its name indented by depth. LGE always asks Kraken 2 for minimizer data, so its kreports carry eight columns, with two minimizer counts inserted after the direct count and the taxonomy identifier in the seventh column. It is the file the taxonomy viewport reads, and the file `lungfish-cli import kraken2` takes when you bring in a classification produced elsewhere. See also: Kraken 2, clade count, taxon, taxonomic rank.
 
 ## L
 
@@ -277,6 +279,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **LoFreq**{#lofreq}. A variant caller that builds an error model from the base and mapping qualities of the reads and reports a position when the alternate reads are more numerous than that error model alone would produce, which lets it find variants present in a small fraction of the reads without assuming any fixed number of genome copies. Its default output carries no genotype or sample column and reports no indels unless indel calling is switched on. See also: variant-caller, allele frequency, INFO.
 
 **Lineage**{#lineage}. A named subgroup within a viral species, defined by a characteristic set of variants and assigned by a domain-specific tool (Pangolin for SARS-CoV-2, Nextclade for many viruses). LGE assigns lineages only through the Viral Recon pipeline, which runs Pangolin and Nextclade on the consensus it builds. Its other consensus paths produce FASTAs that downstream tools call lineages from. See also: consensus FASTA.
+
+**Lineage barcode**{#lineage-barcode}. The table Freyja consults during demixing, recording which mutations define each named viral lineage, installed as a dated snapshot alongside the tool so that lineages named after that date cannot be reported until the snapshot is refreshed. See also: Freyja, demixing, lineage.
 
 **Lowest common ancestor**{#lowest-common-ancestor}. The most specific taxon that every organism matching a read belongs to, which a classifier reports instead of guessing when a read's sequence fits several relatives equally well, so a read shared across a whole genus is labelled with the genus rather than with one of its species. See also: taxon, taxonomic rank, read classification.
 
@@ -314,6 +318,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Mitochondrial genome**{#mitochondrial-genome}. The small circular DNA molecule carried inside the mitochondrion, the compartment that supplies a cell's chemical energy, separate from the nuclear chromosomes and present in many copies per cell, the human one being the 16,569-base record `NC_012920.1` known as the revised Cambridge Reference Sequence. See also: reference genome, accession.
 
+**minimap2**{#minimap2}. A general-purpose read mapper that finds, for each read, the reference position where it fits best, used inside Lungfish Genome Explorer both as a mapper you run directly and as the alignment step hidden inside EsViritu's viral detection. See also: mapping, alignment, BAM.
+
 **Minimizer**{#minimizer}. The smallest k-mer within a sliding window of a sequence, picked as a compact fingerprint so a tool can match reads quickly without comparing every base; Kraken2 classifies on minimizers and Deacon counts minimizer hits to flag host reads. See also: Kraken2, Deacon.
 
 **MinKNOW**{#minknow}. The control software that runs an Oxford Nanopore sequencer, calls bases as the run proceeds, and writes the reads out as numbered FASTQ chunks under a `fastq_pass` folder, placing each barcode's reads in its own subfolder when the library was barcoded. See also: basecaller, barcode, unclassified reads.
@@ -333,6 +339,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **NAO-MGS**{#nao-mgs}. A wastewater metagenomic surveillance pipeline from SecureBio that runs externally and whose `virus_hits_final.tsv(.gz)` output Lungfish imports (it does not run the pipeline) through `lungfish nao-mgs import` or the Import Center, presenting one run's viral taxa in a sortable table with a taxon detail pane and BLAST verification workflow. See also: BLAST.
 
 **Newick**{#newick}. A compact parenthesised text format for phylogenetic trees, with branch lengths after colons and optional support values at internal nodes; the lingua franca for moving trees between FigTree, iTOL, ete3, and Lungfish. See also: phylogram.
+
+**Negative control**{#negative-control}. A sample carrying no template on purpose, prepared and sequenced alongside the real specimens so that any organism appearing in it must have come from the reagents, the laboratory, or the sequencing run rather than from a specimen, which is what makes it the reference point for judging contamination across a batch. See also: TaxTriage, read classification, samplesheet.
 
 **Nextflow**{#nextflow}. A language and runner for describing an analysis as a set of steps and the files that flow between them, which then executes those steps in the right order and inside containers, shipped with the Required Setup pack and used by Lungfish Genome Explorer to run the nf-core/viralrecon pipeline. See also: nf-core, container, run bundle.
 
@@ -359,6 +367,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Paired-end**{#paired-end}. A sequencing protocol that reads each DNA fragment from both ends, producing two reads per fragment; the two halves of a pair travel as separate FASTQ files with `_1`/`_2` or `_R1`/`_R2` suffixes. See also: FASTQ, single-end.
 
 **PCR duplicate**{#pcr-duplicate}. A read that is a copy of another read because both came from the same original DNA fragment amplified during library preparation, so the two carry one observation between them rather than two. Amplicon protocols produce identical read starts by design, so duplicates there are expected rather than artifacts. See also: optical duplicate, mark duplicates, clumpify.
+
+**Pangenome**{#pangenome}. All the reference sequences a tool's database holds, treated as one combined mapping target rather than as separate genomes, which is how EsViritu compares reads against its whole viral collection in a single pass. See also: reference genome, mapping, EsViritu.
 
 **Pathoplexus**{#pathoplexus}. An open pathogen-genome database Lungfish can search and import reference sequences from.
 
@@ -438,6 +448,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **REF, ALT**{#ref-alt}. REF is the base or bases present in the reference genome at a variant position; ALT is the base or bases observed in the sample. A one-base REF and one-base ALT describe a SNP; longer REF or ALT describe insertions and deletions.
 
+**RPKMF**{#rpkmf}. Reads per kilobase of reference per million filtered reads, the abundance figure EsViritu reports for each detected virus, which divides out both the length of the reference genome and the size of the sequencing library so that a long virus and a short one, or a deep run and a shallow one, can be compared against each other. See also: EsViritu, coverage, read.
+
 **Representative reads**{#representative-read}. The coverage-stratified sample of reads (default 20, up to 50) that Lungfish automatically selects from a taxon's assigned reads and submits to NCBI BLAST during verification, chosen to span the taxon's coverage rather than picked one at a time by the user. See also: BLAST.
 
 **Required Setup pack**{#required-setup-pack}. The one plugin pack Lungfish installs as a unit and cannot run without, shown in the Plugin Manager as Third-Party Tools, holding the seventeen everyday utilities the rest of the app assumes are present, among them samtools, bcftools, htslib, fastp, Deacon, seqkit, BBTools, Nextflow, and Snakemake. See also: plugin pack, managed environment.
@@ -445,6 +457,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Reproducibility**{#reproducibility}. The property that a workflow re-run with the same inputs, the same plugin pack version, and the same Lungfish build produces output that matches the original by checksum (bit-identical) or by content (logically equivalent); the provenance sidecar carries every field needed to verify this. See also: provenance sidecar.
 
 **Reverse complement**{#reverse-complement}. The sequence read from the opposite DNA strand, obtained by reading the bases backwards and swapping each for its pairing partner (A for T, C for G), so reading frames -1, -2, and -3 are the three frames counted along it and Lungfish runs the transformation from **Sequence > Reverse Complement...**. See also: strand, reading frame.
+
+**Residual**{#residual}. The leftover disagreement between the mutation profile a fitted answer predicts and the profile actually measured in the data, reported by Freyja on the `resid` line of a demix result, where smaller means the lineage mixture explains the sample better and the figure is most useful compared across samples processed the same way. See also: demixing, Freyja.
 
 **Ribosomal RNA (rRNA)**{#ribosomal-rna}. The structural RNA of the ribosome, which is by far the most abundant RNA in a cell, so an RNA sequencing library that was not depleted of it returns mostly ribosomal reads and very little of whatever else was in the sample. See also: Deacon, decontamination.
 
@@ -461,6 +475,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Sample metadata**{#sample-metadata}. Structured per-sample fields (collection date, source, and so on) imported from a CSV or TSV sheet and attached to samples in a project. See also: BioSample.
 
 **Sample sheet**{#sample-sheet}. A CSV listing one sequencing sample per row with the sample's name and the paths to its read files, used at import to pair reads and name bundles explicitly instead of matching mate suffixes in filenames; Lungfish requires the columns `sample`, `r1`, and `r2`, and carries any further columns through as per-sample metadata. See also: sample metadata, paired-end.
+
+**Samplesheet**{#samplesheet}. The CSV a Nextflow pipeline reads to learn which samples to run, written as one header line and one line per sample carrying the sample name, the path to each read file, and the sequencing platform, which is how a headless TaxTriage run declares more than one sample at a time and which Lungfish Genome Explorer writes into every TaxTriage result folder. See also: TaxTriage, Nextflow, sample sheet.
 
 **samtools**{#samtools}. The standard toolkit for reading and writing alignment files, whose subcommands index a BAM, count its records, build a pileup, and call a consensus from one, and which Lungfish Genome Explorer installs and runs for you behind the alignment surfaces rather than asking you to type it. See also: BAM, pileup, consensus sequence, mpileup.
 
@@ -506,6 +522,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Strand bias**{#strand-bias}. A pattern where reads supporting a variant come predominantly from one strand of the reference, often as an artifact of primer placement in amplicon protocols rather than a genuine biological signal. Variant callers apply a strand-bias filter to flag suspect calls; for amplicon data the filter is usually disabled because the imbalance is structural. See also: amplicon.
 
+**Sublineage**{#sublineage}. A viral lineage nested inside another one, named by extending the parent's name with a further number, so BQ.1.19 carries every mutation that defines BQ.1 plus the additional ones that distinguish it, which is why closely related sublineages are the hardest pairs for a demixing tool to tell apart. See also: lineage, demixing.
+
 **Subsampling**{#subsampling}. Drawing a smaller set of reads at random from a larger one, so the smaller set keeps the composition of the original without anyone choosing which reads survive, used to make a fast test slice or to cut two libraries to a common depth before comparing them. See also: FASTQ, read length.
 
 **Substitution model**{#substitution-model}. The set of assumed rates at which one base or residue changes into another, which a maximum-likelihood method needs before it can score a tree; IQ-TREE's default `MFP` setting is an instruction to test many models and use the best-fitting one rather than a model itself. See also: maximum likelihood, IQ-TREE.
@@ -517,6 +535,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## T
 
 **Tabix**{#tabix}. A position-aware index for a bgzipped tab-delimited genomic file (typically `.vcf.gz` or `.bed.gz`), conventionally named with a `.tbi` suffix and kept beside the data file, that lets viewers and callers fetch records for a region without scanning the whole file. See also: VCF.
+
+**TASS score**{#tass-score}. The single number TaxTriage reports for each organism it calls, folding read support, how those reads spread across the organism's reference genome, and agreement between the pipeline's steps into one value that a reviewer can sort on, which Lungfish Genome Explorer expands as the Taxonomic Assignment Scoring System and reads in three bands with 0.80 and 0.40 as the boundaries. It is a repeatable ranking rather than a calibrated probability that the organism is present. See also: TaxTriage, read classification, coverage breadth.
 
 **Table drawer**{#table-drawer}. The panel that slides up from the bottom edge of a reference bundle viewport carrying one tab per kind of table, Annotations, Variants, and Samples, which opens by itself whenever the loaded bundle holds an annotation or variant track. It starts 250 points tall, resizes by dragging its top edge, and remembers the height you set. See also: reference bundle, variant track, sequence viewport.
 
@@ -555,5 +575,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Virtual bundle**{#virtual-bundle}. A read bundle that stores a short manifest naming its parent bundle and the operation to apply rather than a second copy of the reads, keeping only a preview of about a thousand reads on disk, so that many subsets of one sample cost about as much storage as one. See also: materialization, bundle, subsampling.
 
 ## W
+
+**Wastewater Surveillance pack**{#wastewater-surveillance}. The Lungfish Genome Explorer plugin pack that installs Freyja together with iVar, minimap2, Pangolin, and Nextclade, marked Experimental in the Plugin Manager and installing a build of Freyja that runs natively on Apple Silicon. See also: plugin pack, Freyja, demixing.
 
 **Workflow lineage**{#workflow-lineage}. The ordered chain of tool invocations a Lungfish run record holds, shown as the Lineage block of the Inspector's Provenance section, where each numbered step expands to its own command, inputs, outputs, exit status, and wall time. Distinct from a viral lineage, which names a subgroup of a virus species. See also: run record, provenance sidecar.
