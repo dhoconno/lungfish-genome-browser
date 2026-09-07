@@ -5820,3 +5820,440 @@ operations:
       project with provenance, while Export Subtree writes a plain .nwk file
       through a save panel. Neither shows a settings dialog, so the node comes
       from the right-click and the names come from the node label.
+
+  genotype.miseq-amplicon:
+    title: miSeq amplicon MHC genotyping
+    entry_points:
+      - "Tools > Genotyping > miSeq amplicon MHC genotyping..."
+      - "CLI: lungfish-cli fastq genotype <inputs> --reference <ref> --output-dir <dir>"
+      - "CLI: lungfish-cli fastq genotype-cohort <bundles> --reference <ref> --output-dir <dir>"
+    gating: [read-mapping]
+    sources:
+      - Sources/LungfishApp/Views/WorkflowOperations/WorkflowOperationsDialog.swift
+      - Sources/LungfishApp/Views/WorkflowOperations/WorkflowOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/Services/WorkflowLibrary.swift
+      - Sources/LungfishApp/App/MainMenu.swift
+      - Sources/LungfishWorkflow/ONTGenotyping/ONTGenotypingPipeline.swift
+      - Sources/LungfishWorkflow/ONTGenotyping/IlluminaAmpliconPairMerger.swift
+      - Sources/LungfishWorkflow/ONTGenotyping/AmpliconGenotypingMode.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+      - docs/user-manual/reviews/fidelity-2026-09/ground-truth/09-genotyping.md
+    settings:
+      - label: Reference
+        control: file
+        default: the first MHC reference found in the project, or nothing when the project holds none
+        allowed: an allele FASTA file, a .lungfishref bundle, or a .lungfishmhcref bundle that pairs a FASTA with its haplotype definitions
+        effect: Names the library of known allele sequences every read is compared against. An allele missing from this file can never be reported for any sample.
+        when_to_change: Choose the library built for your species and amplicon panel, because a macaque panel will not name human alleles.
+        cli_flag: --reference
+      - label: FASTQ Bundles
+        control: file
+        default: whatever you selected in the sidebar before opening the dialog
+        allowed: one or more prepared per-sample .lungfishfastq bundles, FASTQ files, or a folder of them
+        effect: Chooses which sequenced samples are genotyped. Every selected bundle runs as one batch and lands in a single merged report.
+        when_to_change: Select the whole plate when you want one comparison table, and run bundles one at a time when you want separate reports.
+        cli_flag: null
+      - label: Include subfolders
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: When a selected folder holds bundles inside further folders, this adds those deeper bundles to the batch as well.
+        when_to_change: Turn it on when a sequencing run wrote each sample into its own subfolder.
+        cli_flag: null
+      - label: Report Name
+        control: text
+        default: a name built from the selected read files
+        allowed: any file name
+        effect: Names the result bundle and the Excel workbook the run writes. It is also the label the analysis carries inside that workbook.
+        when_to_change: Change it when the suggested name will not tell you later which plate or cohort the run covered.
+        cli_flag: --output-name
+      - label: Threads
+        control: number
+        default: the machine's active processor count
+        allowed: integers above 0
+        effect: How many worker threads the mapping step uses. More threads finish sooner on a machine with spare cores.
+        when_to_change: Lower it when you need to keep cores free for other work while a long run proceeds.
+        cli_flag: --threads
+      - label: Min Reads
+        control: number
+        default: "1"
+        allowed: integers above 0
+        effect: The fewest reads that must match an allele before that allele appears as a row in the report. A read counts only when it matches the allele across its whole length with no mismatches.
+        when_to_change: Raise it on deeply sequenced libraries to cut the long tail of one-read and two-read hits that are usually sequencing error.
+        cli_flag: --min-support
+      - label: Analysis Mode
+        control: radio
+        default: Genotype only, or AI preset when AI provider access is configured
+        allowed: "AI preset, Deterministic, Genotype only"
+        effect: Decides how far the run goes. Genotype only maps reads and reports which alleles each sample carries, and the other two settings add a haplotype analysis on top of that.
+        when_to_change: Leave it on Genotype only for genotyping work, which is what this chapter covers.
+        cli_flag: null
+      - label: minimap2 arguments
+        control: text
+        default: empty
+        allowed: any command-line arguments minimap2 accepts
+        effect: Passes extra arguments to minimap2, the program that lines each read up against the allele library, after the fixed mapping preset.
+        when_to_change: Rarely, and only when you have a specific mapping argument from the minimap2 documentation to try.
+        cli_flag: --extra-args
+      - label: Keep Intermediates
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Keeps the large working files the run produces on its way to the report instead of deleting them at the end.
+        when_to_change: Turn it on only when a run gave an unexpected result and you want to inspect the alignment files behind it.
+        cli_flag: --keep-intermediates
+      - label: Directory
+        control: file
+        default: the project's genotyping results folder
+        allowed: any folder you have permission to write
+        effect: Chooses where the .lungfishgenotype result bundle is written.
+        when_to_change: Change it only when the result belongs outside the project folder.
+        cli_flag: --output-dir
+    cli_only:
+      - flag: --mode
+        default: auto for fastq genotype, illumina-paired for fastq genotype-cohort
+        effect: Forces the input layout instead of letting the run work it out, accepting auto, ont-sample-bundles, illumina-paired, or the deprecated ont-barcode-demux.
+      - flag: --read-type
+        default: auto for fastq genotype, illumina for fastq genotype-cohort
+        effect: Forces the sequencing platform to ont or illumina instead of reading it from the input bundles.
+      - flag: --preset
+        default: none
+        effect: Locks the run to a bundled panel, and the only supported value is mcm-mhc-miseq, which carries its own reference and cannot be combined with --reference.
+      - flag: --analysis-name
+        default: the value of --output-name
+        effect: Labels this analysis inside the workbook separately from the output file name.
+      - flag: --comparison-workbook
+        default: none
+        effect: Lays an existing workbook's expected calls beside the new result for side-by-side checking.
+      - flag: --comparison-name
+        default: Illumina-31262
+        effect: Names the comparison sheet built from --comparison-workbook.
+      - flag: --sort-threads
+        default: "4"
+        effect: Sets how many threads samtools uses to sort the alignments before filtering.
+      - flag: --barcodes
+        default: none
+        effect: Supplies sample identifiers and barcode sequences for the deprecated ONT barcode-demux mode.
+      - flag: --demux-manifest
+        default: none
+        effect: Supplies recorded input and per-sample read counts for the deprecated ONT barcode-demux mode.
+      - flag: --project
+        default: none
+        effect: Names a project directory into which an outside reference FASTA is imported before mapping.
+    notes: >-
+      One operation covers three input shapes. It handles prepared Illumina
+      paired bundles, prepared ONT per-sample bundles, and a deprecated ONT
+      barcode-demux mode. The dialog has no mode control, because the run works
+      the shape out from the selected reads and shows the result as a read-only
+      caption above Analysis Mode. Overlapping Illumina mates are merged with
+      bbmerge before mapping, without which the 244 bp DRB amplicons would
+      silently receive zero reads. Report Name fills both the output name and
+      the analysis name in the dialog, while the command line splits them into
+      --output-name and --analysis-name. Selecting more than one bundle locks
+      the run picker to one merged batch, with the caption "Selections run as
+      one genotyping batch producing a merged report. Run bundles individually
+      for separate per-sample reports." The workflow also declares the
+      lungfish-tools base pack, which is the lock file's own top-level packID
+      rather than a packTools entry, so gating lists only read-mapping.
+      haplotyping controls not registered
+      (placeholder scope): the Preset picker shown under the AI preset analysis
+      mode, and the Assay, Species, and Definition pickers with their Manage...
+      button shown under Deterministic. The matching CLI flags
+      --haplotype-assay, --haplotype-species, --haplotype-definition-scope,
+      --haplotype-definition, --haplotype-min-sample-percent,
+      --haplotype-min-locus-percent, and
+      --haplotype-min-locus-percent-override are left out for the same reason.
+
+  genotype.full-length-ont:
+    title: Full-length ONT MHC genotyping
+    entry_points:
+      - "Tools > Genotyping > Full-length ONT MHC genotyping..."
+      - "CLI: lungfish-cli fastq full-length-ont-mhc-genotype <inputs> --reference <ref> --output-dir <dir>"
+    gating: [read-mapping, full-length-mhc-genotyping]
+    sources:
+      - Sources/LungfishApp/Views/WorkflowOperations/WorkflowOperationsDialog.swift
+      - Sources/LungfishApp/Views/WorkflowOperations/WorkflowOperationDialogState.swift
+      - Sources/LungfishApp/Services/WorkflowLibrary.swift
+      - Sources/LungfishWorkflow/ONTGenotyping/FullLengthONTMHCGenotypingPipeline.swift
+      - Sources/LungfishWorkflow/ONTGenotyping/FullLengthONTPBAAArtifactPlanner.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+      - docs/user-manual/reviews/fidelity-2026-09/ground-truth/09-genotyping.md
+    settings:
+      - label: Reference
+        control: file
+        default: the first MHC reference found in the project, or nothing when the project holds none
+        allowed: an allele FASTA file, a .lungfishref bundle, or a .lungfishmhcref bundle
+        effect: Names the library of full-length allele sequences the clustered consensus sequences are compared against.
+        when_to_change: Choose a full-length allele library, since a short-amplicon panel will not match reads that span the whole gene.
+        cli_flag: --reference
+      - label: FASTQ Bundles
+        control: file
+        default: whatever you selected in the sidebar before opening the dialog
+        allowed: one or more per-sample ONT FASTQ files or .lungfishfastq bundles
+        effect: Chooses which sequenced samples are clustered and genotyped. Samples are processed largest first and several run at once.
+        when_to_change: Select every sample in the run when you want one comparison table for the cohort.
+        cli_flag: null
+      - label: Include subfolders
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: When a selected folder holds bundles inside further folders, this adds those deeper bundles to the batch as well.
+        when_to_change: Turn it on when a sequencing run wrote each sample into its own subfolder.
+        cli_flag: null
+      - label: Report Name
+        control: text
+        default: a name built from the selected read files
+        allowed: any file name
+        effect: Names the .lungfishgenotype result bundle and the report inside it.
+        when_to_change: Change it when the suggested name will not identify the run later.
+        cli_flag: --output-name
+      - label: Threads
+        control: number
+        default: the machine's active processor count
+        allowed: integers above 0
+        effect: How many worker threads the run may use in total across its clustering and mapping steps.
+        when_to_change: Lower it when you need to keep cores free for other work.
+        cli_flag: --threads
+      - label: Min Length
+        control: number
+        default: "2000"
+        allowed: integers above 0, and no greater than Max Length
+        effect: The shortest read, in bases, kept for clustering after primers are trimmed. Shorter reads are usually fragments rather than whole amplicons.
+        when_to_change: Set it just below your amplicon's true length so truncated reads do not form clusters of their own.
+        cli_flag: --min-length
+      - label: Max Length
+        control: number
+        default: "4000"
+        allowed: integers no smaller than Min Length
+        effect: The longest read, in bases, kept for clustering after primers are trimmed. Longer reads are usually two amplicons joined end to end.
+        when_to_change: Raise it when your amplicon is longer than 4000 bases, and lower it when joined reads are producing spurious clusters.
+        cli_flag: --max-length
+      - label: Keep Intermediates
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Keeps the per-sample working files the run produces on its way to the report instead of deleting them at the end.
+        when_to_change: Turn it on only when a sample gave an unexpected result and you want to inspect its clusters.
+        cli_flag: --keep-intermediates
+      - label: Orient Reference
+        control: file
+        default: an orientation FASTA discovered in the project, or nothing
+        allowed: any FASTA file, or nothing
+        effect: Supplies a sequence used to turn every read the same way round before clustering, since Nanopore reads arrive on either strand.
+        when_to_change: Supply one when your reads were not oriented before import and clusters are splitting by strand.
+        cli_flag: --orient-reference
+      - label: Forward Primers
+        control: file
+        default: a forward-primer FASTA discovered in the project, or nothing
+        allowed: any FASTA file of primer sequences, or nothing
+        effect: Names the primer sequences trimmed from the start of each read, so primer bases do not count as sequence differences.
+        when_to_change: Supply it when your reads still carry the PCR primers used to make the amplicon.
+        cli_flag: --forward-primer
+      - label: Reverse Primers
+        control: file
+        default: a reverse-primer FASTA discovered in the project, or nothing
+        allowed: any FASTA file of primer sequences, or nothing
+        effect: Names the primer sequences trimmed from the end of each read.
+        when_to_change: Supply it when your reads still carry the PCR primers used to make the amplicon.
+        cli_flag: --reverse-primer
+      - label: Directory
+        control: file
+        default: the project's "Full-length ONT MHC genotyping results" folder
+        allowed: any folder you have permission to write
+        effect: Chooses where the .lungfishgenotype result bundle is written.
+        when_to_change: Change it only when the result belongs outside the project folder.
+        cli_flag: --output-dir
+    cli_only:
+      - flag: --sample-jobs
+        default: an automatic sample-level parallel strategy
+        effect: Caps how many samples are worked on at the same time.
+      - flag: --savont-threads-per-sample
+        default: an automatic batch-aware value
+        effect: Sets how many threads Savont gets for each sample being processed concurrently.
+      - flag: --savont-quality-value-cutoff
+        default: "90"
+        effect: The lowest estimated read accuracy, as a percent, kept for clustering.
+      - flag: --savont-min-cluster-size
+        default: "3"
+        effect: The fewest reads a cluster must hold before its consensus sequence is kept.
+      - flag: --min-unmatched-reads
+        default: "5"
+        effect: The fewest reads a cluster must hold before it is written to the unmatched FASTA for later inspection.
+      - flag: --cdna-threshold
+        default: "2000"
+        effect: Alleles in the reference shorter than this length are treated as cDNA sequences rather than whole genomic ones.
+      - flag: --reuse-compatible-checkpoints
+        default: "false"
+        effect: Picks up compatible per-sample checkpoints from an earlier run instead of redoing that work.
+      - flag: --project
+        default: none
+        effect: Names a project root recorded in the run's provenance.
+    notes: >-
+      The dialog exposes only Min Length and Max Length from the clustering
+      step. The Savont quality cutoff and minimum cluster size are command-line
+      settings with no dialog control. Clustering is always Savont, which the
+      full-length-mhc-genotyping pack supplies at version 0.6.3 alongside BLAST
+      2.16.0. pbAA is a separate operation whose saved artifact this workflow
+      can reuse, not a clustering choice inside this dialog. Orient Reference,
+      Forward Primers, Reverse Primers, and Keep Intermediates sit inside an
+      "Advanced Options" disclosure group. The workflow also declares the
+      lungfish-tools base pack, which is the lock file's own top-level packID
+      rather than a packTools entry, so gating lists only the other two.
+      haplotyping controls not registered
+      (placeholder scope): the Call Thresholds group with its "Locus %" field,
+      which the dialog starts at 1.0 and which only takes effect when a
+      haplotype definition is selected, and the Haplotype Definition group with
+      its Assay, Species, and Definition pickers and its Manage... button. The
+      matching CLI flags --haplotype-min-sample-percent,
+      --haplotype-min-locus-percent, --haplotype-min-locus-percent-override,
+      --haplotype-assay, --haplotype-species, --haplotype-definition-scope, and
+      --haplotype-definition are left out for the same reason.
+
+  genotype.export:
+    title: Export a genotype result
+    entry_points:
+      - "Genotype viewport > Actions > Export Excel View..."
+      - "Inspector > Genotype Display > Filtered Pivot..."
+      - "CLI: lungfish-cli genotype export --bundle <bundle> --output <file>"
+      - "CLI: lungfish-cli genotype export-pivot-xlsx --bundle <bundle> --output <file>"
+      - "CLI: lungfish-cli genotype export-labkey --bundle <bundle> --output-dir <dir>"
+    gating: []
+    sources:
+      - Sources/LungfishGenotypeUI/GenotypeResultViewController.swift
+      - Sources/LungfishGenotypeUI/GenotypeResultDisplaySection.swift
+      - Sources/LungfishGenotypeUI/GenotypeResultDisplayState.swift
+      - Sources/LungfishGenotypeUI/GenotypeNumericFilterDraft.swift
+      - Sources/LungfishGenotypeUI/GenotypeViewportExportService.swift
+      - Sources/LungfishGenotypeUI/GenotypeResultDocumentSection.swift
+      - Sources/LungfishIO/Bundles/ONTGenotypeResultBundle.swift
+      - Sources/LungfishCLI/Commands/GenotypeExportXLSXSubcommand.swift
+      - Sources/LungfishCLI/Commands/GenotypeExportLabKeySubcommand.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/genotype.txt
+      - docs/user-manual/reviews/fidelity-2026-09/ground-truth/09-genotyping.md
+    settings:
+      - label: Min reads
+        control: number
+        default: "0"
+        allowed: 0 through 100,000, where 0 turns the filter off
+        effect: Hides allele values in the matrix supported by fewer reads than this. The Filtered Pivot export then writes those hidden values out as blanks rather than numbers.
+        when_to_change: Raise it to drop the low-count background before handing a table to a collaborator.
+        cli_flag: --min-reads
+      - label: Min percent
+        control: number
+        default: "0"
+        allowed: 0 through 100, in steps of 0.5, where 0 turns the filter off
+        effect: Hides allele values that make up less than this share of a sample's reads. Percent Basis decides what that share is measured against.
+        when_to_change: Use it instead of Min reads when samples were sequenced to very different depths, so one threshold suits them all.
+        cli_flag: --min-percent
+      - label: Percent Basis
+        control: radio
+        default: Viewed Locus
+        allowed: "Viewed Locus, Sample Retained"
+        effect: Chooses the denominator for Min percent. Viewed Locus compares an allele against that sample's reads at the same locus, while Sample Retained compares it against all reads kept for the sample.
+        when_to_change: Use Viewed Locus when loci were amplified to different depths, which is the usual case.
+        cli_flag: --percent-basis
+      - label: Alleles
+        control: text
+        default: empty
+        allowed: any text
+        effect: Keeps only the matrix rows whose allele name contains what you type.
+        when_to_change: Use it to narrow a wide result to one locus family before exporting.
+        cli_flag: --filter
+      - label: Samples
+        control: text
+        default: empty
+        allowed: any text
+        effect: Keeps only the matrix columns whose sample name contains what you type.
+        when_to_change: Use it to narrow the export to one plate or one animal group.
+        cli_flag: --sample
+      - label: Show All Rows
+        control: popup
+        default: not applicable, because it is a menu command rather than a stored value
+        allowed: chosen from the "Rows..." menu, and disabled when no rows are hidden
+        effect: Brings back every allele row you had hidden by selecting rows and choosing Hide Selected Rows. There is no automatic row limit that this undoes.
+        when_to_change: Use it when hiding has gone too far and you want the full allele list back.
+        cli_flag: null
+      - label: Show All Columns
+        control: popup
+        default: not applicable, because it is a menu command rather than a stored value
+        allowed: chosen from the "Columns..." menu, and disabled when no columns are hidden
+        effect: Brings back every sample column you had hidden by selecting columns and choosing Hide Selected Columns.
+        when_to_change: Use it when hiding has gone too far and you want the full sample list back.
+        cli_flag: null
+      - label: Cell Color
+        control: radio
+        default: Support
+        allowed: "Support, Highlights, None"
+        effect: Chooses what the matrix cell colours mean. Support shades each cell by its read count, Highlights shows only the colours you applied by hand, and None leaves cells plain.
+        when_to_change: Switch to Highlights when you want an exported view to show only your own marks.
+        cli_flag: null
+      - label: "Filtered Pivot..."
+        control: popup
+        default: not applicable, because it is a button
+        allowed: pressed, and shown only when the result carries a workbook the pivot can be built from
+        effect: Writes a copy of the result workbook whose pivot sheet has the Min reads and Min percent filters already applied, so hidden values arrive blank rather than needing to be cleared in Excel. Every other sheet is carried through unchanged.
+        when_to_change: Use it when a collaborator wants the samples-across layout with the background already removed.
+        cli_flag: null
+      - label: "Export Excel View..."
+        control: popup
+        default: not applicable, because it is an Actions menu item
+        allowed: chosen from the Actions menu beside the view control
+        effect: Writes the matrix exactly as the viewport is showing it, together with your annotations, as an Excel workbook. A save panel asks where it goes, and the file format is fixed.
+        when_to_change: Use it when you want a snapshot of the view you are looking at rather than the whole result.
+        cli_flag: null
+      - label: Update and View Current Excel Version
+        control: popup
+        default: not applicable, because it is a button, and it is disabled while the workbook is already current or the bundle is read-only
+        allowed: pressed
+        effect: Rebuilds the bundle's own current.xlsx workbook from the displayed calls and annotations, records the change as a workbook revision, then opens the file.
+        when_to_change: Use it after making review edits you want carried into the workbook that lives inside the result bundle.
+        cli_flag: null
+    cli_only:
+      - flag: --export-format
+        default: xlsx
+        effect: Chooses the container the genotype export subcommand writes, accepting xlsx, csv, or tsv. The two in-app buttons each fix their own format instead.
+      - flag: --view-projection
+        default: none
+        effect: Points at a JSON file describing a rendered viewport, which is how the in-app Export Excel View reproduces exactly what was on screen.
+      - flag: --lens
+        default: none
+        effect: Records which viewport view the export came from in the export's provenance.
+      - flag: --annotations
+        default: the bundle's own annotations.json when one is present
+        effect: Names an annotation sidecar whose notes and comments are folded into the export.
+      - flag: --active-haplotype-definition
+        default: none
+        effect: Names the haplotype definition set the calls are resolved against for the export.
+      - flag: --keep-empty-rows
+        default: "false"
+        effect: Keeps allele rows in the pivot export that are empty after filtering instead of removing them.
+      - flag: --source-workbook
+        default: the bundle's current.xlsx when one exists, otherwise its primary workbook
+        effect: Names the workbook the pivot export copies and filters.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file instead of stopping.
+    notes: >-
+      The viewport offers two in-app exports and no format picker. Export Excel
+      View... sits in the Actions menu beside the view control, and Filtered
+      Pivot... sits at the foot of the Inspector's Genotype Display section.
+      Min reads and Min percent carry lowercase second words in the app.
+      Everything in the Genotype Display section is display state that never
+      changes the stored calls, which the section itself states as "Visual
+      filters do not change genotype calls." Show All Rows and Show All Columns
+      reverse hiding you applied yourself, and there is no automatic column
+      window and no "Showing N of M samples" banner. The genotype export-xlsx
+      subcommand writes four sheets, Matrix, Legend, Overrides, and Audit Log,
+      and takes no options beyond --bundle and --output. The genotype
+      export-labkey subcommand writes five CSV files, haplotype_calls.csv,
+      allele_read_counts.csv, overrides.csv, audit_log.csv, and
+      smart_cohorts.csv, and also takes no tuning options. haplotyping controls
+      not registered (placeholder scope): the Actions menu's AI Discovery and
+      AI Refinement items, the "Show haplotyping view" and "Show genotype
+      matrix" Inspector toggle that appears only on older result shapes, the
+      call-evidence override editor, and the whole genotype ai-haplotyping
+      subcommand with its provider, mode, and prompt options.
