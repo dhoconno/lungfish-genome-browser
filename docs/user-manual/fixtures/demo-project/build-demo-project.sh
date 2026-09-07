@@ -100,6 +100,16 @@ REFDIR="$P/Reference Sequences"
 mkdir -p "$REFDIR"
 done_if "$REFDIR/HBB.lungfishref" || "$CLI" import fasta "$FX/hbb-gene/NG_000007.3.gb" --name HBB -o "$P"
 done_if "$REFDIR/chr20_10.0-10.5Mb.lungfishref" || "$CLI" import fasta "$FX/hg002-chr20/GRCh38.chr20.10.0-10.5Mb.fasta" --name "chr20 10.0-10.5Mb" -o "$P"
+# `import fasta` has no organism flag and writes the display name into
+# source.organism, so patch the manifest to the real organism afterwards.
+python3 - "$REFDIR/chr20_10.0-10.5Mb.lungfishref/manifest.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d.setdefault("source", {})["organism"] = "Homo sapiens"
+json.dump(d, open(p, "w"), indent=2)
+open(p, "a").write("\n")
+PY
 step_end
 
 # ---------------------------------------------------------------------------

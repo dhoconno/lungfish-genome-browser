@@ -1,0 +1,36 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Demo project open, Imports > HG002 selected, Inspector on the Bundle tab with Ingestion expanded
+id: inspector-fastq-detail
+chapter: 01-foundations/06-the-lungfish-project
+caption: The Inspector in close-up for the same FASTQ selection, showing read counts, length and quality
+  statistics, ingestion settings, the pipeline that produced the dataset, and the editable metadata fields.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - fastq_bundle: Imports/HG002.lungfishfastq
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Click the HG002 row under Imports in the sidebar
+  # PROSE-ONLY: Click the Ingestion disclosure triangle in the Inspector
+crop:
+  mode: region
+  region:
+  - 1061
+  - 51
+  - 339
+  - 849
+post:
+  retina: true
+  format: png
