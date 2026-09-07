@@ -29,8 +29,8 @@ to end in `.lungfish` because the CLI rejects a `--project` that does not.
 | `Analyses/Multiple Sequence Alignments/` | the primate mitochondrial MSA and its IQ-TREE tree |
 | `Analyses/kraken2-SRR36291587/` | Kraken 2 classification of the SARS-CoV-2 reads |
 | `Analyses/nvd-demo/` | the NVD BLAST demo import |
-| `Assemblies/HG002-chrM/` | SPAdes assembly of the mitochondrial reads |
-| `_scratch/` | fetched reads and the generated sample sheet, not part of the manual |
+| `Analyses/HG002-chrM/` | SPAdes assembly of the mitochondrial reads |
+| `_scratch/` | the generated sample sheet and, under `_scratch/sra/`, the fetched SARS-CoV-2 reads, not part of the manual |
 
 The chr20 bundle carries three tracks. The alignment track `hg002-minimap2`
 is named "HG002 minimap2" in the interface, and two variant tracks sit on

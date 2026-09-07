@@ -144,8 +144,17 @@ step_end
 
 # ---------------------------------------------------------------------------
 step "4 assembly"
-done_if "$P/Assemblies/HG002-chrM" || "$CLI" assemble --assembler spades --read-type illumina-short-reads \
-  --paired --name HG002-chrM -o "$P/Assemblies/HG002-chrM" \
+# The assembly lives under Analyses/ because the app's sidebar lists analyses
+# from that folder alone (AnalysesFolder.listAnalyses recognises the run by its
+# assembly-result.json). A top-level Assemblies/ folder would never appear as
+# an assembly in the app, and the manual says no such folder exists.
+if [ -d "$P/Assemblies/HG002-chrM" ] && [ ! -d "$P/Analyses/HG002-chrM" ]; then
+  mkdir -p "$P/Analyses"
+  mv "$P/Assemblies/HG002-chrM" "$P/Analyses/HG002-chrM"
+  rmdir "$P/Assemblies" 2>/dev/null || true
+fi
+done_if "$P/Analyses/HG002-chrM" || "$CLI" assemble --assembler spades --read-type illumina-short-reads \
+  --paired --name HG002-chrM -o "$P/Analyses/HG002-chrM" \
   "$FX/human-mito/HG002.chrM.R1.fastq.gz" "$FX/human-mito/HG002.chrM.R2.fastq.gz"
 step_end
 
