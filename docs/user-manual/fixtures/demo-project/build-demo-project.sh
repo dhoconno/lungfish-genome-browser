@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Build the manual's demo project from the committed fixtures. Idempotent.
+# Populate the manual's demo project from the committed fixtures. Idempotent.
 #
 # Environment variables:
 #   LUNGFISH_CLI        path to the lungfish-cli binary
-#   LUNGFISH_DEMO_ROOT  directory that will hold the project (default ~/Desktop/lge-docs)
+#   LUNGFISH_DEMO_ROOT  directory that holds the project (default ~/Desktop/lge-docs)
 #   LUNGFISH_KRAKEN_DB  installed Kraken 2 database name (default Viral)
 #
+# The project store only exists once it has been created in the app (File >
+# New Project). This script refuses to run against a project that does not
+# have one yet.
+#
 # The SARS-CoV-2 fixture commits no reads. They are fetched once into
-# <project>/_scratch/sra and reused on every later run.
+# <build-dir>/_scratch/sra and reused on every later run.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -16,11 +20,23 @@ CLI="${LUNGFISH_CLI:-/Users/dho/Documents/lungfish-genome-explorer/.build/debug/
 ROOT="${LUNGFISH_DEMO_ROOT:-$HOME/Desktop/lge-docs}"
 KRAKEN_DB="${LUNGFISH_KRAKEN_DB:-Viral}"
 P="$ROOT/LGE Manual Demo.lungfish"
-SCRATCH="$P/_scratch"
+BUILD_DIR="${P%.lungfish}.build"
+SCRATCH="$BUILD_DIR/_scratch"
 SRA="$SCRATCH/sra"
 
-mkdir -p "$P" "$SRA"
-exec > >(tee -a "$P/build.log") 2>&1
+if [ ! -f "$P/.project.db" ]; then
+  echo "###### build-demo-project.sh"
+  echo "   ERROR: no project store at $P"
+  echo "   Create the project in the app first: File > New Project, name it"
+  echo "   \"LGE Manual Demo\", and save it under $ROOT (move the folder there"
+  echo "   afterwards if it was saved elsewhere, or set Where to that folder"
+  echo "   in the save dialog). Close the project in the app, then run this"
+  echo "   script again to populate it."
+  exit 2
+fi
+
+mkdir -p "$SRA"
+exec > >(tee -a "$BUILD_DIR/build.log") 2>&1
 
 STEP_START=0
 step() {

@@ -1,16 +1,30 @@
 # Demo project
 
-`build-demo-project.sh` builds the project that every screenshot recipe in
+`build-demo-project.sh` populates the project that every screenshot recipe in
 the manual opens. It drives `lungfish-cli` over the committed fixtures in
-`docs/user-manual/fixtures/` and writes one Lungfish project containing a
+`docs/user-manual/fixtures/` and fills a Lungfish project with a
 reference sequence, a mapping with two variant tracks, an assembly, an
 alignment with its tree, a Kraken 2 classification, and an NVD import.
 
-Run it from anywhere.
+## Running
 
-```bash
-bash docs/user-manual/fixtures/demo-project/build-demo-project.sh
-```
+1. Create the project in the app first. The CLI cannot create a project
+   store, only the app can. Choose File then New Project, name it
+   "LGE Manual Demo", and save it under the demo root
+   (`~/Desktop/lge-docs` by default). If the save dialog put it somewhere
+   else, move the `LGE Manual Demo.lungfish` folder into that directory
+   afterward, or set Where to that folder before saving. Close the
+   project in the app.
+2. Run the script from anywhere, with the project closed in the app for
+   the whole run.
+
+   ```bash
+   bash docs/user-manual/fixtures/demo-project/build-demo-project.sh
+   ```
+
+   The script checks for a project store at `LGE Manual Demo.lungfish/.project.db`
+   and exits with status 2 and an instruction to repeat step 1 if it is
+   missing. It never creates the project directory itself.
 
 The script is idempotent. Every step checks for its own output first and
 skips when it is already there, so a re-run after a failure resumes rather
@@ -30,7 +44,12 @@ to end in `.lungfish` because the CLI rejects a `--project` that does not.
 | `Analyses/kraken2-SRR36291587/` | Kraken 2 classification of the SARS-CoV-2 reads |
 | `Analyses/nvd-demo/` | the NVD BLAST demo import |
 | `Analyses/HG002-chrM/` | SPAdes assembly of the mitochondrial reads |
-| `_scratch/` | the generated sample sheet and, under `_scratch/sra/`, the fetched SARS-CoV-2 reads, not part of the manual |
+
+The generated sample sheet and the fetched SARS-CoV-2 reads live outside the
+project, in the sibling `LGE Manual Demo.build/` folder next to
+`LGE Manual Demo.lungfish` under the demo root. Keeping them there means
+they never show up in the app's sidebar or in a screenshot. See
+"The reads that are not committed" below.
 
 The chr20 bundle carries three tracks. The alignment track `hg002-minimap2`
 is named "HG002 minimap2" in the interface, and two variant tracks sit on
@@ -77,9 +96,11 @@ over the finished project is a second.
 The SARS-CoV-2 fixture commits no FASTQ. Step 0 fetches run SRR36291587
 with `fetch sra download ... --use-toolkit`, which writes the uncompressed
 `SRR36291587_1.fastq` and `SRR36291587_2.fastq` into `_scratch/sra` inside
-the project. They stay there and every later run skips the download. The
-files are about 56 MB each and are deliberately kept out of the repository,
-which is why they live in the project rather than in the fixture directory.
+the sibling `LGE Manual Demo.build/` folder next to the project. They stay
+there and every later run skips the download. The files are about 56 MB
+each and are deliberately kept out of the repository, which is why they
+live next to the project rather than in the fixture directory or inside
+the project itself, where the app's sidebar would show them.
 
 ## Viral Recon is a manual step
 
@@ -124,8 +145,9 @@ checks still read `manifest.json` inside the `.lungfishref` bundle, where
 conventions `_R1_001`, `_R1`, and `_1`. The `hg002-chr20` and `human-mito`
 fixtures use dot-delimited `.R1` and `.R2`, which the detector read as four
 separate single-end samples. The script now writes a `sample,r1,r2` sample
-sheet into `_scratch` and imports through `--samplesheet`, which states the
-pairing and also gives the samples the short names the manual uses.
+sheet into the sibling build folder's `_scratch` and imports through
+`--samplesheet`, which states the pairing and also gives the samples the
+short names the manual uses.
 
 ## Steps that did not complete
 
