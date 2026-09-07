@@ -3876,7 +3876,7 @@ operations:
         control: popup
         default: no chips applied, and the strip starts collapsed
         allowed: fourteen chips in four sections, Biological Effect, Quality / QC, Population / Frequency, and Sample / Genotype
-        effect: Opens a strip of one-click filters. Biological Effect holds SNV, Indel, High Impact, Moderate+, and ClinVar Path. Quality / QC holds PASS, Qual >= 30, and DP >= 10. Population / Frequency holds Rare (<1%), Minor (<=20%), Mixed (20-80%), and Dominant (>=80%). Sample / Genotype holds Het Only and Bookmarked.
+        effect: Opens a strip of one-click filters. Biological Effect holds SNV, Indel, High Impact, Moderate+, and ClinVar Path. Quality / QC holds PASS, Qual >= 30, and DP >= 10. Population / Frequency holds Rare (<1%), Minor (<=20%), Mixed (20-80%), and Dominant (>=80%). Sample / Genotype holds Bookmarked, and its Het Only chip is defined but never offered in this release (SmartToken.isAvailable returns false with the reason "Genotype filtering not yet supported").
         when_to_change: Use it whenever you want a common filter without composing a query. The button is titled "Presets" followed by a triangle, and it hides itself when the window is narrow or the VCF defines no INFO keys.
         cli_flag: null
       - label: Search Builder...
@@ -3949,14 +3949,17 @@ operations:
         effect: Sets how many threads the query may use.
     notes: >-
       This command has no dialog. The in-app equivalent is the table drawer's Search
-      Builder, and the two share the same filter grammar, so a query you build in the
-      sheet can be pasted straight into --filter. The command stages the output first,
+      Builder, but the two do not share a grammar. --filter accepts per-sample clauses
+      only (VariantSmartFilter), so a Search Builder query carrying filter, pos, type,
+      qual, or an INFO comparison is rejected with "Unsupported smart-filter clause"
+      (settled at the chapter 28 review on 2026-09-07). The command stages the output first,
       writes a provenance record beside it, and publishes the new VCF only once that
       record is safely saved, restoring the previous record if anything fails. The
-      grammar accepts the plain clause keys, INFO-key comparisons, per-sample clauses
-      of the form Sample[<name>].<field>, a count over all samples written as
-      count(Sample[*].GT=1/1) >= 5, and a sample-to-sample comparison such as
-      Sample[A].GT != Sample[B].GT. Per-sample clauses accept only GT, AF, and DP.
+      grammar accepts per-sample clauses of the form Sample[<name>].<field>, a count
+      over all samples written as count(Sample[*].GT=1/1) >= 5, and a sample-to-sample
+      comparison such as Sample[A].GT != Sample[B].GT. Per-sample clauses accept only
+      GT, AF, and DP, and DP matches a per-sample FORMAT field only, so a VCF whose
+      FORMAT is GT:PL:AD returns nothing for a DP clause even when INFO/DP is set.
 
   variants.extract-sample:
     title: Extract one sample's variants
