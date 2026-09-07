@@ -1,0 +1,9 @@
+# Scratch downloads and intermediate BAMs from fetch.sh.
+cache/
+
+# regenerate.sh output: only expected/spades/contigs.fasta is committed
+# (the SPAdes working directory otherwise carries k-mer graphs, logs, and
+# multiple intermediate FASTAs not needed by the fixture). Reproducible
+# by running regenerate.sh.
+expected/spades/*
+!expected/spades/contigs.fasta
