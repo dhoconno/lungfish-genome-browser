@@ -1357,3 +1357,934 @@ operations:
       guide FASTA is chosen in the Inputs section. This operation has no Output
       Strategy picker, and it runs pbAA and samtools from pinned containers, so a
       working container runtime is required.
+
+  import.fastq:
+    title: Sequencing Read Files
+    entry_points:
+      - "File > Import Center... > Sequencing Reads > Sequencing Read Files"
+      - "CLI: lungfish-cli import fastq <inputs> --project <project>"
+      - "CLI: lungfish-cli import-fastq <inputs> --project <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQImportConfigSheet.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQImportConfiguration.swift
+      - Sources/LungfishApp/App/AppDelegate+ImportCenter.swift
+      - Sources/LungfishWorkflow/Ingestion/ClumpingTool.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import-fastq.txt
+    settings:
+      - label: Platform
+        control: popup
+        default: the platform detected from the read headers
+        allowed: Illumina, Oxford Nanopore, PacBio, Element Biosciences, Ultima Genomics, MGI / DNBSEQ, Unknown / Other
+        effect: Records which sequencing instrument produced the reads. The choice drives the starting values of Quality Binning and Optimize storage, and it is written into the bundle.
+        when_to_change: Change it when the detected platform is wrong, which happens most often with reads that were renamed or reprocessed before you got them.
+        cli_flag: --platform
+      - label: Pairing
+        control: popup
+        default: Paired-end when any R1 and R2 mate was matched, otherwise Single-end
+        allowed: Single-end, Paired-end, Interleaved
+        effect: Tells the importer whether each sample is one file, two mate files, or one file whose mates alternate. Choosing Oxford Nanopore hides this control and treats the reads as single-end.
+        when_to_change: Set it to Interleaved when a single file holds both mates, which mate-suffix matching cannot detect.
+        cli_flag: null
+      - label: Quality Binning
+        control: popup
+        default: Illumina 4-level for Illumina, Element Biosciences, and MGI / DNBSEQ, and None (preserve original) for the other platforms
+        allowed: Illumina 4-level, 8-level, None (preserve original)
+        effect: Rounds each base quality score to one of a small set of values so the file compresses harder. Illumina 4-level keeps four values, 8-level keeps eight, and None keeps every original score.
+        when_to_change: Choose None when a downstream tool reads exact quality values, for example a variant caller that models per-base error rates.
+        cli_flag: --quality-binning
+      - label: Optimize storage (reorder reads for better compression)
+        control: checkbox
+        default: on for Illumina, Element Biosciences, MGI / DNBSEQ, and Ultima Genomics, and off for Oxford Nanopore, PacBio, and Unknown / Other
+        allowed: on, off
+        effect: Groups reads that share sequence content next to each other before compressing, which shrinks the stored file. Read order in the bundle no longer matches the order in the source file.
+        when_to_change: Turn it off on a machine short of memory, or when a downstream step depends on the original read order.
+        cli_flag: --no-optimize-storage
+      - label: Compression Tool
+        control: popup
+        default: resolved from the total input size against the machine's memory
+        allowed: BBTools clumpify, Trim Galore --clumpify
+        effect: Picks the program that does the reordering. Trim Galore also performs adapter detection and removal, quality trimming, and short-read filtering, so it changes the reads and not only their order.
+        when_to_change: Pick Trim Galore only when you want its adapter and quality trimming as part of the import.
+        cli_flag: --clumping-tool
+      - label: Compression Level
+        control: popup
+        default: Balanced
+        allowed: Fast, Balanced, Maximum
+        effect: Trades import speed against stored file size. Maximum spends more time compressing and produces the smallest bundle.
+        when_to_change: Choose Fast when you are importing a large run and disk space is not the constraint.
+        cli_flag: --compression
+      - label: Apply processing recipe after import
+        control: checkbox
+        default: "off"
+        allowed: on, off
+        effect: Runs a packaged multi-step workflow on the reads as soon as the bundle lands. Leaving it off imports the reads unchanged.
+        when_to_change: Turn it on when every sample in this batch needs the same standard processing, so you do not repeat the steps by hand.
+        cli_flag: --recipe
+      - label: (recipe picker)
+        control: popup
+        default: the first recipe in the list
+        allowed: the bundled recipes VSP2 Target Enrichment, Wastewater metagenomics, and Illumina Amplicon Merge, plus any recipe you have added
+        effect: Chooses which packaged workflow runs after import. The description under the picker names the steps that workflow performs.
+        when_to_change: Change it whenever the batch calls for a different standard workflow than the one shown.
+        cli_flag: --recipe
+    cli_only:
+      - flag: --samplesheet
+        default: none
+        effect: Reads sample names and mate file paths from a CSV instead of matching filenames.
+      - flag: --dry-run
+        default: "false"
+        effect: Lists the pairs the importer detected and stops without writing anything.
+      - flag: --recursive
+        default: "false"
+        effect: Walks a directory's subfolders instead of reading only its top level.
+      - flag: --force
+        default: "false"
+        effect: Imports a sample again even when a bundle of that name already sits in the project.
+      - flag: --log-dir
+        default: none
+        effect: Writes one log file per sample into the directory you name.
+    notes: >-
+      The Import Center card is a file panel that accepts files, folders, or both.
+      The settings above live in the Import FASTQ configuration sheet that opens
+      after the panel closes, and the same sheet opens when you drag reads onto
+      the sidebar. The sheet has no sample-name field, since the sample name comes
+      from the shared filename stem. The recipe picker and its description are
+      hidden until the recipe checkbox is on.
+
+  import.fastq-sample-sheet:
+    title: FASTQ Sample Sheet
+    entry_points:
+      - "File > Import Center... > Sequencing Reads > FASTQ Sample Sheet"
+      - "CLI: lungfish-cli import fastq --samplesheet <sheet.csv> --project <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/App/AppDelegate+ImportCenter.swift
+      - Sources/LungfishWorkflow/Ingestion/FASTQSampleSheet.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import-fastq.txt
+    settings: []
+    cli_only:
+      - flag: --samplesheet
+        default: none
+        effect: Names the CSV whose sample, r1, and r2 columns list the reads to import.
+    notes: >-
+      The card itself has no controls beyond a file panel that accepts one CSV.
+      Every row of the sheet becomes one pair, and the pairs then flow into the
+      same Import FASTQ configuration sheet documented under import.fastq, so the
+      settings there apply to the whole batch. Columns beyond sample, r1, and r2
+      are carried through as per-sample metadata.
+
+  import.ont-run:
+    title: ONT Run Folder
+    entry_points:
+      - "File > Import Center... > Sequencing Reads > ONT Run Folder"
+      - "CLI: lungfish-cli import fastq <run-folder> --project <project> --platform ont"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/Views/MainWindow/MainSplitViewController+FASTQImport.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQImportConfigSheet.swift
+      - Sources/LungfishApp/App/AppDelegate+ImportCenter.swift
+    settings:
+      - label: Apply processing recipe after import
+        control: checkbox
+        default: "off"
+        allowed: on, off
+        effect: Runs one of the two Oxford Nanopore demultiplexing recipes as the reads land. Leaving it off imports one bundle per barcode folder with no splitting.
+        when_to_change: Turn it on when the run pooled several samples behind one barcode and you need them split by an inner barcode.
+        cli_flag: null
+      - label: (recipe picker)
+        control: popup
+        default: Split by Fluidigm sample barcodes
+        allowed: Split by Fluidigm sample barcodes, Demultiplex full-length MHC ONT amplicons with PacBio barcodes
+        effect: Chooses which demultiplexing workflow runs. The Fluidigm option detects the CS1-CS2 insert and assigns a Fluidigm sample barcode, and the PacBio option splits on validated PacBio barcode pairs.
+        when_to_change: Pick the option that matches the barcode chemistry the library was built with.
+        cli_flag: null
+      - label: "Barcode Sheet:"
+        control: file
+        default: none selected
+        allowed: a CSV or TSV file, chosen from the popup of sheets already in the project or through the Choose... button
+        effect: Supplies the table that maps barcodes to sample names. The Fluidigm recipe needs sample and barcode columns, and the PacBio recipe needs sample_id, barcode_1, and barcode_2.
+        when_to_change: You must set it before either demultiplexing recipe can run, and you change it whenever a different plate layout was used.
+        cli_flag: null
+      - label: "Demux Folder:"
+        control: text
+        default: a name derived from the run folder, falling back to ONT Demultiplexed FASTQs
+        allowed: any name, with characters outside letters, digits, space, period, underscore, and hyphen replaced
+        effect: Names the folder inside the project that collects the per-sample bundles the demultiplexing writes.
+        when_to_change: Change it when you are importing more than one run and want the outputs kept apart by run name.
+        cli_flag: null
+    cli_only:
+      - flag: --platform
+        default: auto-detect
+        effect: Forces the platform to ont rather than letting the importer detect it from the read headers.
+    notes: >-
+      The card opens a folder-only panel that accepts fastq_pass, a single barcode
+      folder, or any folder of FASTQ chunks. The Import FASTQ configuration sheet
+      then opens with Oxford Nanopore preselected, so the Platform, Quality
+      Binning, Optimize storage, Compression Tool, and Compression Level settings
+      documented under import.fastq apply here too. Only this path offers the two
+      Oxford Nanopore demultiplexing recipes, and only those recipes reveal the
+      Barcode Sheet and Demux Folder controls. The two demultiplexing recipes have
+      no CLI equivalent.
+
+  import.bam:
+    title: BAM/CRAM Alignments
+    entry_points:
+      - "File > Import Center... > Alignments > BAM/CRAM Alignments"
+      - "CLI: lungfish-cli import bam <input.bam> --output-dir <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/Services/BAMImportService.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --name
+        default: the input filename
+        effect: Sets the display name of the alignment track the import creates.
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the project directory the alignment is imported into.
+    notes: >-
+      The card has no controls beyond a file panel that accepts one or more .bam
+      or .cram files. The importer indexes the alignment, collects per-chromosome
+      and per-read-group statistics into a metadata database, and infers the
+      reference assembly from the header without asking you to confirm it. A CRAM
+      is converted on the way in, and both the original and the converted formats
+      are recorded in the track's metadata.
+
+  import.vcf:
+    title: VCF Variants
+    entry_points:
+      - "File > Import Center... > Variants > VCF Variants"
+      - "CLI: lungfish-cli import vcf <input.vcf.gz> --output-dir <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/App/AppDelegate+ImportCenter.swift
+      - Sources/LungfishApp/App/VCFImportHelper.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+      - docs/user-manual/reviews/fidelity-2026-09/ground-truth/05-variants.md
+    settings: []
+    cli_only:
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the directory the validated VCF and its index are copied into.
+    notes: >-
+      The card has no controls beyond a file panel that accepts one or more .vcf
+      or .gz files, so which reference bundle the variants join is decided before
+      you import, not inside a dialog. With a reference bundle already open in the
+      viewport the calls attach to that bundle. With none open the app builds a new
+      bundle around the VCF and then tries to fetch a matching reference. There is
+      no inferred-reference readout anywhere in this path. A .vcf.gz that arrives
+      without a tabix index is bgzipped and indexed during the import, and a
+      multi-file import records haploid as the bundle's default ploidy where a
+      single-file import records auto.
+
+  import.msa:
+    title: Multiple Sequence Alignments
+    entry_points:
+      - "File > Import Center... > Alignments > Multiple Sequence Alignments"
+      - "CLI: lungfish-cli import msa <input> --project <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --source-format
+        default: detected from the file
+        effect: Forces the input to be read as aligned-fasta, clustal, phylip, nexus, stockholm, or a2m-a3m rather than letting the importer detect the format.
+      - flag: --name
+        default: the input filename
+        effect: Sets the display name of the alignment bundle.
+      - flag: --output
+        default: derived from the project and the name
+        effect: Writes the .lungfishmsa bundle to an explicit path instead of into the project.
+    notes: >-
+      The card has no controls beyond a file panel that accepts one or more
+      alignment files. Format detection is automatic in the GUI, and the CLI adds
+      a --source-format override for a file whose extension does not match its
+      contents. Each accepted file becomes one .lungfishmsa bundle.
+
+  import.tree:
+    title: Phylogenetic Trees
+    entry_points:
+      - "File > Import Center... > Alignments > Phylogenetic Trees"
+      - "CLI: lungfish-cli import tree <input> --project <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --source-format
+        default: detected from the file
+        effect: Forces the input to be read as newick or nexus rather than letting the importer detect the format.
+      - flag: --name
+        default: the input filename
+        effect: Sets the display name of the tree bundle.
+      - flag: --output
+        default: derived from the project and the name
+        effect: Writes the .lungfishtree bundle to an explicit path instead of into the project.
+    notes: >-
+      The card has no controls beyond a file panel that accepts one or more tree
+      files, including IQ-TREE .treefile and .contree outputs and RAxML-NG and
+      FastTree results. Each accepted file becomes one .lungfishtree bundle.
+
+  import.reference:
+    title: Reference Sequences
+    entry_points:
+      - "File > Import Center... > Reference Sequences > Reference Sequences"
+      - "CLI: lungfish-cli import fasta <input> --output-dir <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/App/ReferenceImportHelper.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --name
+        default: the input filename
+        effect: Sets the display name of the reference the import creates.
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the project directory the .lungfishref bundle is written into.
+    notes: >-
+      The card has no controls beyond a file panel. It accepts FASTA in its several
+      extensions, GenBank as .gb, .gbk, .gbff, or .genbank, and EMBL, each of them
+      optionally wrapped in .gz, .bgz, .bz2, .xz, or .zst. A GenBank or EMBL record
+      carries annotations, so importing one produces a bundle with an annotation
+      track already attached, where a bare FASTA does not. The import compresses
+      and indexes the sequence and builds the bundle without asking you to confirm
+      anything.
+
+  import.annotation-track:
+    title: Annotation Track
+    entry_points:
+      - "File > Import Center... > Reference Sequences > Annotation Track"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/App/AppDelegate+ImportCenter.swift
+      - Sources/LungfishApp/Services/ReferenceBundleAnnotationImportConfigurationPresenter.swift
+    settings:
+      - label: Reference
+        control: popup
+        default: the reference bundle currently open in the viewport, otherwise the first bundle found in the project
+        allowed: any .lungfishref bundle discovered in the open project
+        effect: Chooses which reference sequence the annotations are attached to. Coordinates in the file are read against that reference.
+        when_to_change: Change it when the annotations describe a different genome than the one you happen to have open.
+        cli_flag: null
+      - label: Track Name
+        control: text
+        default: a name derived from the annotation filename
+        allowed: any text
+        effect: Sets the label the track shows in the viewport and the annotation table.
+        when_to_change: Change it when the filename is opaque, so the track reads as something like RefSeq genes rather than a bare accession.
+        cli_flag: null
+      - label: Track ID
+        control: text
+        default: an identifier derived from the annotation filename
+        allowed: any text
+        effect: Sets the stable identifier the bundle stores for this track. It is what other files refer to, so it should be unique inside the bundle.
+        when_to_change: Change it only when the derived identifier collides with a track the bundle already has.
+        cli_flag: null
+    cli_only: []
+    notes: >-
+      The card opens a file panel that accepts one or more .gtf, .gff, .gff3, or
+      .bed files, and the three settings above then appear in an Import Annotation
+      Track alert. Selecting more than one file skips that alert and imports each
+      file into the chosen bundle with derived names. The dialog does not appear at
+      all when the project holds no reference bundle, so import a reference first.
+      There is no CLI equivalent for attaching an annotation track.
+
+  import.geneious:
+    title: Geneious Export
+    entry_points:
+      - "File > Import Center... > Application Exports > Geneious Export"
+      - "CLI: lungfish-cli import geneious <source> --project <project>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/App/AppDelegate+ImportCenter.swift
+      - Sources/LungfishApp/Services/CLIApplicationExportImportRunner.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --collection-name
+        default: derived from the export
+        effect: Names the project collection the imported items are grouped under.
+      - flag: --preserve-raw-source
+        default: "false"
+        effect: Copies the original export archive into the collection alongside the converted items.
+      - flag: --no-import-references
+        default: "false"
+        effect: Leaves standalone reference sequences as plain files instead of converting each into a .lungfishref bundle.
+      - flag: --preserve-unsupported
+        default: "false"
+        effect: Copies artifacts the importer cannot read into a Binary Artifacts folder rather than skipping them.
+    notes: >-
+      The card has no controls beyond a file panel that accepts one .geneious
+      archive or one export folder. The GUI runs the import with only the source
+      and the project set, so the four options above are reachable from the command
+      line alone. The related import application-export command handles exports from
+      CLC Workbench, DNASTAR Lasergene, Benchling, QIIME 2, IGV, and several other
+      applications, and those kinds have their own Import Center cards on the same
+      tab.
+
+  import.kraken2:
+    title: Kraken2 Results
+    entry_points:
+      - "File > Import Center... > Classification Results > Kraken2 Results"
+      - "CLI: lungfish-cli import kraken2 <kreport-file>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishWorkflow/Metagenomics/MetagenomicsImportService.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --output
+        default: none
+        effect: Names the Kraken2 per-read output file so the import can link individual reads to the taxa they were assigned.
+      - flag: --name
+        default: derived from the report
+        effect: Names the imported result, which becomes the name of its directory.
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the project directory the imported result is written into.
+    notes: >-
+      The card has no controls beyond a file panel that accepts one or more
+      .kreport, .kreport2, .bracken, or .txt files. Use this card only for a run
+      produced outside Lungfish Genome Explorer, since a run started inside the app
+      lands in the project on its own. The imported result appears under the
+      project's Analyses folder.
+
+  import.esviritu:
+    title: EsViritu Results
+    entry_points:
+      - "File > Import Center... > Classification Results > EsViritu Results"
+      - "CLI: lungfish-cli import esviritu <results-dir>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishWorkflow/Metagenomics/MetagenomicsImportService.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --name
+        default: derived from the results directory
+        effect: Names the imported result, which becomes the name of its directory.
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the project directory the imported result is written into.
+    notes: >-
+      The card has no controls beyond a file panel that accepts .tsv or .txt files
+      or a whole results directory. The CLI takes the results directory as its only
+      positional argument.
+
+  import.taxtriage:
+    title: TaxTriage Results
+    entry_points:
+      - "File > Import Center... > Classification Results > TaxTriage Results"
+      - "CLI: lungfish-cli import taxtriage <results-dir>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishWorkflow/Metagenomics/MetagenomicsImportService.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --name
+        default: derived from the results directory
+        effect: Names the imported result, which becomes the name of its directory.
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the project directory the imported result is written into.
+    notes: >-
+      The card has no controls beyond a file panel that accepts .tsv, .csv, or .txt
+      files or a whole results directory. The CLI takes the results directory as its
+      only positional argument.
+
+  import.nao-mgs:
+    title: NAO-MGS Results
+    entry_points:
+      - "File > Import Center... > Classification Results > NAO-MGS Results"
+      - "CLI: lungfish-cli import nao-mgs <input-path>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/Views/Metagenomics/NaoMgsImportSheet.swift
+      - Sources/LungfishApp/App/AppDelegate+ToolsMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --sample-name
+        default: derived from the results
+        effect: Overrides the sample name recorded on the imported bundle.
+      - flag: --no-fetch-references
+        default: reference fetching is on
+        effect: Skips downloading a reference FASTA from NCBI for each virus the results name.
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the project directory the imported bundle is written into.
+    notes: >-
+      This card opens a wizard sheet titled NAO-MGS Import rather than a plain file
+      panel, but the sheet holds no settings. It has a Browse... button, a read-only
+      path readout, and a Validation section that reports Valid NAO-MGS results once
+      it finds the virus-hits table. Point it at a results directory or at
+      virus_hits_final.tsv.gz directly. The imported result lands under the project's
+      Analyses folder as naomgs-<sample>.
+
+  import.nvd:
+    title: NVD Results
+    entry_points:
+      - "File > Import Center... > Classification Results > NVD Results"
+      - "CLI: lungfish-cli import nvd <input-path>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/Views/Metagenomics/NvdImportSheet.swift
+      - Sources/LungfishApp/App/AppDelegate+ToolsMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --name
+        default: nvd-{experiment}
+        effect: Overrides the name of the imported bundle.
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the project directory the imported bundle is written into.
+    notes: >-
+      NVD stands for Novel Virus Diagnostics. This card opens a wizard sheet titled
+      NVD Import rather than a plain file panel, but the sheet holds no settings.
+      It has a Browse... button, a read-only path readout, and a Preview section
+      that scans the run and reports the experiment identifier and the sample,
+      contig, and hit counts before you commit. Point it at the top-level run
+      directory, the one containing 05_labkey_bundling/.
+
+  import.cz-id:
+    title: CZ-ID Results
+    entry_points:
+      - "File > Import Center... > Classification Results > CZ-ID Results"
+      - "CLI: lungfish-cli import cz-id <input-path> --project <project> --sample-name <name>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
+      - Sources/LungfishApp/Views/Metagenomics/CzIdImportSheet.swift
+      - Sources/LungfishApp/App/AppDelegate+ToolsMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --sample-name
+        default: none, and the flag is required
+        effect: Names the .lungfishtax bundle the import creates.
+      - flag: --metadata
+        default: none
+        effect: Records the path of a CZ-ID metadata sidecar in the bundle's provenance.
+      - flag: --non-host-fastq
+        default: none
+        effect: Records the path of the run's non-host FASTQ in the bundle's provenance.
+    notes: >-
+      CZ-ID is a hosted service, so this is an import path only and there is no way
+      to run CZ-ID from inside the app. The card opens a wizard sheet titled CZ-ID
+      Import whose three sections, CZ-ID Export, Preview, and Project Destination,
+      hold no editable settings beyond the Browse... button. Point it at a taxon
+      report TSV, a ZIP export, or an extracted export folder. The imported bundle
+      lands under the project's Classifications folder and opens in the sunburst
+      taxonomy viewport.
+
+  import.sample-metadata:
+    title: Import Metadata
+    entry_points:
+      - "Inspector > Import Metadata..."
+      - "Annotation table drawer > Samples tab > Import Metadata..."
+      - "CLI: lungfish-cli import sample-metadata <input-path> --bundle <bundle>"
+      - "CLI: lungfish-cli import metadata <input-path> --bundle <bundle>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/App/AppFilePanelFactory.swift
+      - Sources/LungfishApp/Views/Inspector/InspectorView.swift
+      - Sources/LungfishApp/Views/Viewer/AnnotationTableDrawerView.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
+    settings: []
+    cli_only:
+      - flag: --bundle
+        default: none, and the flag is required
+        effect: Names the bundle the metadata rows are attached to. import sample-metadata expects a reference bundle, and import metadata expects a result bundle such as a naomgs- or kraken2- directory.
+    notes: >-
+      Import Metadata... opens a file panel that accepts one .tsv, .csv, or .txt
+      file, and it has no other controls. The rows are matched to samples already
+      in the bundle, so the metadata joins existing variant or result tracks rather
+      than creating anything new. The two CLI subcommands differ only in the kind of
+      bundle they accept.
+
+  fetch.ncbi:
+    title: Search NCBI
+    entry_points:
+      - "Tools > Search Online Databases > Search NCBI..."
+      - "CLI: lungfish-cli fetch search <query>"
+      - "CLI: lungfish-cli fetch ncbi <accession>"
+      - "CLI: lungfish-cli fetch genome <accession>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/DatabaseBrowser/GenBankGenomesSearchPane.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseBrowserPane.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseBrowserViewController.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseSearchDialogState.swift
+      - Sources/LungfishApp/ViewModels/GenBankBundleDownloadViewModel.swift
+      - Sources/LungfishCore/Services/NCBI/NCBIService.swift
+      - Sources/LungfishApp/App/MainMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fetch.txt
+    settings:
+      - label: Mode
+        control: radio
+        default: Nucleotide
+        allowed: Nucleotide, Genome, Virus
+        effect: Chooses which NCBI collection is searched. Nucleotide returns individual GenBank records, Genome returns assemblies, and Virus queries the NCBI Datasets virus service with its own filters.
+        when_to_change: Switch to Genome when you want a whole assembly such as a human or macaque reference, and to Virus when you want a curated viral record set.
+        cli_flag: --db
+      - label: RefSeq Only
+        control: checkbox
+        default: "off"
+        allowed: on, off
+        effect: Restricts results to RefSeq records, the curated subset NCBI maintains, instead of every submitted GenBank entry.
+        when_to_change: Turn it on when you want one canonical sequence per organism rather than every deposited variation of it.
+        cli_flag: null
+      - label: Include GFF3 Annotations
+        control: checkbox
+        default: "on"
+        allowed: on, off
+        effect: Downloads the record's gene and feature annotations alongside its sequence and attaches them to the bundle as a track.
+        when_to_change: Turn it off when you only need the raw sequence, which makes the download smaller and faster.
+        cli_flag: --fasta-only
+      - label: (search scope)
+        control: popup
+        default: All Fields
+        allowed: All Fields, Accession, Organism, Title, BioProject, Author
+        effect: Restricts the query text to one indexed field rather than matching anywhere in the record.
+        when_to_change: Narrow it to Accession when you already know the identifier, so a common word in a title cannot swamp the results.
+        cli_flag: null
+      - label: Organism
+        control: text
+        default: empty
+        allowed: any organism name
+        effect: Adds an organism term to the query, so only records from that species or group come back.
+        when_to_change: Fill it when a query word such as a gene name occurs across many species.
+        cli_flag: --organism
+      - label: Location
+        control: text
+        default: empty
+        allowed: any place name
+        effect: Adds a geographic term to the query, matching where the sample was collected.
+        when_to_change: Fill it when you are assembling a regional sequence set.
+        cli_flag: null
+      - label: Gene
+        control: text
+        default: empty
+        allowed: any gene symbol
+        effect: Adds a gene term to the query, so only records annotated with that gene come back.
+        when_to_change: Fill it when you want one locus rather than whole genomes.
+        cli_flag: null
+      - label: Author
+        control: text
+        default: empty
+        allowed: any author name
+        effect: Adds an author term to the query, matching the people credited on the submission.
+        when_to_change: Fill it when you are chasing the sequences behind a particular paper.
+        cli_flag: null
+      - label: Journal
+        control: text
+        default: empty
+        allowed: any journal name
+        effect: Adds a journal term to the query, matching where the record was published.
+        when_to_change: Fill it alongside Author to pin down one publication.
+        cli_flag: null
+      - label: Molecule Type
+        control: popup
+        default: Any
+        allowed: Any, Genomic DNA, mRNA, rRNA, tRNA, Genomic RNA, crRNA
+        effect: Restricts results to records of one molecule type, which separates a genomic sequence from a transcript of the same gene.
+        when_to_change: Set it to mRNA when you want spliced transcripts, or to Genomic DNA when you want the locus itself.
+        cli_flag: null
+      - label: Sequence Length
+        control: text
+        default: empty on both sides
+        allowed: two whole numbers in base pairs, either of which may be left blank
+        effect: Keeps only records whose sequence falls between the two lengths you enter.
+        when_to_change: Set a minimum to drop short partial fragments from a query that returns thousands of them.
+        cli_flag: null
+      - label: Publication Date
+        control: text
+        default: empty on both sides
+        allowed: two dates, either of which may be left blank
+        effect: Keeps only records published inside the range you enter.
+        when_to_change: Set a start date to exclude older records that have been superseded.
+        cli_flag: null
+      - label: Sequence Properties
+        control: checkbox
+        default: none checked
+        allowed: Has CDS, Has Gene, Has Source, Has tRNA, Has rRNA
+        effect: Keeps only records that carry the annotation features you check. The checked properties combine, so a record must have all of them.
+        when_to_change: Check Has CDS when you need coding regions and a bare sequence is no use to you.
+        cli_flag: null
+      - label: Host
+        control: text
+        default: empty
+        allowed: any host organism name
+        effect: In Virus mode, keeps only records whose sample came from that host.
+        when_to_change: Fill it to separate human isolates from animal ones in a zoonotic virus query.
+        cli_flag: null
+      - label: Geographic Location
+        control: text
+        default: empty
+        allowed: any place name
+        effect: In Virus mode, keeps only records collected in that place.
+        when_to_change: Fill it when you are building a regional viral sequence set.
+        cli_flag: null
+      - label: Completeness
+        control: popup
+        default: Any
+        allowed: Any, Complete, Partial
+        effect: In Virus mode, keeps only whole genomes or only partial ones.
+        when_to_change: Set it to Complete when you are building an alignment and partial sequences would leave large gaps.
+        cli_flag: null
+      - label: Released Since
+        control: text
+        default: empty
+        allowed: a date written YYYY-MM-DD
+        effect: In Virus mode, keeps only records released on or after that date.
+        when_to_change: Fill it when you are topping up a set you downloaded earlier.
+        cli_flag: null
+      - label: Annotated Only
+        control: checkbox
+        default: "off"
+        allowed: on, off
+        effect: In Virus mode, keeps only records that carry gene annotations.
+        when_to_change: Turn it on when the downstream work needs gene coordinates rather than sequence alone.
+        cli_flag: null
+    cli_only:
+      - flag: --fetch-format
+        default: genbank
+        effect: Chooses whether fetch ncbi returns genbank, fasta, gff3, or xml for the accessions you name.
+      - flag: --limit
+        default: "20"
+        effect: Caps how many results fetch search returns.
+      - flag: --api-key
+        default: none
+        effect: Sends your NCBI API key so the service allows a higher request rate.
+      - flag: --no-retry
+        default: "false"
+        effect: Stops fetch ncbi from retrying after NCBI answers with a rate-limit response.
+      - flag: --save-to
+        default: standard output
+        effect: Writes the fetched record to a file path instead of printing it.
+      - flag: --name
+        default: derived from the assembly
+        effect: Names the .lungfishref bundle fetch genome builds.
+      - flag: --no-bundle
+        default: "false"
+        effect: Downloads the genome files without assembling them into a .lungfishref bundle.
+    notes: >-
+      The dialog is the Database Browser opened on its GenBank & Genomes pane, and
+      the three destinations GenBank & Genomes, SRA Runs, and Pathoplexus sit in
+      its sidebar. The Mode, RefSeq Only, and Include GFF3 Annotations controls are
+      the pane's own, and the query field with its scope popup and the Advanced
+      Search Filters panel below it are shared with the other two destinations. The
+      filter panel is collapsed until you click Show, and its contents change with
+      Mode, so the Host through Annotated Only settings appear in Virus mode while
+      Organism through Sequence Properties appear in the other two modes. The
+      primary button reads Search until you tick a result, then reads Download
+      Selected. Selecting more than fifty records prompts you to confirm first. A
+      downloaded record becomes an indexed .lungfishref bundle in the project.
+
+  fetch.sra:
+    title: Search SRA
+    entry_points:
+      - "Tools > Search Online Databases > Search SRA..."
+      - "CLI: lungfish-cli fetch sra search <query>"
+      - "CLI: lungfish-cli fetch sra download <accession>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/DatabaseBrowser/SRARunsSearchPane.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseBrowserPane.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseBrowserViewController.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseSearchDialogState.swift
+      - Sources/LungfishCore/Services/NCBI/SRAService.swift
+      - Sources/LungfishApp/App/MainMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fetch.txt
+    settings:
+      - label: Platform
+        control: popup
+        default: Any
+        allowed: Any, ILLUMINA, OXFORD_NANOPORE, PACBIO_SMRT, ION_TORRENT, ULTIMA, ELEMENT, BGISEQ
+        effect: Keeps only runs produced on that sequencing instrument family.
+        when_to_change: Set it when your analysis assumes one read type, since short and long reads need different tools.
+        cli_flag: null
+      - label: Strategy
+        control: popup
+        default: Any
+        allowed: Any, WGS, AMPLICON, RNA-Seq, WXS, Targeted-Capture, OTHER
+        effect: Keeps only runs whose library was built for that purpose. WGS is whole-genome shotgun and AMPLICON is targeted PCR product.
+        when_to_change: Set it to AMPLICON when you want tiled primer-scheme data and whole-genome runs would be off target.
+        cli_flag: null
+      - label: Layout
+        control: popup
+        default: Any
+        allowed: Any, PAIRED, SINGLE
+        effect: Keeps only runs whose reads come in mate pairs, or only runs whose reads are single.
+        when_to_change: Set it to PAIRED when the workflow you plan to run needs both mates.
+        cli_flag: null
+      - label: Min Size (Mbases)
+        control: text
+        default: empty
+        allowed: a whole number of megabases
+        effect: Drops runs that produced less sequence than the amount you enter, measured in millions of bases.
+        when_to_change: Set it to exclude shallow runs that will not give enough depth for your analysis.
+        cli_flag: null
+      - label: Publication Date
+        control: text
+        default: empty on both sides
+        allowed: two dates, either of which may be left blank
+        effect: Keeps only runs released inside the range you enter.
+        when_to_change: Set a start date when you are following an outbreak and older runs are irrelevant.
+        cli_flag: null
+      - label: Max Results
+        control: popup
+        default: "50"
+        allowed: 50, 100, 200, 500, 1000
+        effect: Caps how many runs the search returns.
+        when_to_change: Raise it when a broad query is clearly truncating results you need.
+        cli_flag: --limit
+      - label: (search scope)
+        control: popup
+        default: All Fields
+        allowed: All Fields, Accession, Organism, Title, BioProject, Author
+        effect: Restricts the query text to one indexed field rather than matching anywhere in the run record.
+        when_to_change: Narrow it to BioProject when you want every run from one study.
+        cli_flag: null
+    cli_only:
+      - flag: --output-dir
+        default: the current directory
+        effect: Names the directory fetch sra download writes the FASTQ files into.
+      - flag: --use-toolkit
+        default: "false"
+        effect: Downloads through the SRA Toolkit instead of the ENA mirrors, which needs prefetch and fasterq-dump installed.
+      - flag: --api-key
+        default: none
+        effect: Sends your NCBI API key so the service allows a higher request rate.
+    notes: >-
+      The dialog is the Database Browser opened on its SRA Runs pane. The pane's own
+      control is an Import Accessions button that loads a CSV or plain-text list of
+      run identifiers when you already know which runs you want, and the six filters
+      above sit in the shared Advanced Search Filters panel, which is collapsed until
+      you click Show. Choosing runs and clicking Download Selected opens the Import
+      FASTQ configuration sheet documented under import.fastq, so the platform,
+      binning, and compression settings apply to the download too. Files come from
+      the ENA mirrors over plain HTTP, so no SRA Toolkit install is needed, and each
+      run lands as a .lungfishfastq bundle under the project's Imports folder with
+      its ENA provenance recorded.
+
+  fetch.pathoplexus:
+    title: Search Pathoplexus
+    entry_points:
+      - "Tools > Search Online Databases > Search Pathoplexus..."
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/DatabaseBrowser/PathoplexusSearchPane.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseBrowserPane.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseBrowserViewController.swift
+      - Sources/LungfishApp/Views/DatabaseBrowser/DatabaseSearchDialogState.swift
+      - Sources/LungfishApp/App/MainMenu.swift
+    settings:
+      - label: Organism
+        control: radio
+        default: Mpox virus
+        allowed: Crimean-Congo hemorrhagic fever, Sudan ebolavirus, Zaire ebolavirus, Human metapneumovirus, Marburg virus, Measles virus, Mpox virus, RSV-A, RSV-B, West Nile virus
+        effect: Chooses which pathogen's records are searched. Pathoplexus keeps one collection per organism, so changing this clears the current results.
+        when_to_change: Change it whenever you move to a different pathogen, since there is no way to search across all of them at once.
+        cli_flag: null
+      - label: Country
+        control: text
+        default: empty
+        allowed: any country name
+        effect: Keeps only records whose sample was collected in that country.
+        when_to_change: Fill it when you are assembling a national or regional set.
+        cli_flag: null
+      - label: Host
+        control: text
+        default: empty
+        allowed: any host organism name
+        effect: Keeps only records whose sample came from that host species.
+        when_to_change: Fill it to separate human cases from animal reservoir samples.
+        cli_flag: null
+      - label: Clade
+        control: text
+        default: empty
+        allowed: any clade label the organism uses
+        effect: Keeps only records assigned to that clade, a named branch of the pathogen's family tree.
+        when_to_change: Fill it when one clade is the subject and the rest are background.
+        cli_flag: null
+      - label: Lineage
+        control: text
+        default: empty
+        allowed: any lineage label the organism uses
+        effect: Keeps only records assigned to that lineage, which is a finer division than a clade.
+        when_to_change: Fill it when you are tracking a specific descendant group inside a clade.
+        cli_flag: null
+      - label: Nucleotide Mutations
+        control: text
+        default: empty
+        allowed: comma-separated mutations written as reference base, position, and new base, for example C180T
+        effect: Keeps only records carrying every mutation you list, matched against the genome sequence.
+        when_to_change: Fill it when you are following one defining change through a population.
+        cli_flag: null
+      - label: Amino Acid Mutations
+        control: text
+        default: empty
+        allowed: comma-separated gene and change pairs, for example GP:440G
+        effect: Keeps only records carrying every protein-level change you list.
+        when_to_change: Fill it when the change of interest is in the protein rather than the nucleotide sequence, for example a known antibody-escape site.
+        cli_flag: null
+      - label: Collection Date
+        control: text
+        default: empty on both sides
+        allowed: two dates, either of which may be left blank
+        effect: Keeps only records whose sample was collected inside the range you enter. This is the sampling date, not the date the record was published.
+        when_to_change: Set it when you are reconstructing one season or one outbreak window.
+        cli_flag: null
+      - label: Sequence Length
+        control: text
+        default: empty on both sides
+        allowed: two whole numbers in base pairs, either of which may be left blank
+        effect: Keeps only records whose sequence falls between the two lengths you enter.
+        when_to_change: Set a minimum to drop fragments too short to be worth aligning.
+        cli_flag: null
+      - label: INSDC Source
+        control: popup
+        default: Any
+        allowed: Any, INSDC Only, Non-INSDC Only
+        effect: Splits records by whether they also appear in the international sequence databases GenBank, ENA, and DDBJ. Non-INSDC Only shows records deposited to Pathoplexus alone.
+        when_to_change: Set it to Non-INSDC Only when you want records you could not have found through NCBI.
+        cli_flag: null
+      - label: (search scope)
+        control: popup
+        default: All Fields
+        allowed: All Fields, Accession, Organism, Title, BioProject, Author
+        effect: Restricts the query text to one indexed field rather than matching anywhere in the record.
+        when_to_change: Narrow it to Accession when you already know the identifier.
+        cli_flag: null
+    cli_only: []
+    notes: >-
+      The dialog is the Database Browser opened on its Pathoplexus pane. On first
+      use the pane shows an access and benefit sharing notice titled Pathoplexus
+      Access and Benefit Sharing, and nothing else works until you click I
+      Understand and Agree. The organism chips are the pane's own control, and the
+      nine filters below them sit in the shared Advanced Search Filters panel, which
+      is collapsed until you click Show. Lungfish Genome Explorer retrieves only
+      records marked OPEN, so restricted sequences never appear in the results. There
+      is no CLI equivalent for Pathoplexus.
