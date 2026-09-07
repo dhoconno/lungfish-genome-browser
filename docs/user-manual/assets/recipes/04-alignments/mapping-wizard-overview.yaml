@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: the Map Reads (minimap2) wizard with HG002 reads selected, chr20_10.0-10.5Mb reference, and Short-read preset chosen
+id: mapping-wizard-overview
+chapter: 04-alignments/01-mapping-reads-to-a-reference
+caption: The Map Reads (minimap2) wizard with the HG002 reference and the Short-read preset chosen, the
+  Input Compatibility readout reporting a match, and the collapsed Read Group and Advanced Settings disclosures
+  beneath it.
+viewport_class: fastq
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - fastq: Imports/HG002.lungfishfastq
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Selected the HG002 read bundle in the sidebar
+  # PROSE-ONLY: Chose Tools > Mapping > minimap2...
+crop:
+  mode: region
+  region:
+  - 242
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

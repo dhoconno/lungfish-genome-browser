@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: the Create Filtered Alignment panel on the Inspector Analysis Filtering tab, with Minimum alignment confidence set to MAPQ 20
+id: filter-panel-controls
+chapter: 04-alignments/04-alignment-quality
+caption: The Create Filtered Alignment panel with Starting Alignment, the two keep toggles, the Minimum
+  alignment confidence stepper reading MAPQ 20, Duplicate handling, and the Name for New Alignment field.
+viewport_class: alignment
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - reference: Reference Sequences/chr20_10.0-10.5Mb.lungfishref
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Selected the chr20_10.0-10.5Mb reference bundle in the sidebar
+  # PROSE-ONLY: Clicked the Analysis tab, then the Filtering sub-tab
+  # PROSE-ONLY: Clicked the Minimum alignment confidence stepper's up arrow 20 times to reach MAPQ 20
+crop:
+  mode: region
+  region:
+  - 1090
+  - 425
+  - 380
+  - 330
+post:
+  retina: true
+  format: png

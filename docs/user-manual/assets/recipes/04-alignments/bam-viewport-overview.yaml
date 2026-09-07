@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: the chr20_10.0-10.5Mb reference bundle selected in the sidebar at its whole-region zoom, showing coverage curve above the HG002 minimap2 track
+id: bam-viewport-overview
+chapter: 04-alignments/02-reading-an-alignment
+caption: The alignment viewport for the HG002 chromosome 20 slice, with the coverage curve above the stacked
+  reads, the Depth key and percent-covered figure at the left-hand edge of the coverage strip, and the
+  max and mean label at its right-hand edge.
+viewport_class: alignment
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - reference: Reference Sequences/chr20_10.0-10.5Mb.lungfishref
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Clicked the chr20_10.0-10.5Mb reference bundle in the Reference Sequences group of the sidebar
+crop:
+  mode: window
+post:
+  retina: true
+  format: png
