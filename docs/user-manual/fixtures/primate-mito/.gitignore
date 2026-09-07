@@ -1,0 +1,6 @@
+# Scratch Lungfish project used by regenerate.sh to run the MAFFT alignment
+# and IQ-TREE inference. Only the aligned FASTA and treefile copied out of it
+# (expected/primate-mito.aligned.fasta, expected/primate-mito.treefile) are
+# committed; the bundle directories themselves are reproducible by running
+# regenerate.sh.
+expected/tmp-project.lungfish/
