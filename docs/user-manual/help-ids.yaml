@@ -365,7 +365,7 @@ viewport.NAOMGSResultViewer:
   description: NAO-MGS surveillance viewport with a per-taxon table, sample filter, and miniBAM read evidence.
 
 viewport.CzIdResultViewer:
-  chapter: 06-classification/07-importing-cz-id-results
+  chapter: 06-classification/08-importing-cz-id-results
   anchor: what-it-is
   scope: viewport
   description: Imported CZ-ID taxonomy result viewport.

@@ -156,6 +156,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Depth**{#depth}. Synonym for coverage in this manual. The number of reads stacked at one reference position. See also: coverage.
 
+**dbSNP**{#dbsnp}. The NCBI catalogue of human genetic variants that have already been observed and named, distributed as a large VCF per reference build and used by GATK as a known-sites resource so that expected human variation is not mistaken for sequencing error. Lungfish Genome Explorer neither ships nor downloads it, so you fetch it yourself from the Broad Institute's public GATK resource bundle. See also: known sites, BQSR, VCF.
+
 **Docker**{#docker}. The container software that nf-core pipelines run their tool steps inside, installed on a Mac as the separate Docker Desktop application rather than through the Lungfish Genome Explorer Plugin Manager, and the only execution profile the Viral Recon wizard will accept. See also: container, nf-core, Nextflow.
 
 **Download Center**{#download-center}. An older name for the Operations Panel that survives in some documentation and in the source as an alias. Downloads from NCBI and the SRA report as rows in the Operations Panel, which is the place to look when a download does not appear where you expected it. See also: Operations Panel, SRA.
@@ -234,6 +236,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Haplotype**{#haplotype}. A set of alleles across linked loci that tend to travel together; in Lungfish MHC genotyping these are the named M1 to M7 families spanning the MHC-A, MHC-E, MHC-B, MHC-DR, MHC-DQ, and MHC-DP loci. See also: allele, MHC.
 
+**Hard filter**{#hard-filter}. A fixed list of arithmetic tests applied to statistics a variant caller already wrote into each VCF row, with no training step and no model, so a row failing any test is labelled in its FILTER column rather than removed. GATK publishes a recommended list for human germline work and Lungfish Genome Explorer ships it as the default preset of `lungfish-cli gatk filter`. See also: FILTER, quality by depth, strand odds ratio, VCF.
+
 **Heterozygous**{#heterozygous}. Carrying two different alleles at one position, one on each copy of a chromosome, written `0/1` in a VCF genotype field. See also: homozygous, genotype.
 
 **Homologous**{#homologous}. Descended from the same position in a shared ancestral sequence, which is what a column of a multiple sequence alignment claims about the residues stacked in it, and which is an inference from similarity rather than something the data states directly. See also: alignment column, MSA.
@@ -282,11 +286,15 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Kraken 2**{#kraken2}. A read classifier that assigns each read to a taxon by matching the read's minimizers against a database of reference genomes, chosen for breadth rather than depth and run in Lungfish Genome Explorer from **Tools > Classification > Kraken2...**, usually with Bracken estimating abundances from its assignments afterwards. See also: read classification, minimizer, lowest common ancestor, taxon.
 
+**Known sites**{#known-sites}. A catalogue of reference positions where human variation is already documented, supplied to GATK as one or more indexed VCF files so that steps such as BQSR can set those positions aside before treating any remaining mismatch as a sequencing error. The standard resources are dbSNP and the curated Mills indel set, and Lungfish Genome Explorer's `gatk bqsr` accepts them through a repeatable `--known-sites` option. See also: dbSNP, BQSR, VCF.
+
 **Kreport**{#kreport}. The summary file Kraken 2 writes beside its per-read output, holding one row per taxon with the percentage of reads under it, its clade count, its direct count, a one-letter rank code, its numeric taxonomy identifier, and its name indented by depth. LGE always asks Kraken 2 for minimizer data, so its kreports carry eight columns, with two minimizer counts inserted after the direct count and the taxonomy identifier in the seventh column. It is the file the taxonomy viewport reads, and the file `lungfish-cli import kraken2` takes when you bring in a classification produced elsewhere. See also: Kraken 2, clade count, taxon, taxonomic rank.
 
 ## L
 
 **LabKey**{#labkey}. A laboratory data management platform; Lungfish can export genotype results as LabKey-ready CSV files.
+
+**Left alignment**{#left-alignment}. The convention of writing an insertion or deletion at the leftmost position that describes the same change, so that one biological indel inside a repeated stretch, which could equally be written at several positions, always appears at the same coordinate whichever caller produced it. Lungfish Genome Explorer applies it with `lungfish-cli gatk leftalign`. See also: indel, normalization, VCF.
 
 **Library prep**{#library-prep}. The bench procedure that turns extracted nucleic acid into a form a sequencing instrument can read, and the step that decides whether reads land at random positions (shotgun), at designed primer coordinates (amplicon), or on probe-selected regions (target enrichment). See also: amplicon, shotgun, target enrichment.
 
@@ -352,6 +360,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **MSA (Multiple Sequence Alignment)**{#msa}. A rectangular arrangement of two or more related sequences in which each column represents an inferred homologous position, with `-` gap characters padding insertions; in Lungfish stored as a `.lungfishmsa` bundle. See also: MAFFT.
 
+**Multi-allelic**{#multi-allelic}. Describing one VCF row that lists more than one alternative to the reference base at the same position, written with the alternates separated by a comma in the ALT column, as in an ALT of `G,AGG`. Some tools read only the first alternate of such a row, which is why `lungfish-cli gatk leftalign --split-multi-allelics` exists to break one into a row per allele. See also: VCF, REF and ALT, left alignment.
+
 **MultiQC**{#multiqc}. A reporting tool that gathers the quality output of every step of a pipeline run into one browsable HTML page, so a reader checks a whole run in one place instead of opening a report per tool, and the nf-core/viralrecon run writes one that Lungfish Genome Explorer catalogues as Full Run Report. See also: nf-core, FastQC.
 
 ## N
@@ -367,6 +377,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Nextflow**{#nextflow}. A language and runner for describing an analysis as a set of steps and the files that flow between them, which then executes those steps in the right order and inside containers, shipped with the Required Setup pack and used by Lungfish Genome Explorer to run the nf-core/viralrecon pipeline. See also: nf-core, container, run bundle.
 
 **nf-core**{#nf-core}. A community that curates, versions, and tests openly published Nextflow pipelines to a common standard, so a pipeline named by release runs the same steps for everyone who runs that release, and Lungfish Genome Explorer supports one of them, nf-core/viralrecon, pinned at release 3.0.0. See also: Nextflow, container.
+
+**Novel variant**{#novel-variant}. A call absent from the catalogue of variation it was compared against, reported by Picard's metrics step as `NOVEL_SNPS` and `NOVEL_INDELS`, and worth reading with suspicion rather than excitement because in a well-studied human sample most genuine variation is already catalogued. See also: dbSNP, transition to transversion ratio, VCF.
 
 **nt database**{#nt-database}. NCBI's general nucleotide collection, holding the sequence records deposited with the public archives across every organism rather than a curated selection, which makes it much broader than the database any read classifier installs locally and is why Lungfish Genome Explorer searches it rather than a smaller one when verifying a classification. Every BLAST verification uses it, and neither the popover nor the command line offers a way to search a different database. See also: BLAST, accession, RefSeq.
 
@@ -410,6 +422,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Percent identity**{#percent-identity}. In a BLAST or other pairwise alignment, the fraction of aligned positions where the query and the subject sequence agree, calculated only over the aligned region; read together with query coverage to gauge how much of the read aligned and how well. See also: BLAST, query coverage.
 
+**Picard**{#picard}. A collection of tools for manipulating high-throughput sequencing files that is bundled inside GATK4 rather than installed separately, so its commands such as `CreateSequenceDictionary`, `MarkDuplicates`, and `CollectVariantCallingMetrics` are invoked through the `gatk` binary. Picard commands spell their options in capitals with double dashes, which is why a GATK command line can mix `-R` and `--SEQUENCE_DICTIONARY` styles. See also: sequence dictionary, mark duplicates.
+
 **Pileup**{#pileup}. The column of bases observed at one reference position across every read that covers it, together with their qualities and strands; the unit of evidence a variant caller weighs at each position. See also: coverage, variant-caller.
 
 **Ploidy**{#ploidy}. The number of copies of each chromosome an organism carries, which is two for a human and one for a virus or a bacterium, and which decides what genotypes a caller is allowed to propose at a position. A caller assuming two copies will force a viral sample into `0/1` and `1/1` genotypes that mean nothing, which is why a haploid genome is usually called with an explicit ploidy setting. See also: genotype, heterozygous, variant-caller.
@@ -439,6 +453,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## Q
 
 **Quality binning**{#quality-binning}. The lossy compression step that rounds each base's Phred score to one of a small set of values before the reads are stored, offered by Lungfish at import as Illumina 4-level, 8-level, or None; Illumina instruments from the NovaSeq onward already report binned scores in hardware, so binning such a run discards little that was not already lost. See also: Phred score, FASTQ.
+
+**Quality by depth**{#quality-by-depth}. A VCF statistic written as `QD`, giving a row's quality score divided by the depth of reads supporting the variant, so it measures confidence per read rather than in total and stops a deep position from accumulating a high score out of many individually unconvincing reads. GATK's recommended hard filter marks a row whose `QD` falls below 2. See also: hard filter, INFO, depth.
 
 **Quality control**{#quality-control}. The step of judging whether a set of reads is fit to analyse before anything is computed from it, which in Lungfish has no separate screen and is read instead from the nine summary cards and three sparkline charts the FASTQ viewport shows for every read bundle. See also: Phred score, sparkline, GC content.
 
@@ -471,6 +487,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Reads per million**{#reads-per-million}. An abundance figure, abbreviated RPM and reported per taxon by CZ-ID and by the taxon reports Lungfish Genome Explorer imports from it, calculated as the reads assigned to that taxon divided by the sample's total read count and multiplied by a million, so that taxa from libraries sequenced to different depths can be compared on one scale. See also: CZ-ID, reads per billion, taxon, read.
 
 **Regular expression**{#regular-expression}. A compact pattern language for describing text to search for rather than spelling out the exact text, where writing a plain word already means "contains this anywhere" and square brackets such as `[GA]` mean "any one of these characters here". See also: read identifier, sequence motif.
+
+**Recalibration table**{#recalibration-table}. The plain-text report GATK's `BaseRecalibrator` writes describing how far each reported base quality score sits from the error rate actually observed, broken down by read group, original score, sequence context, and cycle position, which the following `ApplyBQSR` step then reads to rewrite the quality scores in the BAM. Its first block lists every argument the run used, making it the quickest way to confirm which known-sites files were read. See also: BQSR, known sites, Phred score.
 
 **Reference bundle**{#reference-bundle}. A `.lungfishref` bundle stored under a project's `Reference Sequences/` folder, containing a primary FASTA, an index, optional annotations such as GFF3 or GTF, any tracks attached to that reference (alignments, variants, classifications), and a manifest. See also: bundle, assembly bundle.
 
@@ -548,7 +566,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **SNV (single-nucleotide variant)**{#snv}. A variant in which one reference base is read as one different base, written in a VCF as a REF and an ALT that are each a single character, and the commonest kind of difference between any two genomes. See also: indel, REF and ALT, VCF.
 
-**Soft-clip**{#soft-clip}. A flag in a BAM record (the `S` letter in a CIGAR string) marking bases at the start or end of a read that are present in the record but excluded from pileup, coverage, and variant calling; primer trimming works by soft-clipping primer-derived bases rather than deleting them. See also: primer trim, CIGAR.
+**Soft-clip**{#soft-clip}. A flag in a BAM record (the `S` letter in a CIGAR string) marking bases at the start or end of a read that are present in the record but excluded from pileup, coverage, and variant calling; primer trimming works by soft-clipping primer-derived bases rather than deleting them. In 12S amplicon matching the word names the same shape of thing without a BAM, the read's own bases hanging past each end of the matched reference stretch, which the Min Soft Clip setting counts to reject reads that only graze the target instead of containing it. See also: primer trim, CIGAR, 12S.
 
 **Sparkline**{#sparkline}. A small chart drawn without axes or labels, sized to sit inside a strip rather than to be read precisely, of which Lungfish draws three under a FASTQ bundle's summary cards, labelled Length Dist., Q / Position, and Q Score Dist., with a click on any one opening the full-size chart in a popover. See also: quality control, FASTQ.
 
@@ -563,6 +581,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Sublineage**{#sublineage}. A viral lineage nested inside another one, named by extending the parent's name with a further number, so BQ.1.19 carries every mutation that defines BQ.1 plus the additional ones that distinguish it, which is why closely related sublineages are the hardest pairs for a demixing tool to tell apart. See also: lineage, demixing.
 
 **Subsampling**{#subsampling}. Drawing a smaller set of reads at random from a larger one, so the smaller set keeps the composition of the original without anyone choosing which reads survive, used to make a fast test slice or to cut two libraries to a common depth before comparing them. See also: FASTQ, read length.
+
+**Strand odds ratio**{#strand-odds-ratio}. A VCF statistic written as `SOR`, scoring how lopsidedly the reads supporting a variant came from one strand of the DNA rather than from both, with a higher number meaning a more lopsided split. A real variant should be seen about equally from both strands, so GATK's recommended hard filter marks a substitution whose `SOR` exceeds 3 and an indel whose `SOR` exceeds 10. See also: strand bias, hard filter, INFO.
 
 **Substitution model**{#substitution-model}. The set of assumed rates at which one base or residue changes into another, which a maximum-likelihood method needs before it can score a tree; IQ-TREE's default `MFP` setting is an instruction to test many models and use the best-fitting one rather than a model itself. See also: maximum likelihood, IQ-TREE.
 

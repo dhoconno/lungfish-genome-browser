@@ -174,6 +174,11 @@ shows the result wherever it landed, since `AnalysesFolder` lists nvd and
 naomgs among both its known tools and its imported-result tools.
 Imported-result bundles are named `<tool>-<input stem>` rather than with a
 timestamp, so the NAO-MGS fixture imports as `naomgs-virus_hits_final`.
+The `cz-id` entry in `knownTools` is dead for the import. No CZ ID path
+calls `createAnalysisDirectory`, and both routes write
+`Classifications/<sample>.lungfishtax` (`AppDelegate+ToolsMenu.swift:860-867`),
+while the import sheet's Project Destination readout composes an
+`Analyses/cz-id-<timestamp>` path nothing writes to.
 
 The command-line section of every procedure chapter opens with chapter 33's
 fixed paragraph. "This section is optional. If you do your work in the LGE
