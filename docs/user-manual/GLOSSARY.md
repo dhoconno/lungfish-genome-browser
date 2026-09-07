@@ -290,6 +290,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **GFF (General Feature Format)**{#gff}. A tab-separated table format for genomic features (genes, CDS, mature peptides, regulatory elements). GFF3 is the current spec; Lungfish accepts GFF3 paired with a FASTA at bundle creation. See also: FASTA, reference bundle.
 
+**Grounded answer**{#grounded-answer}. A reply from the AI assistant that rests on a lookup the assistant actually ran against your loaded data, so it names your bundle, your organism, and your coordinates, as opposed to one written from the model's general reading with nothing from your project in it. The status line naming a lookup while the assistant works is the first sign that a reply is grounded. See also: AI assistant, bundle.
+
 **GTF (gene transfer format)**{#gtf}. An older relative of GFF3 that uses the same nine tab-separated columns with a different attribute syntax, which Lungfish Genome Explorer reads and converts on import. The format registry marks GTF read only, since the app never writes one back out. See also: GFF, format registry.
 
 **GVCF (genomic VCF)**{#gvcf}. A VCF variant that records, at every position rather than only at variant sites, the confidence that the sample matches the reference, so per-sample GVCFs can later be combined and genotyped together; the form GATK HaplotypeCaller emits by default in Lungfish. See also: VCF, joint genotyping, GenomicsDB.
@@ -551,6 +553,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Provenance**{#provenance}. The record Lungfish keeps alongside every download and every operation describing where a file came from or how it was produced, including source URL or accession, exact tool version, full command line, input checksums, and output checksums. See also: Operations Panel.
 
 **Provenance sidecar**{#provenance-sidecar}. The JSON file Lungfish writes alongside every output (or into a bundle's `provenance/` subdirectory), recording the workflow name, resolved command, input and output checksums, runtime identity, and per-step exit status for one operation. See also: provenance, methods export.
+
+**Provider fallback**{#provider-fallback}. The rule by which Lungfish Genome Explorer tries the next configured AI provider when the one before it cannot answer, working through your chosen default first and then Anthropic, OpenAI, and Google Gemini with the default removed. A provider with an empty key field is skipped before any request is made, and a question that fails partway may already have reached one company before the next receives it. See also: AI assistant, API key.
 
 ## Q
 
