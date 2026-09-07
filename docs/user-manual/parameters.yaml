@@ -25,4 +25,1335 @@
 #           effect: <one sentence>
 #       notes: <free text>
 version: 0
-operations: {}
+operations:
+  fastq.refresh-qc-summary:
+    title: Refresh QC Summary
+    entry_points:
+      - "Tools > QC & Reporting > Refresh QC Summary..."
+      - "CLI: lungfish-cli fastq qc-summary <inputs> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/App/ToolsMenuModel.swift
+    settings:
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether the run writes one QC summary next to each selected dataset or pools every selected dataset into one summary. Per Input keeps each library separate.
+        when_to_change: Switch to Grouped Result when the selected files are parts of one library and you want a single set of numbers.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing summary file at the output path instead of stopping.
+      - flag: --compress
+        default: "false"
+        effect: Writes the summary gzip-compressed.
+    notes: >-
+      The dialog shows no tool-specific controls. Its Primary Settings pane reads
+      "No additional primary settings are required for this QC summary refresh."
+      Read counts, length distribution, and quality statistics are all computed
+      from the selected FASTQ data with no tunable inputs.
+
+  fastq.demultiplex-barcodes:
+    title: Demultiplex Barcodes
+    entry_points:
+      - "Tools > Demultiplexing > Demultiplex Barcodes..."
+      - "CLI: lungfish-cli fastq demultiplex <input> --kit <kit> --output <dir>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Barcode Source
+        control: radio
+        default: Built-In Kit
+        allowed: Built-In Kit, Custom Definition
+        effect: Chooses whether the barcode sequences come from a kit that ships with the app or from a file you supply. Custom Definition asks for a barcode file in the Inputs section.
+        when_to_change: Pick Custom Definition when your barcodes came from a plate layout or an in-house primer set rather than a commercial kit.
+        cli_flag: --kit
+      - label: Built-In Kit
+        control: popup
+        default: the first registered built-in kit
+        allowed: "truseq-single-a, truseq-single-b, truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, fluidigm-access-array, pacbio-sequel-16-v3, pacbio-sequel-96-v2, pacbio-sequel-384-v1, m13-universal-primers, ont-nbd104, ont-nbd114, ont-nbd104-114, ont-nbd114-96, ont-pbc096, ont-rbk004, ont-rbk114-24, ont-rbk114-96, ont-16s114-24, ont-rab204-214"
+        effect: Names the commercial barcode set used to split the pooled reads. Each kit is a fixed list of index sequences and their sample labels.
+        when_to_change: Change it to match the kit the library was prepared with, because a wrong kit assigns almost every read to the unassigned bin.
+        cli_flag: --kit
+      - label: Engine
+        control: radio
+        default: Cutadapt
+        allowed: Cutadapt, Exact Bare Barcode
+        effect: Chooses the matcher. Cutadapt allows mismatches and insertions near a read end, and Exact Bare Barcode scans the whole read for a perfect barcode match or its reverse complement.
+        when_to_change: Use Exact Bare Barcode when barcodes sit at unpredictable positions inside the read and you want no fuzzy matches at all.
+        cli_flag: --engine
+      - label: Location
+        control: radio
+        default: Both Ends
+        allowed: Both Ends, 5' End, 3' End
+        effect: Tells Cutadapt where in the read a barcode is allowed to sit. Both Ends accepts a match anchored at either terminus.
+        when_to_change: Narrow it to one end when your library design puts the index only at that end and you are seeing spurious assignments.
+        cli_flag: --location
+      - label: 5' Distance
+        control: number
+        default: 0
+        allowed: integers 0 and above
+        effect: How many bases inward from the start of the read the barcode may begin. Zero means the barcode must start at the very first base.
+        when_to_change: Raise it when a few leading bases of adapter or untrimmed sequence sit in front of the barcode.
+        cli_flag: --max-distance-5prime
+      - label: 3' Distance
+        control: number
+        default: 0
+        allowed: integers 0 and above
+        effect: How many bases inward from the end of the read the barcode may end. Zero means the barcode must end at the very last base.
+        when_to_change: Raise it when trailing bases follow the barcode at the read end.
+        cli_flag: --max-distance-3prime
+      - label: Error Rate
+        control: number
+        default: 0.15
+        allowed: fractions between 0 and 1
+        effect: The fraction of barcode bases Cutadapt may see as wrong and still call it a match. At 0.15 a 20-base barcode tolerates three mismatched bases.
+        when_to_change: Lower it toward 0.05 when samples are cross-assigning, and raise it when a large share of reads land in the unassigned bin.
+        cli_flag: --error-rate
+      - label: Trim Barcodes
+        control: checkbox
+        default: true
+        allowed: "true, false"
+        effect: Removes the matched barcode sequence from each read before writing it out. Turning it off keeps the barcode in the read.
+        when_to_change: Turn it off when a downstream step expects to see the index in the read, for example a second demultiplexing pass.
+        cli_flag: --no-trim (inverted)
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is demultiplexed into its own folder of per-barcode bundles or all of them are pooled first.
+        when_to_change: Choose Grouped Result when one library was sequenced across several files and its barcodes should be counted together.
+        cli_flag: null
+    cli_only:
+      - flag: --overlap
+        default: "3"
+        effect: Sets the minimum number of barcode bases that must overlap the read for Cutadapt to consider a match.
+      - flag: --discard-unassigned
+        default: "false"
+        effect: Throws away reads that match no barcode rather than writing them to an unassigned bundle.
+      - flag: --threads
+        default: "4"
+        effect: Sets how many Cutadapt worker threads run at once.
+    notes: >-
+      Location, 5' Distance, 3' Distance, Error Rate, and Trim Barcodes appear
+      only while Engine is Cutadapt. With Custom Definition selected, the dialog
+      asks for a CSV, TSV, or whitespace-delimited file with columns
+      id,sequence[,secondary_sequence][,sample_name].
+
+  fastq.ont-fluidigm-sample-split:
+    title: ONT Fluidigm Sample Split
+    entry_points:
+      - "Tools > Demultiplexing > ONT Fluidigm Sample Split..."
+      - "CLI: lungfish-cli fastq ont-fluidigm-samples <input> --barcodes <file> --output <dir>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings: []
+    cli_only:
+      - flag: --primer-mismatches
+        default: "2"
+        effect: The number of mismatched bases allowed when locating the CS1 and CS2 primer boundaries that mark the amplicon insert.
+      - flag: --minimum-insert-length
+        default: "20"
+        effect: The shortest CS1-to-CS2 insert that is kept, in bases.
+      - flag: --canonicalize-reverse-complements
+        default: "disabled"
+        effect: Folds an insert and its exact reverse complement into one counted exemplar after the reads are oriented.
+      - flag: --threads
+        default: "1"
+        effect: Recorded for provenance only, because materialization does not yet run in parallel.
+      - flag: --force
+        default: "false"
+        effect: Replaces an existing output directory instead of stopping.
+    notes: >-
+      The dialog exposes no settings for this operation. Its pane reads "Uses the
+      selected Fluidigm sample barcode definition, extracts CS1-CS2 inserts, and
+      writes one counted FASTQ bundle per sample." The barcode definition is
+      chosen in the Inputs section, and the output mode is fixed to a batch, so
+      no Output Strategy picker appears.
+
+  fastq.fastp-trim:
+    title: fastp Adapter + Quality Trim
+    entry_points:
+      - "Tools > Trimming & Filtering > fastp Adapter + Quality Trim..."
+      - "CLI: lungfish-cli fastq trim <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Threshold
+        control: number
+        default: 20
+        allowed: integers above 0
+        effect: The lowest Phred quality score a base may have before fastp treats it as unreliable. A score of 20 means the base caller expects to be wrong about once in a hundred.
+        when_to_change: Raise it toward 30 when you need very clean bases for variant calling, and lower it when trimming is discarding too much of every read.
+        cli_flag: --threshold
+      - label: Window Size
+        control: number
+        default: 4
+        allowed: integers above 0
+        effect: How many neighbouring bases fastp averages before deciding to cut. A window of 4 smooths over a single bad base.
+        when_to_change: Use a larger window for long reads whose quality drifts slowly, and a smaller one for a sharp quality cliff at the read end.
+        cli_flag: --window
+      - label: Mode
+        control: radio
+        default: Cut Right
+        allowed: Cut Right, Cut Front, Cut Tail, Cut Both
+        effect: Chooses which end of the read is scanned and in which direction. Cut Right walks from the start toward the end and truncates at the first bad window.
+        when_to_change: Switch to Cut Both when quality is poor at both ends, which is common in older Illumina runs.
+        cli_flag: --mode
+      - label: Adapter Mode
+        control: radio
+        default: Auto-Detect
+        allowed: Auto-Detect, Manual Sequence
+        effect: Chooses whether fastp works out the adapter sequence from the data itself or uses a sequence you type in. Auto-Detect looks for sequence shared across many reads.
+        when_to_change: Use Manual Sequence when you know the exact adapter from the library kit and auto-detection is missing it.
+        cli_flag: --adapter
+      - label: Adapter Sequence
+        control: text
+        default: ""
+        allowed: A, C, G, T and IUPAC ambiguity codes
+        effect: The literal adapter sequence fastp removes from the end of each read. It is used only when Adapter Mode is Manual Sequence.
+        when_to_change: Fill it in when your kit documentation gives an adapter that auto-detection does not find.
+        cli_flag: --adapter
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is trimmed into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to the same library and you want one trimmed bundle.
+        cli_flag: null
+    cli_only:
+      - flag: --extra-args
+        default: "empty"
+        effect: Passes additional fastp arguments through verbatim after the resolved settings.
+      - flag: --no-adapter-trimming
+        default: "adapter trimming enabled"
+        effect: Runs the quality pass without removing adapters, which the dialog never does because it always trims adapters in this operation.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the trimmed FASTQ gzip-compressed.
+    notes: >-
+      Adapter Sequence appears only while Adapter Mode is Manual Sequence. This
+      operation always runs adapter detection and quality trimming in the same
+      fastp pass, so the CLI's --no-adapter-trimming has no dialog counterpart.
+
+  fastq.quality-trim:
+    title: Quality Trim
+    entry_points:
+      - "Tools > Trimming & Filtering > Quality Trim..."
+      - "CLI: lungfish-cli fastq quality-trim <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Threshold
+        control: number
+        default: 20
+        allowed: integers above 0
+        effect: The lowest Phred quality score a base may have before fastp treats it as unreliable. A score of 20 means about one wrong base in a hundred.
+        when_to_change: Raise it toward 30 for variant calling, and lower it when too much of every read is being cut away.
+        cli_flag: --threshold
+      - label: Window Size
+        control: number
+        default: 4
+        allowed: integers above 0
+        effect: How many neighbouring bases fastp averages before deciding to cut. A larger window ignores single bad bases.
+        when_to_change: Use a larger window for long reads with slowly drifting quality.
+        cli_flag: --window
+      - label: Mode
+        control: radio
+        default: Cut Right
+        allowed: Cut Right, Cut Front, Cut Tail, Cut Both
+        effect: Chooses which end is scanned and in which direction. Cut Right walks from the start and truncates at the first bad window.
+        when_to_change: Switch to Cut Both when quality is poor at both ends of the read.
+        cli_flag: --mode
+      - label: Extra arguments
+        control: text
+        default: ""
+        allowed: any fastp command-line arguments
+        effect: Extra fastp options passed straight through after the settings above. They are not checked by the app before fastp sees them.
+        when_to_change: Use it only when you need a fastp feature the dialog does not expose.
+        cli_flag: --extra-args
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is trimmed into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the trimmed FASTQ gzip-compressed.
+    notes: >-
+      This operation trims quality only. Use fastp Adapter + Quality Trim to
+      remove adapters at the same time.
+
+  fastq.adapter-removal:
+    title: Adapter Removal
+    entry_points:
+      - "Tools > Trimming & Filtering > Adapter Removal..."
+      - "CLI: lungfish-cli fastq adapter-trim <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Adapter Mode
+        control: radio
+        default: Auto-Detect
+        allowed: Auto-Detect, Manual Sequence
+        effect: Chooses whether fastp works out the adapter from the data or uses the sequence you type in. Auto-Detect looks for sequence shared across many reads.
+        when_to_change: Use Manual Sequence when your kit documents the adapter and auto-detection misses it.
+        cli_flag: --adapter
+      - label: Adapter Sequence
+        control: text
+        default: ""
+        allowed: A, C, G, T and IUPAC ambiguity codes
+        effect: The literal adapter sequence removed from the end of each read. It is used only when Adapter Mode is Manual Sequence.
+        when_to_change: Fill it in when you know the exact adapter from the library kit.
+        cli_flag: --adapter
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is trimmed into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the trimmed FASTQ gzip-compressed.
+    notes: >-
+      Adapter Sequence appears only while Adapter Mode is Manual Sequence. The
+      Advanced Settings pane states that manual adapter trimming exposes a single
+      literal sequence.
+
+  fastq.primer-trimming:
+    title: Primer Trimming
+    entry_points:
+      - "Tools > Trimming & Filtering > Primer Trimming..."
+      - "CLI: lungfish-cli fastq primer-remove <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Primer Source
+        control: radio
+        default: Literal Sequence
+        allowed: Literal Sequence, Reference FASTA
+        effect: Chooses whether you type one primer sequence or point at a FASTA file holding a whole primer set. Reference FASTA asks for the file in the Inputs section.
+        when_to_change: Pick Reference FASTA for tiled amplicon schemes, which have dozens of primers.
+        cli_flag: --literal or --ref
+      - label: Primer Sequence
+        control: text
+        default: ""
+        allowed: A, C, G, T and IUPAC ambiguity codes
+        effect: The primer sequence bbduk removes from the reads. It is used only when Primer Source is Literal Sequence.
+        when_to_change: Type the primer your PCR used, exactly as the order sheet gives it.
+        cli_flag: --literal
+      - label: k
+        control: number
+        default: 15
+        allowed: integers above 0
+        effect: The length of the exact-match word bbduk uses to spot the primer. Longer words are more specific and less tolerant of errors.
+        when_to_change: Shorten it when short primers are being missed, and lengthen it when non-primer sequence is being trimmed.
+        cli_flag: --kmer
+      - label: mink
+        control: number
+        default: 11
+        allowed: integers above 0
+        effect: The shortest word bbduk will still match when only part of the primer sits at the very end of a read. It catches primers that run off the edge.
+        when_to_change: Lower it when partial primers survive at read ends.
+        cli_flag: --mink
+      - label: hdist
+        control: number
+        default: 1
+        allowed: integers 0 and above
+        effect: How many mismatched bases a primer match may contain. Zero demands a perfect match.
+        when_to_change: Raise it to 2 for noisy long reads, and drop it to 0 when trimming is eating real sequence.
+        cli_flag: --hdist
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is trimmed into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --engine
+        default: "bbduk"
+        effect: Selects the trimming engine, either bbduk or cutadapt-linked, and the dialog always uses bbduk.
+      - flag: --minimum-overlap
+        default: "12"
+        effect: The minimum overlap for cutadapt-linked primer matching, so it applies only to the cutadapt-linked engine.
+      - flag: --error-rate
+        default: "0.12"
+        effect: The maximum error rate for cutadapt-linked primer matching, so it applies only to the cutadapt-linked engine.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the trimmed FASTQ gzip-compressed.
+    notes: >-
+      Primer Sequence, k, mink, and hdist appear only while Primer Source is
+      Literal Sequence. The dialog default for k is 15 while the CLI default for
+      --kmer is 23, so a command copied from the CLI help will not reproduce a
+      dialog run unless --kmer 15 is given.
+
+  fastq.trim-fixed-bases:
+    title: Trim Fixed Bases
+    entry_points:
+      - "Tools > Trimming & Filtering > Trim Fixed Bases..."
+      - "CLI: lungfish-cli fastq fixed-trim <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: 5' Trim
+        control: number
+        default: 0
+        allowed: integers 0 and above
+        effect: How many bases are cut from the start of every read, no matter what those bases are. The count is applied to every read alike.
+        when_to_change: Set it when the library design puts a fixed tag or unique molecular identifier at the start of the read.
+        cli_flag: --front
+      - label: 3' Trim
+        control: number
+        default: 0
+        allowed: integers 0 and above
+        effect: How many bases are cut from the end of every read. The count is applied to every read alike.
+        when_to_change: Set it when a fixed number of trailing bases are known to be unreliable.
+        cli_flag: --tail
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is trimmed into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the trimmed FASTQ gzip-compressed.
+    notes: >-
+      The Advanced Settings pane says trim values are applied exactly as entered,
+      with no quality check and no minimum-length guard.
+
+  fastq.filter-by-read-length:
+    title: Filter by Read Length
+    entry_points:
+      - "Tools > Trimming & Filtering > Filter by Read Length..."
+      - "CLI: lungfish-cli fastq length-filter <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Min Length
+        control: number
+        default: empty
+        allowed: integers above 0, or empty for no lower bound
+        effect: The shortest read kept, in bases. Reads below it are discarded.
+        when_to_change: Set it to your amplicon length or a little below when short fragments are only adapter dimer.
+        cli_flag: --min
+      - label: Max Length
+        control: number
+        default: empty
+        allowed: integers above 0, or empty for no upper bound
+        effect: The longest read kept, in bases. Reads above it are discarded.
+        when_to_change: Set it when concatemers or chimaeric long reads are inflating your data.
+        cli_flag: --max
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is filtered into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the filtered FASTQ gzip-compressed.
+    notes: >-
+      Both bounds start empty. Leaving one empty removes that bound rather than
+      applying a hidden default.
+
+  fastq.remove-human-reads:
+    title: Remove Human Reads
+    entry_points:
+      - "Tools > Decontamination > Remove Human Reads..."
+      - "CLI: lungfish-cli fastq scrub-human <input> --database-id <id> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is scrubbed into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --remove-reads
+        default: "false"
+        effect: A deprecated compatibility flag that is ignored, because Deacon always removes matched reads.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the scrubbed FASTQ gzip-compressed.
+    notes: >-
+      The Primary Settings pane reads "This tool uses the dedicated embedded
+      workflow pane or the fixed database chooser above", so the human database
+      is picked in the Inputs section rather than as a settings control. The
+      chosen database supplies the CLI's --database-id.
+
+  fastq.remove-ribosomal-rna:
+    title: Remove ribosomal RNA sequences
+    entry_points:
+      - "Tools > Decontamination > Remove ribosomal RNA sequences..."
+      - "CLI: lungfish-cli fastq deacon-ribo <inputs> --output <dir>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishIO/Formats/FASTQ/FASTQDerivatives.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Retain Reads
+        control: radio
+        default: non-rRNA
+        allowed: non-rRNA, rRNA, Both
+        effect: Chooses which class of reads is written out. Ribosomal RNA is the abundant structural RNA of the ribosome, and it usually swamps the sequences of interest in an RNA library.
+        when_to_change: Choose rRNA when you want to inspect what was removed, and Both when you want two bundles from one pass.
+        cli_flag: --retain
+    cli_only:
+      - flag: --database-id
+        default: "deacon-ribokmers"
+        effect: Names the managed Deacon database of ribosomal k-mers used for matching.
+      - flag: --absolute-threshold
+        default: "1"
+        effect: The minimum number of matching minimizers before a read is called ribosomal.
+      - flag: --relative-threshold
+        default: "0.0"
+        effect: The minimum share of a read's minimizers that must match before it is called ribosomal.
+      - flag: --format
+        default: "text"
+        effect: Chooses the report format written alongside the reads, either text, json, or tsv.
+      - flag: --threads
+        default: "auto"
+        effect: Sets how many worker threads Deacon uses.
+    notes: >-
+      This operation has no Output Strategy picker, because supportsConfigurableOutput
+      excludes it. The Advanced Settings pane notes that Deacon uses the managed
+      BBMap ribokmers index with sensitive minimizer thresholds, which are not
+      exposed in the dialog.
+
+  fastq.remove-contaminants:
+    title: Remove Contaminants
+    entry_points:
+      - "Tools > Decontamination > Remove Contaminants..."
+      - "CLI: lungfish-cli fastq contaminant-filter <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Contaminant Mode
+        control: radio
+        default: PhiX
+        allowed: PhiX, Custom Reference
+        effect: Chooses what counts as a contaminant. PhiX is the small control genome Illumina spikes into runs, and Custom Reference lets you supply any FASTA.
+        when_to_change: Choose Custom Reference to strip a vector, a carrier genome, or a known spike-in other than PhiX.
+        cli_flag: --mode
+      - label: K-mer
+        control: number
+        default: 31
+        allowed: integers above 0
+        effect: The length of the exact-match word bbduk uses to recognise contaminant sequence. Longer words match more specifically.
+        when_to_change: Shorten it when contaminant reads are noisy and slipping through.
+        cli_flag: --kmer
+      - label: Hamming Distance
+        control: number
+        default: 1
+        allowed: integers 0 and above
+        effect: How many mismatched bases a k-mer match may contain. Zero demands a perfect match.
+        when_to_change: Raise it for error-prone reads, and lower it when real sample reads are being discarded.
+        cli_flag: --hdist
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is filtered into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the filtered FASTQ gzip-compressed.
+    notes: >-
+      With Custom Reference selected the dialog asks for the contaminant FASTA in
+      the Inputs section, which supplies the CLI's --ref.
+
+  fastq.low-complexity-filter:
+    title: Low-Complexity Filter
+    entry_points:
+      - "Tools > Decontamination > Low-Complexity Filter..."
+      - "CLI: lungfish-cli fastq entropy-filter <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishIO/Formats/FASTQ/FASTQEntropyFilter.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Entropy Threshold
+        control: slider
+        default: 0.60
+        allowed: 0.3 to 0.9 in steps of 0.05
+        effect: Shannon entropy scores how varied a stretch of sequence is, from 0 for a single repeated base up to 1 for an even mix. Reads scoring below this value are discarded as repetitive.
+        when_to_change: Raise it when homopolymer runs and tandem repeats are inflating apparent coverage, and lower it when real low-complexity regions are being lost.
+        cli_flag: --entropy
+      - label: Window
+        control: number
+        default: 50
+        allowed: integers above 0
+        effect: The length in bases of the sliding stretch over which entropy is measured. A read is judged window by window rather than as a whole.
+        when_to_change: Shorten it for short reads, so at least one full window fits inside each read.
+        cli_flag: --window
+      - label: K-mer
+        control: number
+        default: 5
+        allowed: integers above 0
+        effect: The word length counted when estimating entropy inside each window. Longer words distinguish repeat patterns more finely.
+        when_to_change: Rarely, unless you are matching a published bbduk setting.
+        cli_flag: --kmer
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is filtered into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --threads
+        default: "4"
+        effect: Sets how many bbduk worker threads run at once.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the filtered FASTQ gzip-compressed.
+    notes: >-
+      Window and K-mer sit inside an "Advanced" disclosure group in the Primary
+      Settings pane. The pane also notes that 0.6 removes about 4 percent of
+      reads and about 89 percent of tandem-repeat reads on the benchmark dataset.
+
+  fastq.remove-duplicates:
+    title: Remove Duplicates
+    entry_points:
+      - "Tools > Decontamination > Remove Duplicates..."
+      - "CLI: lungfish-cli fastq deduplicate <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Preset
+        control: popup
+        default: Exact PCR
+        allowed: Exact PCR, Near Duplicate 1, Near Duplicate 2, Optical HiSeq, Optical NovaSeq, Custom
+        effect: Picks a ready-made set of clumpify settings for a common duplicate type. Exact PCR collapses only reads whose sequences match exactly.
+        when_to_change: Choose an Optical preset for patterned flowcells, and Custom when you need to set the tolerances yourself.
+        cli_flag: derived, sets --subs, --optical, and --dupedist
+      - label: Substitutions
+        control: number
+        default: 0
+        allowed: integers 0 and above
+        effect: How many mismatched bases two reads may have and still be called duplicates. Zero means only identical sequences collapse.
+        when_to_change: Raise it to 1 or 2 when sequencing error is splitting one PCR duplicate family into several.
+        cli_flag: --subs
+      - label: Optical Duplicates
+        control: checkbox
+        default: false
+        allowed: "true, false"
+        effect: Treats reads that sit close together on the flowcell as duplicates of one cluster. These arise from the imaging, not from PCR.
+        when_to_change: Turn it on for patterned flowcells such as HiSeq 4000 and NovaSeq.
+        cli_flag: --optical
+      - label: Optical Distance
+        control: number
+        default: 40
+        allowed: integers above 0
+        effect: How many pixels apart two clusters may sit and still count as one optical duplicate. Larger values collapse more neighbouring clusters.
+        when_to_change: Use the value recommended for your instrument, typically 40 for HiSeq and 12000 for NovaSeq.
+        cli_flag: --dupedist
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is deduplicated into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the deduplicated FASTQ gzip-compressed.
+    notes: >-
+      Substitutions, Optical Duplicates, and Optical Distance appear only while
+      Preset is Custom, and Optical Distance appears only while Optical
+      Duplicates is on. The same preset also drives the FASTQ viewport's inline
+      parameter bar.
+
+  fastq.merge-overlapping-pairs:
+    title: Merge Overlapping Pairs
+    entry_points:
+      - "Tools > Read Processing > Merge Overlapping Pairs..."
+      - "CLI: lungfish-cli fastq merge <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/Services/FASTQDerivativeServiceModels.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Strictness
+        control: radio
+        default: Normal
+        allowed: Normal, Strict
+        effect: Chooses how much evidence bbmerge demands before joining a read pair. Strict rejects overlaps that look marginal.
+        when_to_change: Use Strict when merged reads are showing mismatches in the joined region.
+        cli_flag: --strict
+      - label: Minimum Overlap
+        control: number
+        default: 12
+        allowed: integers above 0
+        effect: The fewest shared bases the two mates must have before they are joined. Short overlaps can happen by chance.
+        when_to_change: Raise it when spurious merges are producing wrong fragment lengths, and lower it for long inserts that barely overlap.
+        cli_flag: --min-overlap
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is merged into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the merged FASTQ gzip-compressed.
+    notes: >-
+      The dialog always passes --count-duplicates, so identical merged sequences
+      collapse into counted exemplars whose support is written into the FASTQ
+      header as size=N. The CLI leaves that flag off by default. The input must
+      be an interleaved FASTQ.
+
+  fastq.repair-paired-end-files:
+    title: Repair Paired-End Files
+    entry_points:
+      - "Tools > Read Processing > Repair Paired-End Files..."
+      - "CLI: lungfish-cli fastq repair <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is repaired into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the repaired FASTQ gzip-compressed.
+    notes: >-
+      Both the Primary and Advanced panes say paired-end repair has no additional
+      settings. The input must be an interleaved FASTQ.
+
+  fastq.reverse-complement:
+    title: Reverse Complement
+    entry_points:
+      - "Tools > Read Processing > Reverse Complement..."
+      - "CLI: lungfish-cli fastq reverse-complement <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is reverse-complemented into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the output FASTQ gzip-compressed.
+    notes: >-
+      Quality scores are reversed along with the sequence, so each base keeps its
+      own score. A "Rev. Comp." checkbox also appears on the FASTQ viewport's
+      inline parameter bar.
+
+  fastq.translate:
+    title: Translate
+    entry_points:
+      - "Tools > Read Processing > Translate..."
+      - "CLI: lungfish-cli fastq translate <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is translated into its own output file or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --frame
+        default: "1"
+        effect: Chooses the reading frame, 1 to 3 on the forward strand and 4 to 6 on the reverse.
+      - flag: --table
+        default: "1"
+        effect: Chooses the genetic code table, where 1 is the standard code.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the protein FASTA gzip-compressed.
+    notes: >-
+      The dialog pane states that frame 1 translation is used, so the CLI's
+      --frame and --table have no dialog counterpart. The output is FASTA because
+      amino-acid sequences carry no per-base quality scores.
+
+  fastq.orient-reads:
+    title: Orient Reads
+    entry_points:
+      - "Tools > Read Processing > Orient Reads..."
+      - "CLI: lungfish-cli fastq orient <input> --reference <ref> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Word Length
+        control: number
+        default: 12
+        allowed: integers above 0
+        effect: The length of the exact word vsearch uses to decide which strand a read came from. Longer words are more specific and slower.
+        when_to_change: Shorten it when many reads come back unoriented, and lengthen it when reads are being put on the wrong strand.
+        cli_flag: --word-length
+      - label: Database Mask
+        control: radio
+        default: dust
+        allowed: dust, none
+        effect: Chooses whether repetitive stretches of the reference are hidden from matching. The dust method masks low-complexity sequence.
+        when_to_change: Choose none when your reference is short and masking is hiding the only usable match region.
+        cli_flag: --db-mask
+      - label: Extra arguments
+        control: text
+        default: ""
+        allowed: any vsearch command-line arguments
+        effect: Extra vsearch options passed straight through after the settings above. They are not checked by the app before vsearch sees them.
+        when_to_change: Use it only when you need a vsearch feature the dialog does not expose.
+        cli_flag: --extra-args
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is oriented into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only: []
+    notes: >-
+      The reference is chosen in the Inputs section. A "Save unoriented reads"
+      checkbox exists only on the FASTQ viewport's inline parameter bar, where it
+      is on by default (FASTQDatasetViewController.swift line 1119). The Tools
+      dialog hard-codes saveUnoriented to false
+      (FASTQOperationDialogState.swift line 687), and lungfish-cli fastq orient
+      exposes no matching flag.
+
+  fastq.correct-sequencing-errors:
+    title: Correct Sequencing Errors
+    entry_points:
+      - "Tools > Read Processing > Correct Sequencing Errors..."
+      - "CLI: lungfish-cli fastq error-correct <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: K-mer Size
+        control: number
+        default: 50
+        allowed: integers from 1 to 62
+        effect: The word length Tadpole counts across the whole dataset to tell a real base from a sequencing error. A base that breaks an otherwise common word is corrected.
+        when_to_change: Lower it for short reads or shallow coverage, since a k-mer longer than the read cannot be counted at all.
+        cli_flag: --kmer
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is corrected into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library, because deeper pooled coverage corrects better.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the corrected FASTQ gzip-compressed.
+    notes: >-
+      The CLI help gives a maximum k-mer of 62. The dialog field does not enforce
+      that ceiling, so an out-of-range value is rejected downstream.
+
+  fastq.subsample-by-proportion:
+    title: Subsample by Proportion
+    entry_points:
+      - "Tools > Search & Subsetting > Subsample by Proportion..."
+      - "CLI: lungfish-cli fastq subsample <input> --proportion <p> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Proportion
+        control: number
+        default: empty
+        allowed: fractions between 0 and 1
+        effect: The share of reads kept, so 0.1 keeps roughly one read in ten. The reads are drawn across the whole file rather than from the start.
+        when_to_change: Set it when you want a quick test run whose depth still scales with the size of each library.
+        cli_flag: --proportion
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is subsampled into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --count
+        default: "unset"
+        effect: Keeps a fixed number of reads instead of a fraction, which the dialog exposes as the separate Subsample by Count operation.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the subsampled FASTQ gzip-compressed.
+    notes: >-
+      The field starts empty, so a proportion must be entered before the Run
+      button becomes available.
+
+  fastq.subsample-by-count:
+    title: Subsample by Count
+    entry_points:
+      - "Tools > Search & Subsetting > Subsample by Count..."
+      - "CLI: lungfish-cli fastq subsample <input> --count <n> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Count
+        control: number
+        default: empty
+        allowed: integers above 0
+        effect: The exact number of reads kept. Every selected library is cut to the same depth.
+        when_to_change: Set it when you want libraries of different sizes compared at equal depth.
+        cli_flag: --count
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is subsampled into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --proportion
+        default: "unset"
+        effect: Keeps a fraction of reads instead of a fixed count, which the dialog exposes as the separate Subsample by Proportion operation.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the subsampled FASTQ gzip-compressed.
+    notes: >-
+      The field starts empty, so a count must be entered before the Run button
+      becomes available. Both subsample operations share one CLI subcommand.
+
+  fastq.extract-reads-by-id:
+    title: Extract Reads by ID
+    entry_points:
+      - "Tools > Search & Subsetting > Extract Reads by ID..."
+      - "CLI: lungfish-cli fastq search-text <input> --query <q> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Query
+        control: text
+        default: ""
+        allowed: any text, or a regular expression when the regex box is ticked
+        effect: The text matched against each read's name line. Reads whose chosen field contains this text are written out.
+        when_to_change: Set it to the run or tile prefix, or the exact read name, that identifies the reads you want.
+        cli_flag: --query
+      - label: Field
+        control: radio
+        default: ID
+        allowed: ID, Description
+        effect: Chooses which part of the name line is searched. The ID is the first word after the @ symbol, and the description is everything after it.
+        when_to_change: Choose Description when the label you are matching sits in the free-text part of the header.
+        cli_flag: --field
+      - label: Use Regular Expression
+        control: checkbox
+        default: false
+        allowed: "true, false"
+        effect: Treats the query as a pattern rather than plain text. A pattern can match several different names at once.
+        when_to_change: Turn it on when one plain query cannot cover every read name you need.
+        cli_flag: --regex
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is searched into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the extracted FASTQ gzip-compressed.
+    notes: >-
+      Results of this operation belong in the project's Extractions folder rather
+      than Imports.
+
+  fastq.extract-reads-by-motif:
+    title: Extract Reads by Motif
+    entry_points:
+      - "Tools > Search & Subsetting > Extract Reads by Motif..."
+      - "CLI: lungfish-cli fastq search-motif <input> --pattern <p> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Pattern
+        control: text
+        default: ""
+        allowed: a nucleotide motif, or a regular expression when the regex box is ticked
+        effect: The sequence motif searched for inside each read. Reads containing it are written out.
+        when_to_change: Set it to a restriction site, a primer footprint, or any short sequence that marks the reads you want.
+        cli_flag: --pattern
+      - label: Use Regular Expression
+        control: checkbox
+        default: false
+        allowed: "true, false"
+        effect: Treats the pattern as an expression rather than a literal motif, so it can allow ambiguity or variable spacing.
+        when_to_change: Turn it on when the motif has degenerate positions that a plain string cannot express.
+        cli_flag: --regex
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is searched into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the extracted FASTQ gzip-compressed.
+    notes: >-
+      The motif is matched on the read as stored, so the reverse complement is
+      not searched unless you write it into the pattern.
+
+  fastq.select-reads-by-sequence:
+    title: Select Reads by Sequence
+    entry_points:
+      - "Tools > Search & Subsetting > Select Reads by Sequence..."
+      - "CLI: lungfish-cli fastq sequence-filter <input> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishIO/Formats/FASTQ/FASTQDerivatives.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Sequence or FASTA Path
+        control: text
+        default: ""
+        allowed: a nucleotide sequence, or the path to a FASTA file of sequences
+        effect: What the reads are matched against. Typing a sequence matches that one, and giving a file path matches any sequence in the file.
+        when_to_change: Use a FASTA path when you are screening against a whole set of adapters or barcodes rather than one.
+        cli_flag: --sequence or --fasta-path
+      - label: Search End
+        control: radio
+        default: 5' End
+        allowed: 5' End, 3' End
+        effect: Chooses which end of the read the sequence must sit at. The 5' end is the start of the read as written.
+        when_to_change: Choose 3' End when the sequence you are matching is a read-through adapter at the far end.
+        cli_flag: --search-end
+      - label: Min Overlap
+        control: number
+        default: 16
+        allowed: integers above 0
+        effect: The fewest bases that must align before a match counts. Short overlaps occur by chance in any large dataset.
+        when_to_change: Raise it when unrelated reads are matching, and lower it when only a short tail of the sequence remains in the read.
+        cli_flag: --min-overlap
+      - label: Error Rate
+        control: number
+        default: 0.15
+        allowed: fractions between 0 and 1
+        effect: The fraction of matched bases allowed to be wrong. At 0.15 a 20-base match tolerates three mismatches.
+        when_to_change: Lower it for clean short reads, and raise it for error-prone long reads.
+        cli_flag: --error-rate
+      - label: Keep Matched Reads
+        control: checkbox
+        default: true
+        allowed: "true, false"
+        effect: Writes out the reads that matched. Turning it off writes out the reads that did not match instead.
+        when_to_change: Turn it off when you are using the sequence to remove reads rather than to select them.
+        cli_flag: --keep-matched
+      - label: Search Reverse Complement
+        control: checkbox
+        default: false
+        allowed: "true, false"
+        effect: Also looks for the reverse complement of the sequence, which catches reads stored on the opposite strand.
+        when_to_change: Turn it on for unstranded libraries and for long reads whose orientation is arbitrary.
+        cli_flag: --search-rc
+      - label: Output Strategy
+        control: radio
+        default: Per Input
+        allowed: Per Input, Grouped Result
+        effect: Chooses whether each selected dataset is filtered into its own output bundle or all of them are pooled into one.
+        when_to_change: Choose Grouped Result when several files belong to one library.
+        cli_flag: null
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file.
+      - flag: --compress
+        default: "false"
+        effect: Writes the filtered FASTQ gzip-compressed.
+    notes: >-
+      Three dialog defaults differ from the CLI defaults. The dialog offers only
+      5' End and 3' End while --search-end defaults to both, and its Min Overlap
+      of 16 and Error Rate of 0.15 differ from the CLI's 8 and 0.1. The dialog
+      also defaults Keep Matched Reads on while --keep-matched is off by default.
+
+  fastq.savont-clustering:
+    title: Savont Clustering
+    entry_points:
+      - "Tools > Clustering > Savont Clustering..."
+      - "CLI: lungfish-cli fastq savont-cluster <input> --output <output>"
+    gating: [full-length-mhc-genotyping]
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/Services/WorkflowLibrary.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: "Run separately per bundle (N results), the only option, locked with the caption \"Runs once per bundle\""
+        effect: Shows that clustering runs separately for each selected bundle rather than pooling them into one input. The row is locked, so it reports behaviour rather than changing it.
+        when_to_change: Rarely, because the picker offers no other mode.
+        cli_flag: null
+      - label: Output Name
+        control: text
+        default: derived from the selected bundle's file name
+        allowed: any file name
+        effect: Names the counted-cluster FASTA the run writes. The default follows the input bundle's name.
+        when_to_change: Change it when you are producing several cluster sets from one bundle and need to tell them apart.
+        cli_flag: --output
+      - label: Threads
+        control: number
+        default: the machine's active processor count
+        allowed: integers above 0
+        effect: How many worker threads Savont uses. More threads finish sooner on a machine with spare cores.
+        when_to_change: Lower it when you want to keep cores free for other work.
+        cli_flag: --threads
+      - label: Quality Cutoff
+        control: number
+        default: 90
+        allowed: integers above 0
+        effect: The Savont quality-value cutoff that decides which bases are trusted when a cluster consensus is built. Higher values demand better base calls.
+        when_to_change: Lower it when too few reads survive to form clusters on a noisy run.
+        cli_flag: --quality-value-cutoff
+      - label: Min Cluster
+        control: number
+        default: 3
+        allowed: integers above 0
+        effect: The fewest reads a cluster must contain before its consensus is reported. Small clusters are usually error, not a real sequence.
+        when_to_change: Raise it for deep data to suppress noise, and lower it when a rare true allele is being dropped.
+        cli_flag: --min-cluster-size
+      - label: Min Read Length
+        control: number
+        default: empty
+        allowed: integers above 0, or empty for no lower bound
+        effect: The shortest read fed into clustering, in bases. Shorter reads are ignored.
+        when_to_change: Set it to just below your amplicon length so truncated reads do not form their own clusters.
+        cli_flag: --min-read-length
+      - label: Max Read Length
+        control: number
+        default: empty
+        allowed: integers above 0, or empty for no upper bound
+        effect: The longest read fed into clustering, in bases. Longer reads are ignored.
+        when_to_change: Set it when concatemers are producing spurious long clusters.
+        cli_flag: --max-read-length
+      - label: Single-strand mode
+        control: checkbox
+        default: false
+        allowed: "true, false"
+        effect: Tells Savont that all reads are already on one strand, so it does not consider reverse complements when grouping them.
+        when_to_change: Turn it on only when the reads were oriented beforehand.
+        cli_flag: --single-strand
+    cli_only: []
+    notes: >-
+      Run Mode appears only when two or more bundles are selected, and Output
+      Name only when exactly one is. Min Read Length, Max Read Length, and
+      Single-strand mode sit inside an "Advanced Options" disclosure group.
+      This operation has no Output Strategy picker,
+      because supportsConfigurableOutput excludes it. It needs the
+      full-length-mhc-genotyping pack, which supplies the savont executable.
+
+  fastq.pbaa-amplicon-clustering:
+    title: pbAA Amplicon Clustering
+    entry_points:
+      - "Tools > Clustering > pbAA Amplicon Clustering..."
+      - "CLI: lungfish-cli fastq pbaa-cluster <input> --guide <guide> --output-dir <dir>"
+    gating: [docker]
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishWorkflow/PBAA/PBAAContainerPins.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: "Run separately per bundle (N results), the only option, locked with the caption \"Runs once per bundle\""
+        effect: Shows that clustering runs separately for each selected bundle rather than pooling them into one input. The row is locked, so it reports behaviour rather than changing it.
+        when_to_change: Rarely, because the picker offers no other mode.
+        cli_flag: null
+      - label: Output Name
+        control: text
+        default: the input file's name with "-pbaa" appended, or pbaa-clusters when nothing is selected
+        allowed: any bundle name
+        effect: Names the reference bundle the run writes, and also prefixes the raw pbAA files. It is how the result appears in the project sidebar.
+        when_to_change: Change it when you are producing several cluster sets from one bundle and need to tell them apart.
+        cli_flag: --output-name
+      - label: Threads
+        control: number
+        default: the machine's active processor count
+        allowed: integers above 0
+        effect: How many worker threads pbAA uses. More threads finish sooner on a machine with spare cores.
+        when_to_change: Lower it when you want to keep cores free for other work.
+        cli_flag: --threads
+      - label: Seed
+        control: number
+        default: 1984
+        allowed: any integer
+        effect: The starting number for pbAA's random choices. Reusing the same seed on the same data reproduces the same clusters.
+        when_to_change: Change it only when you want to check that a result does not depend on one particular random start.
+        cli_flag: --seed
+      - label: pbAA arguments
+        control: text
+        default: ""
+        allowed: any pbaa cluster command-line arguments
+        effect: Extra arguments handed to pbaa cluster after the settings above. They are not checked by the app before pbAA sees them.
+        when_to_change: Use it only when you need a pbAA feature the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only: []
+    notes: >-
+      Run Mode appears only when two or more bundles are selected, and pbAA
+      arguments sits inside an "Advanced Options" disclosure group. The
+      guide FASTA is chosen in the Inputs section. This operation has no Output
+      Strategy picker, and it runs pbAA and samtools from pinned containers, so a
+      working container runtime is required.
