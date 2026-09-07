@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Call Variants dialog open with bcftools selected in the tool sidebar on the chr20 bundle's HG002 minimap2 alignment track.
+id: call-variants-dialog-bcftools
+chapter: 05-variants/01-calling-variants-from-amplicons
+caption: The Call Variants dialog with bcftools selected, showing the tool sidebar on the left and the
+  Overview, Thresholds, and bcftools Settings sections on the right.
+viewport_class: variant
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - reference: Reference Sequences/chr20_10.0-10.5Mb.lungfishref
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Selected chr20_10.0-10.5Mb in the sidebar
+  # PROSE-ONLY: Chose Tools > Call Variants...
+  # PROSE-ONLY: Clicked bcftools in the tool sidebar
+crop:
+  mode: region
+  region:
+  - 242
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

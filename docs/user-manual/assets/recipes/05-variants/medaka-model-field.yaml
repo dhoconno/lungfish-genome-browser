@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Medaka Model field filled with r1041_e82_400bps_hac_v5.0.0, the Readiness line naming it back, and Run enabled.
+id: medaka-model-field
+chapter: 05-variants/04-nanopore-variant-calling
+caption: The Medaka Model field with a model identifier typed in, the Readiness line naming that model
+  back, and the Run button enabled.
+viewport_class: variant
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - reference: Reference Sequences/chr20_10.0-10.5Mb.lungfishref
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Same dialog, Medaka selected
+  # PROSE-ONLY: Typed r1041_e82_400bps_hac_v5.0.0 into the Medaka Model field
+  # PROSE-ONLY: Cleared the field and clicked Cancel afterward
+crop:
+  mode: region
+  region:
+  - 242
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png
