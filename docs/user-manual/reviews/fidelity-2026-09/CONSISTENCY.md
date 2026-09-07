@@ -41,7 +41,7 @@ browser window.
 
 A project is a `.lungfish` folder. Inside it, imported reads sit under
 `Imports/`, downloaded reference records under `Downloads/` (reads fetched
-from SRA or ENA go through the Import Center and land under `Imports/` as
+from SRA or ENA are fetched from the Database Browser, **Tools > Search Online Databases > Search SRA...**, and land under `Imports/` as
 `.lungfishfastq` bundles, settled by a live download on 2026-09-06), reference bundles under
 `Reference Sequences/`, extractions under `Extractions/`, and analysis
 results under `Analyses/`. Two shapes live there. A run by a named tool
