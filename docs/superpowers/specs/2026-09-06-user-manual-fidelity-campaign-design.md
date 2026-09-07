@@ -288,8 +288,11 @@ mitochondrial assembly, the primate mitochondrial alignment and tree, a
 macaque MHC genotyping run, a classification run on the viral database, an
 imported NVD result, and a Viral Recon run for its chapter. The script
 lives under `docs/user-manual/fixtures/demo-project/` and produces the
-project outside the repository (results exceed the size caps). Recipes
-point at the produced project by a documented path.
+project outside the repository (results exceed the size caps), under
+`~/Desktop/lge-docs/` at the user's request (2026-09-06), so any project a
+screenshot was taken from can be reopened later to redo the shot. The
+Williams genotyping project is copied there too and the copy is the one
+opened for capture. Recipes point at those paths.
 
 ### Capture
 

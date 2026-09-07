@@ -1907,7 +1907,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Create: `docs/user-manual/fixtures/demo-project/README.md`
 
 **Interfaces:**
-- Produces `$LUNGFISH_DEMO_ROOT/LGE Manual Demo.lungfish` (default `$HOME/Documents/LGE Manual Demo.lungfish`) with, in order: the HBB reference bundle, the chr20 reference bundle with a minimap2 track and bcftools and LoFreq variant tracks, the chrM reads and a SPAdes assembly, the primate MSA and IQ-TREE tree, a Kraken 2 Viral classification of the SARS-CoV-2 fixture reads with Bracken, the NVD demo import, and a Viral Recon run on the SARS-CoV-2 fixture. Every recipe in Phase 5 opens this project. The script is idempotent (skips a step whose output exists) and logs to `build.log`.
+- Produces `$LUNGFISH_DEMO_ROOT/LGE Manual Demo.lungfish` (default `$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish`; the user asked that every project used for screenshots live under `~/Desktop/lge-docs/` so screenshots can be redone later) with, in order: the HBB reference bundle, the chr20 reference bundle with a minimap2 track and bcftools and LoFreq variant tracks, the chrM reads and a SPAdes assembly, the primate MSA and IQ-TREE tree, a Kraken 2 Viral classification of the SARS-CoV-2 fixture reads with Bracken, the NVD demo import, and a Viral Recon run on the SARS-CoV-2 fixture. Every recipe in Phase 5 opens this project. The script is idempotent (skips a step whose output exists) and logs to `build.log`.
 - Project creation: there is no `project create` command. A project directory becomes a project when the first import writes into it. The script creates the directory and runs `import-fastq --project` first.
 
 - [ ] **Step 1: Write the script**
@@ -1918,7 +1918,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; FX="$HERE/.."
 CLI="${LUNGFISH_CLI:-/Users/dho/Documents/lungfish-genome-explorer/.build/debug/lungfish-cli}"
-ROOT="${LUNGFISH_DEMO_ROOT:-$HOME/Documents}"
+ROOT="${LUNGFISH_DEMO_ROOT:-$HOME/Desktop/lge-docs}"
 P="$ROOT/LGE Manual Demo.lungfish"
 mkdir -p "$P"; exec > >(tee -a "$P/build.log") 2>&1
 step() { echo; echo "== $1 ($(date +%H:%M:%S))"; }
@@ -1974,7 +1974,7 @@ For every `"$CLI"` line, open the matching `cli-help/*.txt` file and check the f
 - [ ] **Step 3: Run the script**
 
 Run: `bash docs/user-manual/fixtures/demo-project/build-demo-project.sh`
-Expected: steps 1 to 7 complete; step 8 prints the Viral Recon note. Open the project in the Preview app (`open -a "Lungfish Preview" "$HOME/Documents/LGE Manual Demo.lungfish"`) and confirm each result appears in the sidebar. Then run Viral Recon once from the wizard on the SRR36291587 sample (Docker running) so the Viral Recon chapter has a result to screenshot; note the wall-clock time in the README.
+Expected: steps 1 to 7 complete; step 8 prints the Viral Recon note. Open the project in the Preview app (`open -a "Lungfish Preview" "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish"`) and confirm each result appears in the sidebar. Then run Viral Recon once from the wizard on the SRR36291587 sample (Docker running) so the Viral Recon chapter has a result to screenshot; note the wall-clock time in the README.
 
 - [ ] **Step 4: Write the README and commit**
 
@@ -2101,7 +2101,7 @@ Write `SHOTS.md` as a table (chapter dir, file, line, id, caption from frontmatt
 
 - [ ] **Step 1: Prepare the app**
 
-Run `open -a "Lungfish Preview" "$HOME/Documents/LGE Manual Demo.lungfish"`. Confirm the process list shows only the Preview app. Set the Mac to light appearance for the session (System Settings is off limits to computer use; ask the user to switch if it is dark). Load the computer-use tools (`ToolSearch` query `computer-use`, max 30) and request access to "Lungfish Genome Explorer Preview" alone.
+Run `open -a "Lungfish Preview" "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish"`. Confirm the process list shows only the Preview app. Set the Mac to light appearance for the session (System Settings is off limits to computer use; ask the user to switch if it is dark). Load the computer-use tools (`ToolSearch` query `computer-use`, max 30) and request access to "Lungfish Genome Explorer Preview" alone.
 
 - [ ] **Step 2: For each open row in SHOTS.md, in chapter order**
 
