@@ -99,6 +99,48 @@ The resulting read set is 45,574 read pairs (91,148 reads, 182,296 lines per fil
   It is reproducible by running `regenerate.sh` and is listed in `.gitignore` alongside `cache/`.
   The numbers above were captured from a real run of that script on 2026-09-06 so the manual can quote real figures.
 
+## Variant calls
+
+`regenerate.sh` also calls variants from `expected/mapping/HG002.sorted.bam` against `GRCh38.chr20.10.0-10.5Mb.fasta` with default settings, once for bcftools and once for LoFreq, inside a scratch project (variant calling only operates on a bundle-owned alignment track, never a loose BAM).
+
+```bash
+lungfish-cli variants call --bundle <bundle> --alignment-track hg002-minimap2 --caller bcftools --name "HG002 bcftools"
+lungfish-cli variants call --bundle <bundle> --alignment-track hg002-minimap2 --caller lofreq --name "HG002 LoFreq"
+```
+
+Caller versions, from the provenance sidecars written alongside each VCF, were bcftools 1.24 (managed conda environment `bcftools`, package `bioconda::bcftools=1.24=h6bd33b9_2`) and LoFreq 2.1.5 (the LoFreq binary itself does not accept `--version`, so this came from running `lofreq version` directly).
+
+The bcftools VCF holds 1,056 records with `bcftools view -H | wc -l`.
+Every record's FILTER column reads `.` rather than `PASS`, because a default `variants call --caller bcftools` run applies no hard filter, so there are 1,056 unset-FILTER records and zero PASS records.
+The FORMAT column carries `GT:PL:AD` for the single `HG002` sample column.
+A representative row (REF `G`, ALT `A`, unset FILTER) reads:
+
+```
+chr20_10.0-10.5Mb	2078	.	G	A	225.417	.	DP=62;VDB=0.240996;SGB=-0.693147;MQSBZ=0;MQ0F=0;AC=2;AN=2;DP4=0,0,24,27;MQ=60	GT:PL:AD	1/1:255,154,0:0,51
+```
+
+Because every bcftools record shares the same unset FILTER value, there is no second, differently filtered row to quote from this caller.
+
+The LoFreq VCF holds 862 records with `bcftools view -H | wc -l`.
+Every record's FILTER column reads `PASS`, giving 862 PASS records and zero records under any other FILTER value.
+LoFreq's default output carries no FORMAT or per-sample column at all, since it reports allele frequency and depth as INFO fields rather than genotypes.
+A representative row (the same position as the bcftools example above) reads:
+
+```
+chr20_10.0-10.5Mb	2078	.	G	A	2370	PASS	DP=62;AF=1;SB=0;DP4=0,0,31,31
+```
+
+Because every LoFreq record is already PASS, there is no non-PASS row to quote from this caller either.
+
+Comparing each caller's records against the 961-record benchmark VCF inside the slice, by matching CHROM and POS only, gives a first look at agreement.
+bcftools has no PASS records to compare, so this counts its full call set instead. 954 of its 1,053 distinct positions match a benchmark position.
+LoFreq's 861 distinct PASS positions include 808 that match a benchmark position.
+These counts are position matches only, not full-genotype concordance, and are not a substitute for a proper benchmarking pipeline such as `hap.py`.
+
+The bcftools VCF is 46 KB with a 4 KB index, and its provenance sidecar is 28 KB.
+The LoFreq VCF is 16 KB with a 4 KB index, and its provenance sidecar is 24 KB.
+All six files live under `expected/variants/` alongside `expected/mapping/`, and like that folder they are gitignored rather than committed, reproducible from `regenerate.sh`.
+
 ## Regenerating
 
 ```bash
