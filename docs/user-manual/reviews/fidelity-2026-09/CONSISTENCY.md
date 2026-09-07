@@ -42,7 +42,10 @@ browser window.
 A project is a `.lungfish` folder. Inside it, imported reads sit under
 `Imports/`, downloaded data under `Downloads/`, reference bundles under
 `Reference Sequences/`, extractions under `Extractions/`, and every
-analysis result under `Analyses/<tool>-<timestamp>/`. There is no
+analysis result under `Analyses/<tool>-<timestamp>/`, with one exception.
+Multiple sequence alignments and the trees built from them land under
+`Analyses/Multiple Sequence Alignments/` as `.lungfishmsa` and
+`.lungfishtree` bundles (verified by a CLI run on 2026-09-06). There is no
 `Assemblies/` folder. Bundle extensions are written in code font:
 `.lungfishref`, `.lungfishfastq`, `.lungfishmsa`, `.lungfishtree`,
 `.lungfishgenotype`, `.lungfishprimers`.

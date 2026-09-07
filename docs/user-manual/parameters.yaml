@@ -6716,3 +6716,176 @@ operations:
       copied records. Two further command-line subcommands have no menu
       equivalent. provenance verify checks a signature, and provenance
       bibliography generates a citation list from a bundle's provenance.
+
+  sequence.find-orfs:
+    title: Find ORFs
+    entry_points:
+      - "Sequence > Find ORFs..."
+      - "CLI: lungfish-cli sequence annotate-orfs <bundle> [options]"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Sequence/SequenceORFOperationDialog.swift
+      - Sources/LungfishApp/App/MainMenu.swift
+      - Sources/LungfishApp/App/AppDelegate+SequenceMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/sequence.txt
+    settings:
+      - label: "+1, +2, +3, -1, -2, -3"
+        control: checkbox
+        default: all six checked
+        allowed: any combination of the six reading frames, at least one
+        effect: Chooses which reading frames the search scans. The three plus frames read the sequence forward starting 0, 1, or 2 bases in, and the three minus frames do the same on the reverse complement.
+        when_to_change: Uncheck the frames you already know are empty, or the frames on the strand you are not interested in, to shorten the results list.
+        cli_flag: --frames
+      - label: Codon table
+        control: popup
+        default: "1 - Standard"
+        allowed: any NCBI genetic code table registered in the app, for example Standard, Vertebrate Mitochondrial, Yeast Mitochondrial, Bacterial
+        effect: Sets which codon-to-amino-acid table decides where a reading frame starts and how it translates. A different table changes both the start codons the search accepts and the protein sequence written into the annotation.
+        when_to_change: Switch it when the sequence comes from an organelle or organism with a non-standard genetic code, such as vertebrate mitochondrial DNA.
+        cli_flag: --table
+      - label: Minimum ORF length
+        control: number
+        default: 100
+        allowed: positive integers, in nucleotides
+        effect: Sets the shortest open reading frame the search keeps, measured in nucleotides. Shorter candidates are discarded before the track is written.
+        when_to_change: Raise it to cut down on short, likely spurious ORFs, or lower it when searching a short sequence such as a single gene.
+        cli_flag: --min-length
+      - label: Track name
+        control: text
+        default: "<sequence name> ORFs"
+        allowed: any text
+        effect: Names the new annotation track that the found ORFs are written into.
+        when_to_change: Change it when the default name would collide with a track you already have, or to describe the search more specifically.
+        cli_flag: --track-name
+      - label: Track ID
+        control: text
+        default: a generated ID such as orfs-<chromosome>
+        allowed: letters, numbers, underscores, and hyphens, or blank to accept the generated ID
+        effect: Sets the internal identifier for the new track, separate from its display name.
+        when_to_change: Rarely, only when scripting against a specific track ID elsewhere.
+        cli_flag: --track-id
+      - label: Include partial ORFs
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Keeps ORFs that run off either end of the searched range instead of requiring a complete stop codon inside it.
+        when_to_change: Turn it on when the searched range is a cropped view of a longer sequence and a real ORF may be cut off at an edge.
+        cli_flag: --include-partial
+      - label: Allow alternative starts
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Lets the search accept the codon table's alternative start codons, not only ATG, as the beginning of an ORF.
+        when_to_change: Turn it on for organisms or organelles known to use alternative starts, or when a real ORF is being missed because it begins with one.
+        cli_flag: --allow-alternative-starts
+    cli_only:
+      - flag: --sequence
+        default: the first sequence in the bundle
+        effect: Names the sequence or chromosome to search, when the bundle holds more than one.
+      - flag: --start
+        default: "0"
+        effect: Sets the 0-based inclusive start coordinate of the searched range.
+      - flag: --end
+        default: the sequence length
+        effect: Sets the 0-based exclusive end coordinate of the searched range.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+    notes: >-
+      The dialog always searches the sequence and range that were visible in
+      the viewport when Find ORFs... was chosen, shown as a read-only dataset
+      label, so --sequence, --start, and --end have no dialog counterparts.
+      The six frame checkboxes sit under one Reading Frames heading, codon
+      table and minimum length under Translation, track name and ID under
+      Output, and the two remaining checkboxes under Options. Running the
+      operation requires an active .lungfishref reference bundle and fails
+      with a "No Reference Bundle" alert otherwise.
+
+  sequence.extract-region:
+    title: Extract Sequence
+    entry_points:
+      - "Sequence > Extract Visible Region..."
+      - "Right-click an annotation in the sequence viewport > Extract Sequence..."
+      - "CLI: lungfish-cli extract sequence <input> <region> [options]"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController+Extraction.swift
+      - Sources/LungfishApp/Views/Extraction/ExtractionConfigurationView.swift
+      - Sources/LungfishApp/Views/Viewer/FASTASequenceExtractionDialog.swift
+      - Sources/LungfishApp/Views/Metagenomics/ClassifierExtractionDialog.swift
+      - Sources/LungfishApp/Views/Viewer/SequenceViewerView+Interaction.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/extract.txt
+    settings:
+      - label: 5' Flank
+        control: number
+        default: 0
+        allowed: non-negative integers, in base pairs, with 100/500/1000/5000 preset buttons
+        effect: Adds this many extra bases of sequence upstream of the extracted region, on the 5' side.
+        when_to_change: Raise it when the extracted piece needs surrounding context, for example primer-binding sequence just outside an amplicon.
+        cli_flag: --flank-5
+      - label: 3' Flank
+        control: number
+        default: 0
+        allowed: non-negative integers, in base pairs, with 100/500/1000/5000 preset buttons
+        effect: Adds this many extra bases of sequence downstream of the extracted region, on the 3' side.
+        when_to_change: Raise it symmetrically with 5' Flank when you want equal padding on both sides.
+        cli_flag: --flank-3
+      - label: Reverse Complement
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Writes the extracted sequence as its reverse complement instead of the strand it was read from.
+        when_to_change: Turn it on when the region you selected is on the minus strand and you want the sequence read in its coding orientation.
+        cli_flag: --reverse-complement
+      - label: Concatenate Exons (remove introns)
+        control: checkbox
+        default: "true"
+        allowed: "true, false"
+        effect: Joins a multi-exon annotation's pieces into one continuous sequence with the introns removed. This setting only appears when the extracted annotation is discontiguous.
+        when_to_change: Turn it off when you need the full genomic span, introns included, rather than the spliced sequence.
+        cli_flag: null
+      - label: Destination
+        control: radio
+        default: Save as Bundle
+        allowed: "Save as Bundle, Save to File..., Copy to Clipboard, Share..."
+        effect: Chooses where the extracted sequence goes. Save as Bundle creates a new .lungfishref bundle, Save to File writes a FASTA file, Copy to Clipboard puts FASTA text on the pasteboard, and Share opens the macOS share sheet.
+        when_to_change: Pick Save to File or Share when the sequence is headed outside the app, and Copy to Clipboard for a quick paste into another program.
+        cli_flag: null
+      - label: Name
+        control: text
+        default: derived from the source region or annotation name
+        allowed: any text
+        effect: Names the new bundle or file the extraction creates. The field is hidden for the Copy to Clipboard and Share destinations, which need no name.
+        when_to_change: Change it when the derived name is not descriptive enough to find later.
+        cli_flag: null
+      - label: "Create Bundle / Save / Copy / Share"
+        control: text
+        default: n/a
+        allowed: n/a
+        effect: Runs the extraction. Its label changes with the chosen destination, Create Bundle for a new bundle, Save for a file, Copy for the clipboard, and Share for the share sheet.
+        when_to_change: n/a
+        cli_flag: null
+    cli_only:
+      - flag: --flank
+        default: "0"
+        effect: Adds the same number of flanking bases on both sides in one flag, instead of setting the 5' and 3' amounts separately.
+      - flag: --line-width
+        default: "70"
+        effect: Sets how many bases the output FASTA wraps to per line.
+      - flag: -o, --output
+        default: stdout
+        effect: Writes the extracted FASTA to a file path instead of standard output.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+    notes: >-
+      Two different sheets share this operation id. Extract Visible Region...
+      opens a sheet with Flanking Sequence, Reverse Complement, and a
+      three-way Copy as FASTA / Copy Protein / New Bundle picker, and its New
+      Bundle mode files the result under the project's Extractions folder.
+      The annotation context menu's Extract Sequence... opens a plainer
+      sheet with the four-way Destination choice above and no flank fields,
+      and its Save as Bundle destination instead creates a derived reference
+      bundle alongside the source bundle rather than in Extractions. Neither
+      sheet exposes --line-width, and CLI --flank has no dialog counterpart
+      in either sheet, which set 5' and 3' padding separately.
