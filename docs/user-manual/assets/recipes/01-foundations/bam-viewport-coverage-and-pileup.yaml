@@ -1,0 +1,32 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The chr20_10.0-10.5Mb bundle zoomed to a ~28bp window around position 250,516, with the HG002 minimap2 alignment track's Depth coverage histogram drawn above the stacked read pileup showing base mismatches highlighted.
+id: bam-viewport-coverage-and-pileup
+chapter: 01-foundations/04-alignment-files
+caption: The chr20 10.0-10.5Mb bundle in the demo project with its HG002 minimap2 alignment track selected,
+  showing the coverage track above the stacked reads.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Click the chr20_10.0-10.5Mb reference bundle under Reference Sequences
+  # PROSE-ONLY: Open the sequence record into the viewport
+  # PROSE-ONLY: Choose Sequence > Go to Location... and enter chr20_10.0-10.5Mb:250470-250580
+  # PROSE-ONLY: Click Focus to widen the viewport, then zoom to show individual reads
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

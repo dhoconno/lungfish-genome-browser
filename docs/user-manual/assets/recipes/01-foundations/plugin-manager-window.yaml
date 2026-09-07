@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Plugin Manager on the Packs tab, scrolled to show the tail of the Required Setup card above the Optional Tools heading and the full Read Mapping card listing its three mappers (minimap2, BWA-MEM2, Bowtie2).
+id: plugin-manager-window
+chapter: 01-foundations/07-plugin-packs
+caption: The Plugin Manager on the Packs tab, with the Required Setup section above the Optional Tools
+  section and the Read Mapping card showing its three mappers.
+viewport_class: none
+app_state:
+  fixture: none
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Choose Tools > Plugin Manager... (Cmd-Shift-B)
+  # PROSE-ONLY: Wait for Checking installed tools... to finish
+  # PROSE-ONLY: Scroll to the Optional Tools section
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

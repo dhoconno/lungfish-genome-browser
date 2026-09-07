@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Databases tab scrolled to show installed databases (SILVA, Standard-16, each reading Installed with a Remove button) beside ones offering a Download button, with the recommended-database banner at the top and the total storage readout at the foot.
+id: plugin-manager-databases-tab
+chapter: 01-foundations/07-plugin-packs
+caption: The Databases tab, with installed databases beside ones offering a Download button, the recommended-database
+  banner at the top, and the total storage readout at the foot.
+viewport_class: none
+app_state:
+  fixture: none
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Choose Tools > Plugin Manager...
+  # PROSE-ONLY: Click the Databases tab
+  # PROSE-ONLY: Scroll to show installed and downloadable rows together
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

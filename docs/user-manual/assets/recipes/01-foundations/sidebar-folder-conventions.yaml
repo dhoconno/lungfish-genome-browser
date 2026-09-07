@@ -1,0 +1,29 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The demo project sidebar showing Analyses above Imports, Phylogenetic Trees, Primer Schemes, Reference Sequences, and metadata.json. GATE NOTE: the demo project's Analyses subfolders carry script-chosen names (HG002-chrM, kraken2-SRR36291587, mapping-HG002, nvd-demo) rather than the app's own <tool>-<timestamp> shape; not renamed for this capture, so the folder names in this screenshot differ from what a live run produces.
+id: sidebar-folder-conventions
+chapter: 01-foundations/06-the-lungfish-project
+caption: The sidebar of the demo project, showing the Analyses group above the Imports, Reference Sequences,
+  Primer Schemes, and Extractions folders.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open a fresh main window on the demo project (File > Open Recent > LGE Manual Demo)
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

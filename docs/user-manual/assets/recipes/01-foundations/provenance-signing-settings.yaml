@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Settings > General scrolled to the Provenance Signing section, showing the Off/Local/Cosign Plan provider control (Off selected), the empty Local signing key and Public key path fields, the greyed Save Signing Key and Clear Signing Key buttons, and the Provenance signing is off status line.
+id: provenance-signing-settings
+chapter: 01-foundations/08-provenance-and-reproducibility
+caption: Settings > General > Provenance Signing, showing the Off, Local, and Cosign Plan provider choices
+  above the local signing key field, the public key path field, and the Save Signing Key and Clear Signing
+  Key buttons.
+viewport_class: none
+app_state:
+  fixture: none
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Choose Lungfish Preview > Settings... (Cmd-,)
+  # PROSE-ONLY: Stay on the General tab
+  # PROSE-ONLY: Scroll to the Provenance Signing section
+crop:
+  mode: region
+  region:
+  - 0
+  - 420
+  - 820
+  - 220
+post:
+  retina: true
+  format: png

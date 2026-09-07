@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The offline strip at the foot of the Read Mapping pack card, showing the two greyed export-pack/install --offline command lines and the Copy button beside them.
+id: plugin-manager-offline-commands
+chapter: 01-foundations/07-plugin-packs
+caption: The offline strip at the foot of one pack card, showing the two greyed command lines and the
+  Copy button beside them.
+viewport_class: none
+app_state:
+  fixture: none
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Choose Tools > Plugin Manager...
+  # PROSE-ONLY: Scroll to the Read Mapping card in Optional Tools
+crop:
+  mode: region
+  region:
+  - 15
+  - 490
+  - 770
+  - 60
+post:
+  retina: true
+  format: png
