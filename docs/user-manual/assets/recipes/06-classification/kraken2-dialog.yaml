@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: FASTQ/FASTA Operations sheet on the Kraken2 pane for SRR36291587, showing the dataset line, Database picker (SILVA, size/RAM readout), and Sensitivity segmented control (Balanced selected)
+id: kraken2-dialog
+chapter: 06-classification/02-running-kraken2
+caption: The FASTQ/FASTA Operations dialog opened from Tools > Classification > Kraken2..., showing the
+  dataset line, the Database picker with its size readout, and the Sensitivity segmented control.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Imports/SRR36291587 in the sidebar
+  # PROSE-ONLY: Tools > Classification > Kraken2...
+crop:
+  mode: region
+  region:
+  - 208
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

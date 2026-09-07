@@ -1,0 +1,36 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Kraken2 pane's Advanced Settings disclosure expanded, showing Confidence, Min hit groups, Threads, Memory mapping, and Extra arguments
+id: kraken2-advanced-settings
+chapter: 06-classification/02-running-kraken2
+caption: The dialog's Advanced Settings disclosure expanded, showing the Confidence slider, the Min hit
+  groups stepper, the Threads stepper, the Memory mapping checkbox, and the Extra arguments field.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Imports/SRR36291587
+  # PROSE-ONLY: Tools > Classification > Kraken2...
+  # PROSE-ONLY: Click Advanced Settings disclosure
+crop:
+  mode: region
+  region:
+  - 208
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

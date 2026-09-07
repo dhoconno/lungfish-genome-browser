@@ -1,0 +1,32 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: NVD demo results (nvd-demo analysis) open in the NVD viewport, with the NODE_1 (500 bp) contig row expanded to its three secondary hits and the detail pane showing the contig alignment
+id: nvd-result-viewport
+chapter: 06-classification/09-novel-virus-detection
+caption: The NVD viewport on the demo results, showing the four summary cards, the By Sample and By Taxon
+  grouping control, the Search contigs... field, a contig row expanded to its secondary hits, and the
+  detail pane alongside.
+viewport_class: none
+app_state:
+  fixture: nvd-demo
+  open_files:
+  - analysis: nvd-demo
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select nvd-demo under Analyses in the sidebar
+  # PROSE-ONLY: Click the disclosure triangle on the NODE_1 (500 bp) row
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

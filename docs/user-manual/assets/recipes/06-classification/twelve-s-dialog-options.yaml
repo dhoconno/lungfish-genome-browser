@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Workflow Operations dialog on 12S Amplicon Matching for SRR36291587, Read Platform segmented picker, Result Name and Min Soft Clip fields, Advanced Options expanded showing Max Indels and Run vsearch chimera review
+id: twelve-s-dialog-options
+chapter: 06-classification/10-twelve-s-metabarcoding
+caption: The same dialog's Read Platform segmented picker, Result Name field, and Min Soft Clip field,
+  with the Advanced Options disclosure expanded to show Max Indels and Run vsearch chimera review.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Imports/SRR36291587
+  # PROSE-ONLY: Tools > Genotyping > 12S Amplicon Matching...
+  # PROSE-ONLY: Click Advanced Options disclosure
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

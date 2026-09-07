@@ -1,0 +1,36 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: FASTQ/FASTA Operations sheet on the TaxTriage pane for SRR36291587, Prerequisites row (Nextflow, Apple Containerization: Available), Samples section, Kraken2 Database picker
+id: taxtriage-dialog
+chapter: 06-classification/04-running-taxtriage
+caption: The FASTQ/FASTA Operations dialog opened from Tools > Classification > TaxTriage..., showing
+  the Prerequisites row with its Nextflow and Docker indicators, the Samples section with a sample-ID
+  field and a role picker on each row, and the Kraken2 Database picker below.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Imports/SRR36291587
+  # PROSE-ONLY: Tools > Classification > TaxTriage...
+crop:
+  mode: region
+  region:
+  - 208
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png
