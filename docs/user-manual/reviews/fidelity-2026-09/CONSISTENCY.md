@@ -158,6 +158,21 @@ to unpack it, and find the folder inside it under
 `docs/user-manual/fixtures/`." Chapters committed before this ruling get the
 sentence in the Phase 6 sweep.
 
+## Where imported classifier results land (settled by the chapter 36, 39, and 40 fidelity reviews)
+
+The import routes do not share one destination, and each chapter states
+its own plainly rather than appealing to the Analyses rule for named-tool
+runs. The Import Center writes an NVD bundle into the project's `Imports`
+folder (`AppDelegate+ToolsMenu.swift:636`), a NAO-MGS bundle into
+`Analyses` (`AppDelegate+ImportCenter.swift:694-712`), and a CZ ID result
+into `Classifications/<sample>.lungfishtax` (`AppDelegate+ToolsMenu.swift:860-867`).
+Every command-line import writes wherever `--output-dir` points, defaulting
+to the current directory, so a headless example passes a folder inside the
+project. The demo project's `Analyses/nvd-demo` copy came from the command
+line with `Analyses` as the destination. A chapter may say the sidebar
+shows the result wherever it landed, since `AnalysesFolder` lists nvd and
+naomgs among both its known tools and its imported-result tools.
+
 ## Variant track storage (settled by the chapter 5 fidelity review)
 
 A variant track lives under the reference bundle's `variants/` folder as
