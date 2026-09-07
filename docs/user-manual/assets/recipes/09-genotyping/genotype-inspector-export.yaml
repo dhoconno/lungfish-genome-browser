@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Export block at the foot of the Inspector's Genotype Display section for the amplicon-genotyping_3 result, showing the Filtered Pivot... button and the caption stating the copy is a one-way export.
+id: genotype-inspector-export
+chapter: 09-genotyping/04-haplotype-definitions-and-export
+caption: The Export block at the foot of the Inspector's Genotype Display section, showing the Filtered
+  Pivot... button and the caption stating that the copy is one-way.
+viewport_class: genotype
+app_state:
+  fixture: '{williams_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: With the Genotype Display section open in the Inspector's View tab, scroll to its foot.
+  # PROSE-ONLY: Crop to the Export heading, the Filtered Pivot... button, and its caption text, without clicking Filtered Pivot...
+crop:
+  mode: region
+  region:
+  - 1055
+  - 800
+  - 345
+  - 100
+post:
+  retina: true
+  format: png

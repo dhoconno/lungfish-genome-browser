@@ -1,0 +1,32 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Workflow Operations dialog on Full-length ONT MHC genotyping (WD17_S164_L001 selected), scrolled to show the Length Filter group (Min Length 2,000, Max Length 4,000), the Call Thresholds group (Locus % 1), and the Advanced Options disclosure expanded to Keep Intermediates, Orient Reference, Forward Primers, and Reverse Primers (all None).
+id: genotyping-full-length-dialog
+chapter: 09-genotyping/02-running-genotyping
+caption: The Workflow Operations dialog on Full-length ONT MHC genotyping, showing the Length Filter group
+  with Min Length and Max Length, the Call Thresholds group with its Locus % field, and the Advanced Options
+  disclosure holding Orient Reference, Forward Primers, and Reverse Primers.
+viewport_class: none
+app_state:
+  fixture: '{williams_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Enable Full-length ONT MHC genotyping in Tools > Workflow Library... first.
+  # PROSE-ONLY: Select a FASTQ bundle in the sidebar and choose Tools > Genotyping > Full-length ONT MHC genotyping...
+  # PROSE-ONLY: Expand the Advanced Options disclosure and scroll to bring Length Filter through Reverse Primers into one frame, then click Cancel.
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

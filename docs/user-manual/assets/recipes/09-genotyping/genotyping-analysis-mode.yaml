@@ -1,0 +1,36 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The dialog's Haplotyping group with the Analysis Mode segmented picker on Genotype only, and the AI preset segment greyed out; the caption beneath reads 'Maps reads and reports genotypes without haplotyping' rather than a caption about configured API access.
+id: genotyping-analysis-mode
+chapter: 09-genotyping/02-running-genotyping
+caption: The dialog's Haplotyping group with the Analysis Mode segmented picker on Genotype only, and
+  the AI preset segment greyed out under the caption about configured API access.
+viewport_class: none
+app_state:
+  fixture: '{williams_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Same Workflow Operations dialog as genotyping-run-dialog, no AI provider configured.
+  # PROSE-ONLY: Scroll the dialog to bring the Haplotyping group into view.
+  # PROSE-ONLY: Crop to the Haplotyping heading, the Analysis Mode segmented control, and its caption line.
+crop:
+  mode: region
+  region:
+  - 277
+  - 458
+  - 460
+  - 90
+post:
+  retina: true
+  format: png
