@@ -134,3 +134,12 @@ interleaved `<sample>.fastq.gz` whose meta file records
 `pairingMode: interleaved` (`FASTQBatchImporter.swift:1032`). Chapters say a
 bundle holds the sample's reads, never "the R1 and R2 files", and describe
 Interleave and Deinterleave as operations on files outside a bundle.
+
+## Mean quality has two definitions (settled by chapter 16's runs)
+
+The FASTQ viewport's Mean Q card holds seqkit's probability-averaged Phred
+score (24.87 on the HG002 chromosome 20 pair). `lungfish-cli fastq
+qc-summary` reports the arithmetic mean of the scores (34.93 on the same
+reads). Both are right. Chapters quote the card value when they describe
+the window, name which average a number is whenever the command line is
+involved, and never compare a card to a CLI report.

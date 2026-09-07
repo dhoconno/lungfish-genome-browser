@@ -8,6 +8,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Accession**{#accession}. The permanent identifier a public sequence database assigns to one record, such as the RefSeqGene record `NG_000007.3`. The trailing number after the dot is a version that increments when a curator revises the deposited sequence, so a published coordinate should always name the version it was measured against. See also: INSDC, reference genome.
 
+**Adapter**{#adapter}. The short synthetic DNA sequence that library preparation attaches to each end of a fragment so the instrument can bind and read it, which appears at the end of a read whenever the fragment was shorter than the read length and the instrument read straight through it. See also: library prep, FASTQ, fastp.
+
 **AI assistant**{#ai-assistant}. An in-app chat panel that answers questions about the active dataset and suggests workflows through a bring-your-own-key AI provider; it interprets and explains but does not modify your project.
 
 **Alias map**{#alias-map}. The internal table Lungfish consults during VCF import to recognise that two reference accessions (for example, the GenBank record `MN908947.3` and the RefSeq record `NC_045512.2`) name the same underlying sequence, so a VCF keyed against one resolves cleanly to a project bundle keyed against the other. See also: VCF, reference bundle.
@@ -43,6 +45,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Benchmark VCF**{#benchmark-vcf}. A variant call set produced independently of the reads under study and treated as an answer key, such as the Genome in a Bottle small-variant benchmark for HG002 that this manual compares its own calls against. See also: VCF, variant-caller.
 
 **Basecaller**{#basecaller}. The program that converts a sequencer's raw signal into base-called reads with quality scores; for Oxford Nanopore data, Guppy and Dorado are the two basecallers in current use, and the model used to call a run determines which Medaka model is appropriate downstream. See also: simplex read, duplex read.
+
+**bbduk**{#bbduk}. A read-filtering and trimming program from the BBTools suite that matches a supplied sequence against reads as k-mers, used in Lungfish Genome Explorer for read-level primer trimming with a literal primer sequence and for contaminant filtering. See also: k-mer, Hamming distance, primer trim.
 
 **BioSample**{#biosample}. An NCBI record describing one biological sample; Lungfish can export a BioSample submission TSV from a project's sample metadata. See also: sample metadata.
 
@@ -126,6 +130,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **FASTQ**{#fastq}. A plain-text format for sequencing reads, with each read taking exactly four lines: a `@`-prefixed header, the read sequence, a `+` separator, and a same-length quality string in the standard ASCII offset 33 encoding. The input format for every workflow that starts from raw sequencing data. See also: paired-end, Phred score.
 
+**fastp**{#fastp}. A fast read-preprocessing program that trims low-quality bases with a sliding window, detects and removes adapters, and trims a fixed number of bases from either read end, and that backs four of the six Trimming and Filtering operations in Lungfish Genome Explorer. See also: adapter, sliding-window trimming, Phred score.
+
 **FILTER (in a VCF)**{#filter}. The seventh standard VCF column, holding `PASS` where the row cleared every filter the caller applied, a semicolon-separated list of the named filter flags it failed, or a bare `.` where no filter was applied at all. Flag names are caller-specific and are declared in the file's own header, so LoFreq writes names such as `min_dp_10` and `sb_fdr` while iVar writes `ft` and `bq`. See also: VCF, INFO, FORMAT.
 
 **Filter profile**{#filter-profile}. A named set of smart-filter tokens applied together to a variant track, either one of the four built into Lungfish (Clinical, Research, QC, High Confidence) or a combination the user assembles and saves per bundle. See also: smart-filter token, VCF.
@@ -155,6 +161,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **GVCF (genomic VCF)**{#gvcf}. A VCF variant that records, at every position rather than only at variant sites, the confidence that the sample matches the reference, so per-sample GVCFs can later be combined and genotyped together; the form GATK HaplotypeCaller emits by default in Lungfish. See also: VCF, joint genotyping, GenomicsDB.
 
 ## H
+
+**Hamming distance**{#hamming-distance}. The number of positions at which two sequences of the same length differ, used by bbduk as the mismatch tolerance when deciding whether a stretch of a read matches a supplied primer or contaminant sequence. See also: bbduk, k-mer, primer trim.
 
 **Haplotype**{#haplotype}. A set of alleles across linked loci that tend to travel together; in Lungfish MHC genotyping these are the named M1 to M7 families spanning the MHC-A, MHC-E, MHC-B, MHC-DR, MHC-DQ, and MHC-DP loci. See also: allele, MHC.
 
@@ -187,6 +195,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## J
 
 **Joint genotyping**{#joint-genotyping}. The GATK step that calls genotypes across a whole cohort at once by combining per-sample GVCFs and running `GenotypeGVCFs`, rather than genotyping each sample in isolation; run in Lungfish through `lungfish gatk joint-genotype`. See also: GVCF, GenomicsDB.
+
+## K
+
+**k-mer**{#k-mer}. A substring of exactly k bases taken from a longer sequence, the unit several tools match on because comparing short fixed-length words is far faster than comparing whole sequences; bbduk spots a primer in a read by looking for the primer's k-mers. See also: bbduk, minimizer, Hamming distance.
 
 ## L
 

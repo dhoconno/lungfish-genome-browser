@@ -40,9 +40,9 @@ operations:
       - label: Output Strategy
         control: radio
         default: Per Input
-        allowed: Per Input, Grouped Result
-        effect: Chooses whether the run writes one QC summary next to each selected dataset or pools every selected dataset into one summary. Per Input keeps each library separate.
-        when_to_change: Switch to Grouped Result when the selected files are parts of one library and you want a single set of numbers.
+        allowed: Per Input only, because this operation is not in the configurable-output set and the picker shows no other choice
+        effect: Writes one QC summary next to each selected dataset. The operation never pools datasets, so the picker is fixed on Per Input.
+        when_to_change: rarely, since no other choice is offered
         cli_flag: null
     cli_only:
       - flag: --force
