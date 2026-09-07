@@ -24,6 +24,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Allele**{#allele}. One of the alternative sequences observed at a locus; in Lungfish MHC genotyping an allele is an individual MiSeq target identity, distinct from a named haplotype that spans several loci. See also: haplotype, MHC.
 
+**Allele depth**{#allele-depth}. The pair of read counts a caller writes in a VCF's per-sample `AD` field, giving the number of reads supporting the reference allele and the number supporting the alternate, so a value of `20,33` at a depth of 53 means a third more reads carried the change than carried the reference. Lungfish Genome Explorer derives a per-sample allele frequency from this pair whenever a filter asks for one, which is why a per-sample `AF` clause matches nothing on a caller that writes no `AD`. See also: allele frequency, depth, FORMAT.
+
 **Allele frequency**{#allele-frequency}. The proportion of sequencing reads at a position that carry the alternate base. A clinical isolate usually shows allele frequencies near 0 or 1; a mixed-population sample (for example, wastewater) shows a full spectrum.
 
 **Amplicon**{#amplicon}. A target region of a genome amplified by PCR, used as the unit of an amplicon-based sequencing protocol such as ARTIC or QIASeqDIRECT. A run produces many overlapping amplicons that together tile the region of interest.
@@ -103,6 +105,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Consensus FASTA**{#consensus-fasta}. The reference sequence with high-confidence sample variants applied in place; positions with insufficient evidence are masked as `N`. The format Pangolin and Nextclade expect for SARS-CoV-2 lineage assignment, and the format used for GISAID and NCBI surveillance submissions. See also: VCF, allele frequency.
 
 **Consensus sequence**{#consensus-sequence}. A single sequence built from a multiple sequence alignment by taking each column's most common residue, with columns whose rows disagree too weakly or are too heavily gapped written as a mask character instead of a base. See also: MSA, alignment column, conservation.
+
+**Consequence**{#consequence}. The predicted effect of one variant on the protein a gene encodes, written as a controlled term such as `missense_variant` for a change that swaps one amino acid or `synonymous_variant` for one that leaves the protein unchanged. Lungfish Genome Explorer shows it in the Variants tab's own `Consequence` column and in the Inspector, and it appears only where an annotation supplies it, since no caller writes it on its own. See also: AA change, GFF, variant-caller.
 
 **Conservation**{#conservation}. At one alignment column, the share of the non-gap rows that carry that column's most common residue, so a column where every row agrees scores 1 and a column split evenly between two residues scores 0.5. See also: alignment column, MSA.
 
@@ -252,7 +256,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **LoFreq**{#lofreq}. A variant caller that builds an error model from the base and mapping qualities of the reads and reports a position when the alternate reads are more numerous than that error model alone would produce, which lets it find variants present in a small fraction of the reads without assuming any fixed number of genome copies. Its default output carries no genotype or sample column and reports no indels unless indel calling is switched on. See also: variant-caller, allele frequency, INFO.
 
-**Lineage**{#lineage}. A named subgroup within a viral species, defined by a characteristic set of variants and assigned by a domain-specific tool (Pangolin for SARS-CoV-2, Nextclade for many viruses). Lungfish does not assign lineages itself; it produces consensus FASTAs that downstream tools call lineages from. See also: consensus FASTA.
+**Lineage**{#lineage}. A named subgroup within a viral species, defined by a characteristic set of variants and assigned by a domain-specific tool (Pangolin for SARS-CoV-2, Nextclade for many viruses). LGE assigns lineages only through the Viral Recon pipeline, which runs Pangolin and Nextclade on the consensus it builds. Its other consensus paths produce FASTAs that downstream tools call lineages from. See also: consensus FASTA.
 
 ## M
 
@@ -482,6 +486,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Tabix**{#tabix}. A position-aware index for a bgzipped tab-delimited genomic file (typically `.vcf.gz` or `.bed.gz`), conventionally named with a `.tbi` suffix and kept beside the data file, that lets viewers and callers fetch records for a region without scanning the whole file. See also: VCF.
 
+**Table drawer**{#table-drawer}. The panel that slides up from the bottom edge of a reference bundle viewport carrying one tab per kind of table, Annotations, Variants, and Samples, which opens by itself whenever the loaded bundle holds an annotation or variant track. It starts 250 points tall, resizes by dragging its top edge, and remembers the height you set. See also: reference bundle, variant track, sequence viewport.
+
 **Target enrichment**{#target-enrichment}. A library preparation that pulls chosen regions out of a randomly sheared sample using complementary probes, so reads concentrate on the targets without carrying primer sequence at their ends and without needing a primer trim. See also: library prep, amplicon, shotgun.
 
 **Tiling**{#tiling}. An amplicon design in which many primer pairs produce overlapping amplicons laid end to end, so that together they cover a whole region of interest rather than one locus. See also: amplicon, primer scheme.
@@ -501,6 +507,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## V
 
 **Variant-caller**{#variant-caller}. The program that compares aligned reads to a reference and emits a VCF describing positions where the sample differs. Lungfish offers five viral callers (LoFreq for short-read viral data, iVar for primer-trimmed amplicon data, Medaka and Clair3 for Oxford Nanopore data, and bcftools as a general cross-check) plus two GATK germline options for human work. See also: pileup, VCF.
+
+**Variant track**{#variant-track}. One named set of variant calls stored inside a reference bundle, written as a bgzip-compressed VCF with a tabix index and a SQLite copy of the same rows that the Variants tab queries when you sort or filter. A bundle can hold several, and when it does they all load into the one table at once with the Source column naming which track each row came from. See also: reference bundle, table drawer, VCF.
 
 **VCF (Variant Call Format)**{#vcf}. A tab-separated file format that lists positions in a reference genome where a sample differs, with per-call confidence and metadata. See also: REF, ALT, genotype, allele frequency.
 
