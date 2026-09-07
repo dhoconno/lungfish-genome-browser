@@ -143,8 +143,15 @@ Fixture tiers in `docs/user-manual/fixtures/README.md` flip to:
    mitochondrial genome and its reads for a compact assembly example. A
    human gene GenBank record with annotations for the sequence chapters.
 2. **Rhesus macaque.** Mmul_10 slices where a macaque reference is needed.
-   For genotyping, a public MHC amplicon run from the lab's own SRA
-   submissions, to be identified in Stage 1 with the user's help.
+   For genotyping, the lab's own MiSeq amplicon project
+   `32566_MS267_Williams1.lungfish` (30 samples, IPD-MHC Mamu 2021-07-09
+   reference bundle, seven genotype result bundles, 475 MB). It exceeds the
+   fixture caps, so it is a documented external demo asset, not a
+   committed fixture. Known limitation, stated by the user: it is rhesus
+   MiSeq data and does not exercise the MCM (Mauritian cynomolgus macaque)
+   haplotyping features. Those chapters describe the haplotyping controls
+   against this dataset where they apply and say plainly what an MCM
+   dataset would add.
 3. **Primate comparative.** Mitochondrial genomes of human, chimpanzee,
    gorilla, rhesus, and cynomolgus macaque from NCBI, for multiple
    sequence alignment and tree chapters.
@@ -329,7 +336,12 @@ where stale.
 
 ## Open items for the user
 
-1. Name a public SRA accession from the lab's macaque MHC amplicon
-   submissions for the genotyping fixture.
-2. Confirm Docker Desktop and the Kraken 2 Viral database are available on
-   the capture machine for the demo project build.
+1. Resolved 2026-09-06: the genotyping demo data is
+   `/Users/dho/Downloads/32566_MS267_Williams1.lungfish`.
+2. Resolved 2026-09-06: Docker Desktop and Kraken 2 with databases are on
+   the capture machine.
+3. The Williams project's sample names and barcode sheet may carry animal
+   identifiers. Confirm they may appear in published screenshots, or name
+   the samples to use.
+4. If an MCM haplotyping dataset becomes available, the genotyping
+   chapters can be extended to showcase that feature.
