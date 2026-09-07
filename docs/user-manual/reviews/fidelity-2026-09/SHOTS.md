@@ -264,7 +264,7 @@ Read the Docs renders the Material theme's content column at about 800 CSS pixel
 
 ## check-shots output
 
-Produced by `node docs/user-manual/build/scripts/campaign/check-shots.mjs docs/user-manual` after the background capture pass (2026-09-07).
+Produced by `node docs/user-manual/build/scripts/campaign/check-shots.mjs docs/user-manual` (refresh with `build/scripts/campaign/refresh-shots-manifest.py`).
 
 ```
 missing png 01-foundations/primer-scheme-picker-built-in
@@ -432,4 +432,4 @@ missing recipe appendices/operations-panel-failed-row
 
 ## Counts
 
-Total markers 207, captured 127, new 76, stale 4, existing 0, orphans reported by the checker 0. The rows still open need the full-screen pass, a fixture the demo project lacks, a finished run, or another application; the per-part capture reports under `captures/` name each one.
+Total markers 207, captured 127, new 76, stale 4, existing 0. Rows still open are listed by blocker in `captures/README.md` and worked through `COMPLETION-SPEC.md`.

@@ -1,5 +1,7 @@
 # Background capture pass (2026-09-07)
 
+The work plan for the 80 open rows is `../COMPLETION-SPEC.md`.
+
 The Foundations, Sequences, Reads, Alignments, Variants, Classification, Human Germline, Assembly, Workflows, Genotyping and Appendices parts were captured by sonnet agents driving Lungfish Preview 2026.9.13 through the background computer-use tools, with Fable reviewing every PNG and recapturing where a crop or a state was wrong. Every capture has a recipe under `assets/recipes/<part>/` and every part has a report in this folder.
 
 ## Counts
