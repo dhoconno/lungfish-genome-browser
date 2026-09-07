@@ -104,6 +104,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Coverage**{#coverage}. The number of reads that align across a given reference position; used interchangeably with depth in this manual. See also: pileup.
 
+**Coverage breadth**{#coverage-breadth}. The fraction of reference positions covered by at least one read, reported per contig in a mapping run's `mapping-result.json` and distinct from depth, which counts how many reads sit over a position rather than whether any do. See also: coverage, mapping.
+
 **CSI (coordinate-sorted index)**{#csi}. The alternative BAM index format for a reference sequence longer than the 512-megabase limit a BAI index can address, serving the same purpose of letting a viewer jump straight to a chosen position. Lungfish Genome Explorer writes BAI for the BAMs it produces and reads a CSI that arrives beside an imported BAM. See also: BAI, BAM.
 
 **Ct (cycle threshold)**{#ct}. The qPCR cycle number at which a sample's amplification signal crosses the detection threshold; a lower Ct means more starting template, so for a viral diagnostic a low Ct predicts a higher viral fraction in the sequencing reads and a smaller host-removal rate.
@@ -149,6 +151,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **FLAG (in a BAM)**{#flag}. A bitwise integer field in each BAM row encoding facts about the read in twelve canonical bits: paired, properly paired, unmapped, mate unmapped, reverse strand, mate reverse strand, first of pair, second of pair, secondary alignment, low quality, duplicate, supplementary alignment. The decoded value `99` is the sum of bits 1+2+32+64. See also: BAM, supplementary alignment.
 
 **FORMAT (in a VCF)**{#format}. The ninth VCF column, declaring a colon-separated list of keys that describe the per-sample payload columns following it, such as the `GT:PL:AD` that bcftools writes. The column is optional, and LoFreq output has no FORMAT and no sample column at all. See also: VCF, INFO.
+
+**Flagstat**{#flagstat}. The per-category tally `samtools flagstat` produces by decoding the FLAG field of every record in a BAM, giving counts for total, primary, secondary, supplementary, mapped, properly paired, and singleton records, and shown in the alignment Inspector as a collapsed Flag Stats list. See also: FLAG, BAM, primary alignment.
 
 **Fluidigm sample barcode**{#fluidigm-sample-barcode}. The sample-identifying sequence carried between the fixed CS1 and CS2 primer sequences in a library built with Fluidigm Access Array primers, which Lungfish Genome Explorer reads to split one bulk Oxford Nanopore bundle into per-sample bundles of the insert lying between those two primers. See also: barcode, demultiplex, amplicon.
 
@@ -312,6 +316,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Post-install hook**{#post-install-hook}. A follow-up command a plugin pack declares for itself and Lungfish runs after the pack's tools are installed, such as downloading the lineage data a surveillance tool needs, with the count of hooks shown on the pack's card in the Plugin Manager. See also: plugin pack.
 
+**Primary alignment**{#primary-alignment}. The one record a mapper designates as a read's real placement, so counting primary alignments counts reads rather than records and gives a total that matches the input FASTQ even when the mapper also emitted secondary or supplementary rows for the same reads. See also: secondary alignment, supplementary alignment, flagstat.
+
 **Primer**{#primer}. A short oligonucleotide, typically 18 to 30 bases, that binds a specific position on a target genome and primes DNA synthesis from that position; the building block of every amplicon protocol. See also: amplicon, primer scheme.
 
 **Primer scheme**{#primer-scheme}. The set of primer coordinate pairs that define an amplicon protocol, listing where each forward and reverse primer binds on the reference. In Lungfish, a primer scheme is packaged as a `.lungfishprimers` bundle that carries the BED coordinates, the primer sequences in FASTA, and provenance.
@@ -321,6 +327,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Project**{#project}. A `.lungfish` directory bundle that holds every input, output, bundle, and provenance record for one Lungfish analysis, with a top-level layout of `Imports/`, `Downloads/`, `Reference Sequences/`, `Primer Schemes/`, `Extractions/`, `Haplotype Definitions/`, and `Analyses/`, plus a hidden `.project.db` catalog and a `metadata.json`. Only the app creates the project store, so a folder built by `lungfish-cli` alone opens read only. See also: bundle, sidebar, project lock.
 
 **Project lock**{#project-lock}. The record Lungfish writes inside a project bundle naming the user, host, process, app version, and time of whoever currently holds it, so the app and the CLI can coordinate access to a project on shared storage. A lock left behind by a crashed process is called stale and is cleared through an explicit recovery that archives the old record. See also: project.
+
+**Properly paired**{#properly-paired}. The state of a paired-end read whose mate was placed on the same reference sequence at the separation and orientation the library preparation implies, marked by FLAG bit 2 and counted as its own row in a flagstat report, so a fraction well below the mapped fraction points at a library or reference problem rather than at poor sequencing. See also: FLAG, paired-end, flagstat.
 
 **Provenance**{#provenance}. The record Lungfish keeps alongside every download and every operation describing where a file came from or how it was produced, including source URL or accession, exact tool version, full command line, input checksums, and output checksums. See also: Operations Panel.
 
@@ -340,9 +348,13 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Read clumping**{#read-clumping}. The reordering of a read file so that reads sharing sequence content sit next to each other, which lets a general-purpose compressor find far more repetition and shrink the stored file; Lungfish applies it at import as the "Optimize storage" option, using BBTools clumpify or Trim Galore, and the reordering means the stored bundle no longer matches the source file's read order. See also: FASTQ.
 
+**Read group**{#read-group}. A labelled block written into a BAM header as an `@RG` line, naming the identifier, sample, library, sequencing platform, and platform unit a set of reads came from, which Lungfish Genome Explorer fills in for every mapping run so that tools grouping reads by sample, such as joint variant callers, can do so. See also: BAM, mapping.
+
 **Read length**{#read-length}. The number of bases in a sequencing read; Illumina reads are typically 75-300 bp (fixed per run), Oxford Nanopore reads range from 1 kb to 100 kb (variable per run with mean 5-15 kb), PacBio HiFi reads are 10-25 kb. See also: FASTQ.
 
 **Read identifier**{#read-identifier}. The name a sequencer gives one read, written on the FASTQ record's first line after the `@` character and running up to the first space, which for an Illumina run encodes the instrument, run, flowcell, lane, tile, and position of the cluster that produced it. See also: FASTQ, read length.
+
+**Read merging**{#read-merging}. Joining the two mates of a paired-end read into one longer sequence, possible only when the DNA fragment was shorter than the two reads combined so that the mates overlap in the middle, where the doubly measured bases also let the merger correct disagreements between the two reads. See also: paired-end, insert size, interleaved FASTQ.
 
 **Reading frame**{#reading-frame}. One of the three ways to divide a nucleotide sequence into codons on a given strand, selected when translating a sequence to protein. See also: genetic code, codon.
 
@@ -384,6 +396,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **seqkit**{#seqkit}. A general-purpose toolkit for FASTA and FASTQ manipulation, used in Lungfish Genome Explorer for the read-length filter and for several sequence statistics. See also: FASTQ, read length.
 
+**Secondary alignment**{#secondary-alignment}. An extra record reporting another place a read could plausibly have come from, marked by FLAG bit 256 and produced in quantity by repeated regions, which Lungfish Genome Explorer excludes from a mapping run's BAM by default because the duplicate rows inflate read counts. See also: FLAG, primary alignment, supplementary alignment.
+
 **Sequence motif**{#sequence-motif}. A short run of bases whose presence in a read is the thing being looked for, such as a primer footprint, a restriction site, or a repeat, matched against the read's sequence rather than against its name. See also: read identifier, regular expression, Alu element.
 
 **Sequence viewport**{#sequence-viewport}. The centre pane of a Lungfish project window when a reference bundle is open, drawing one sequence along a horizontal axis as three stacked lanes rather than three separate panes, with the numbered position ruler on top, the bases in the middle, and the annotation features as coloured blocks below. See also: reference bundle, annotation track, Inspector.
@@ -399,6 +413,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Simplex read**{#simplex-read}. An Oxford Nanopore read produced by basecalling one strand of a DNA molecule passing through a pore once; modern R10.4.1 simplex with super-accuracy basecallers achieves Q20+ per-base quality. See also: duplex read, basecaller.
 
 **Single-end**{#single-end}. A sequencing protocol that reads each DNA fragment from one end only, producing one FASTQ file per sample; common for Oxford Nanopore and for some Illumina shotgun protocols. See also: FASTQ, paired-end.
+
+**Singleton read**{#singleton-read}. A read from a paired-end run whose mate is no longer present in the file, usually because an upstream filtering step discarded one member of the pair, and which a repair operation sets aside as unpaired rather than discarding. See also: paired-end, interleaved FASTQ.
 
 **Sliding-window trimming**{#sliding-window-trimming}. A quality-trimming method that averages the quality scores of a small run of neighbouring bases and cuts the read where that average first falls below a threshold, so a single miscalled base does not truncate an otherwise good read. See also: fastp, Phred score.
 

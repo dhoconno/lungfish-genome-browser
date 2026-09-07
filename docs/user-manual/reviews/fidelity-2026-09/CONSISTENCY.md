@@ -63,7 +63,12 @@ Alignments/` as `.lungfishmsa` bundles (verified by a CLI run on
 2026-09-06). Tree bundles are different. The app writes a `.lungfishtree`
 built in the window, and an imported tree, to a top-level `Phylogenetic
 Trees/` folder (`ViewerViewController.swift:2156`, `ImportMSATreeSubcommands.swift:147`),
-while the CLI's `tree infer --output` writes wherever you point it. There
+while the CLI's `tree infer --output` writes wherever you point it. An
+imported ONT run folder is different again. Its bundle lands at the
+project root, not under `Imports/`, with a run-named sibling folder at the
+root only when a previous ONT output already sits there
+(`ONTImportOperationCoordinator.resolvedOutputDirectory`, settled
+2026-09-07 at the chapter 20 review). There
 is no `Assemblies/` folder. Bundle extensions are written in code font:
 `.lungfishref`, `.lungfishfastq`, `.lungfishmsa`, `.lungfishtree`,
 `.lungfishgenotype`, `.lungfishprimers`.
