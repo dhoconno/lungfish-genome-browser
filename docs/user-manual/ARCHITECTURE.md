@@ -15,6 +15,15 @@ revision of `ARCHITECTURE.md` plans the full manual, names every chapter we
 intend to ship, and records the prerequisite graph so chapter authors know
 what readers already know when they arrive.
 
+## Status (2026-09-06)
+
+The 2026-09 fidelity and accessibility campaign rewrites every chapter to
+the template in `STYLE.md` against the 2026.9.13 Preview build, adds
+`parameters.yaml`, flips fixtures to human and macaque data, and
+recaptures screenshots. Editorial rule 5 (screenshots at gate 2) is in force
+again. The audience for every chapter is now the undergraduate reader
+described in `STYLE.md`. The three tiers below remain as labels.
+
 ## Audience tiers
 
 Three tiers are declared per chapter:

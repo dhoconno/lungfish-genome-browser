@@ -5,29 +5,37 @@ Derived from `lungfish_brand_style_guide.md` (memory). The linter in
 
 ## Prose rules
 
-Two hard rules apply to every chapter and every agent-facing doc under
-`docs/user-manual/` and `agents/definitions/claude/`.
+Five hard rules apply to every chapter and every agent-facing doc under
+`docs/user-manual/` and `.claude/agents/`.
 
-First: **no em dashes.** Never write `—` in chapter or doc prose. Use a period
-and start a new sentence. When the em dash introduced a list or a noun-phrase
-elaboration, a colon is usually right. Hyphens inside compound adjectives
-(`read-only`, `five-color`) are fine.
+First, **no em dashes.** Use a period and start a new sentence.
 
-Second: **bullet lists are capped.** At most five items per list, at most two
-lists per H2 section. Longer enumerations become prose or a Markdown table. If
-a genuine five-item enumeration is genuinely parallel, it may stay as a list;
-if it exceeds five, restructure.
+Second, **no semicolons.** Split the sentence.
 
-Lint: `em-dash.js` (error), `bullet-cap.js` (warning, so genuine exceptions
-can ship with a review note).
+Third, **no colons inside a sentence.** A colon may end a short lead-in line
+that is immediately followed by a list, a table, or a fenced code block, and
+nowhere else. Do not use a colon where an em dash used to be.
+
+Fourth, **no overused words or patterns.** The banned list lives in
+`build/scripts/lint/rules/ai-tells-words.txt`, every inflection included.
+Sentence shapes such as "It's not X, it's Y" and "No X. No Y. Just Z" are
+banned too. A control whose label happens to be on the list is written in
+straight double quotes, which the linter exempts.
+
+Fifth, **bullet lists are capped.** At most five items per list, at most
+two lists per H2 section. Longer enumerations become prose or a table.
+
+Lint: `em-dash.js` (error), `semicolon.js`, `sentence-colon.js`,
+`ai-tells.js`, `bullet-cap.js`.
 
 ## Written identity
 
-The product is **Lungfish** in title case, one word. Never `LUNGFISH`,
-`LungFish`, `Lung Fish`, or lowercase `lungfish`. Kit names are **Lungfish Air Kit** and
-**Lungfish Wastewater Kit**. The device is the **InBio Apollo Sampler**. The
-consumable is the **Cassette**: capitalised site-facing, lowercase in prose.
-Lint: `written-identity.js`.
+The app is **"Lungfish Genome Explorer"**. Spell it out at first mention in
+every chapter body, then write **LGE**. **"Lungfish"** alone names the research
+collaborative (the **Lungfish Research Collaboratory**), never the app. The
+installed preview build is "Lungfish Preview.app" and may be named that way
+inside quotes or code. Never `LUNGFISH`, `LungFish`, `Lung Fish`, or lowercase
+`lungfish` in prose. Lint: `app-name.js`.
 
 ## Palette
 
@@ -81,6 +89,44 @@ the body has a matching entry in the frontmatter `shots[]` list and vice
 versa. Every `prereqs[]`, `glossary_refs[]`, `fixtures_refs[]`, and
 `features_refs[]` entry resolves to an existing target. Lint:
 `frontmatter.js`, `primer-before-procedure.js`.
+
+## Chapter template (2026-09 campaign)
+
+Chapters follow this order. Concept-only chapters use the first two sections
+and whatever else applies.
+
+1. `## What it is`. The concept in two to four short paragraphs. Every
+   term is glossed the first time it appears in the chapter. The reader is
+   an undergraduate who has taken genetics and never opened a terminal.
+2. `## Why you would do this`. The biological motivation, tied to the
+   chapter's fixture.
+3. `## Before you start`. What must already be in the project, which tool
+   pack, whether Docker Desktop is needed, how long the example takes.
+4. `## Procedure`. Numbered steps, exact menu path, one action per step,
+   a `<!-- SHOT: id -->` marker wherever the reader needs to see the screen.
+5. `## Settings`. One paragraph per setting, in the fixed shape below,
+   covering every setting `parameters.yaml` lists for the chapter's
+   `parameters_refs`.
+6. `## Reading the results`. What appears in the viewport and the
+   Inspector, what each number means, worked against the fixture.
+7. `## What good looks like`. The checks to apply before trusting the
+   result.
+8. `## On the command line`. One shell block that reproduces the
+   procedure.
+
+Each Settings entry is one paragraph that begins with the control's label
+in bold with a period inside the bold, then three sentences in this order,
+what it does, what the default is and why, when to change it.
+
+    **Minimum read length.** Discards reads shorter than this after
+    trimming. The default is 50 bases, long enough to map uniquely on most
+    genomes. Lower it for very short amplicons, raise it when adapters
+    leave many short fragments.
+
+Explanations use the same sentence shapes across chapters. Introduce a
+number with what it measures ("Depth is the number of reads covering a
+position"), then what a typical value looks like on the fixture, then what
+a bad value looks like.
 
 ## Fixture references
 
