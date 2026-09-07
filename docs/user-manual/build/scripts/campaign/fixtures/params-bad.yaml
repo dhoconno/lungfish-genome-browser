@@ -1,0 +1,23 @@
+version: 0
+operations:
+  test.trim:
+    title: Trim reads
+    entry_points: ["Tools > Trimming > Trim"]
+    gating: []
+    sources: []
+    settings:
+      - label: Minimum length
+        control: dial
+        default: 50
+        allowed: "1 to 10000"
+        effect: Drops reads shorter than this after trimming.
+        when_to_change: rarely
+        cli_flag: --min-length
+      - label: Quality cutoff
+        control: number
+        default: 20
+        allowed: "0 to 60"
+        when_to_change: rarely
+        cli_flag: --quality
+    cli_only: []
+    notes: test only

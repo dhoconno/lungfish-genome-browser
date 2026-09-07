@@ -54,3 +54,41 @@ literal command name inside a sentence). The remaining hits are ordinary
 prose words (`stalled`, `diverged`, `dive`, `critical`, `nail`, `cadence`,
 `tackles`, `enhanced`, `uncovered`) that a chapter rewrite pass can
 address case by case.
+
+## Checker baseline (before rewrite)
+
+Measured 2026-09-06 with the Task 1.6 campaign checkers
+(`docs/user-manual/build/scripts/campaign/`):
+
+```
+$ node docs/user-manual/build/scripts/campaign/check-links.mjs docs/user-manual | tail -1
+11 broken link(s)
+$ node docs/user-manual/build/scripts/campaign/check-shots.mjs docs/user-manual | tail -1
+44 shot problem(s)
+$ node docs/user-manual/build/scripts/campaign/validate-parameters.mjs docs/user-manual/parameters.yaml
+parameters ok
+```
+
+Broken links (11): 10 are anchor-only links into `appendices/*.md` files
+(`tool-versions.md#appendix-tool-versions`, `bibliography.md#appendix-bibliography`,
+`primer-schemes.md#appendix-primer-schemes`) plus one `GLOSSARY.md#amplicon`
+anchor from `ARCHITECTURE.md`, and one non-relative asset link
+(`index.md:12` to `pdf/lungfish-user-manual.pdf`) that the checker correctly
+flags because the PDF export does not exist yet. These are pre-existing gaps
+for the rewrite phase to close, not checker bugs.
+
+Shot problems (44 = 22 missing png + 22 missing recipe): every `<!-- SHOT -->`
+marker in `01-foundations`, `02-sequences`, and `05-variants` chapters
+currently has neither a screenshot nor a recipe on disk — screenshot capture
+is later campaign work (see `screenshot-scout`). Additionally 5 orphan
+recipes are reported as warnings under the old chapter-numbered asset
+directory `assets/recipes/04-variants/` (`primer-trim-dialog.yaml`,
+`variant-call-dialog.yaml`, `variant-table-fresh-call.yaml`,
+`vcf-open-dialog.yaml`, `vcf-variant-table.yaml`) — these predate the
+chapter renumbering to `05-variants` and are cleaned up in a later phase;
+no orphan PNGs were found.
+
+`validate-parameters.mjs` passes cleanly because `parameters.yaml` is still
+the Task 1.5 skeleton (`operations: {}`); the registry has no entries yet
+for the checker to validate, so `parameters ok` here is a baseline of zero
+content rather than zero problems.
