@@ -27,8 +27,10 @@ title of the dialog window, never a menu.
 The Import Center is **File > Import Center...**, a tabbed grid of cards,
 each card a drop target. The Inspector's Analysis section is a grid of six
 tabs (Filtering, Annotations, Consensus, Primer Trim, Variant Calling,
-Export). Write "the Inspector's Consensus tab", not "Inspector > Analysis >
-Consensus". The Operations panel opens with **Operations > Show Operations
+Export). In body prose write "the Inspector's Consensus tab", not "Inspector
+> Analysis > Consensus". The path form stays in front-matter `entry_points`
+and in the registry, which are metadata rather than prose (ruled 2026-09-07
+at the chapter 30 review). The Operations panel opens with **Operations > Show Operations
 Panel** (Cmd-Shift-P). The Plugin Manager opens with **Tools > Plugin
 Manager...** (Cmd-Shift-B).
 
@@ -151,7 +153,11 @@ A variant track lives under the reference bundle's `variants/` folder as
 `<name>.vcf.gz` with a `.vcf.gz.tbi` index and a `.db` SQLite sidecar that
 the Variants tab uses for fast filtering
 (`BundleVariantTrackAttachmentService.swift:71-74`). There is no BCF and no
-CSI index, whatever the drift report's row 3 for chapter 5 said. The filter
+CSI index on that path, whatever the drift report's row 3 for chapter 5
+said. One exception, found at the chapter 28 review on 2026-09-07:
+`lungfish-cli bundle create --variant` writes `.bcf` plus `.csi`, so a
+track made that way is stored differently from one attached by `variants
+call` or the Call Variants dialog. The filter
 chips sit behind a **Presets** disclosure button above the Variants table.
 
 ## Paired-end storage (settled by a live import on 2026-09-06)

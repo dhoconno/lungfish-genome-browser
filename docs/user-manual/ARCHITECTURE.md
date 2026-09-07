@@ -295,10 +295,9 @@ foundation prereqs in frontmatter.
   column; per-variant Inspector detail.
   Prereqs: F05, V01. Audience: bench-scientist.
 
-- **05-variants/03-cross-caller-comparison** — running iVar and LoFreq on
-  the same sample; reading the disagreement; when each caller is right;
-  the codon-merge teaching moment lands here in detail.
-  Prereqs: V01, V02. Audience: analyst.
+- 05-variants/03-cross-caller-comparison was retired in the 2026-09 fidelity
+  campaign (no feature behind it). Its comparison paragraph lives in
+  05-variants/02-reading-the-variant-browser.
 
 - **05-variants/04-nanopore-variant-calling** — Medaka against ONT amplicon
   data; what differs from short-read calling; model selection.

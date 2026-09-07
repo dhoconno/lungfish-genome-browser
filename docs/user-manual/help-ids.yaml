@@ -306,9 +306,15 @@ viewport.AlignmentViewer:
 
 viewport.VariantBrowser:
   chapter: 05-variants/02-reading-the-variant-browser
-  anchor: procedure
+  anchor: step-2-read-the-columns
   scope: viewport
-  description: Variant browser with genome track, reference panel, and sortable variant table.
+  description: Variants tab of the table drawer, with the twelve fixed columns and the promoted INFO columns.
+
+viewport.VariantFilterTable:
+  chapter: 05-variants/02-reading-the-variant-browser
+  anchor: step-4-filter-with-the-preset-chips
+  scope: viewport
+  description: Preset filter chips and the Search Builder above the Variants tab.
 
 viewport.AssemblyViewer:
   chapter: 07-assembly/02-running-spades
@@ -416,9 +422,9 @@ inspector.AlignmentTrackStats:
 
 inspector.VariantSection:
   chapter: 05-variants/02-reading-the-variant-browser
-  anchor: step-3-read-a-row-in-the-inspector
+  anchor: step-3-select-a-row-and-read-the-inspector
   scope: inspector
-  description: Inspector > Variant section for per-variant INFO and FORMAT detail.
+  description: Inspector > Variant section listing the identity, quality and filter, a genotype summary, and every INFO field of the selected row.
 
 # === Menu items (Tools menu and friends) ===
 

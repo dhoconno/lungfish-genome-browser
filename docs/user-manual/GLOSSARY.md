@@ -128,6 +128,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **cutadapt**{#cutadapt}. A program that finds a short known sequence inside a read and either trims it away or uses it to sort the read, tolerating a set fraction of mismatched bases so it still matches when the sequencing was imperfect, and the default engine behind demultiplexing in Lungfish Genome Explorer. See also: barcode, demultiplex, adapter.
 
+**CZ-ID**{#cz-id}. A hosted metagenomics service used through a web browser, whose exported taxon report Lungfish Genome Explorer imports as a taxonomy result and stores as a `.lungfishtax` bundle under the project's `Classifications/` folder, since LGE reads a CZ-ID result but never runs one. See also: read classification, Import Center, taxon.
+
 ## D
 
 **Deacon**{#deacon}. A host-depletion program that matches a read's minimizers against a prebuilt index and drops the read when enough of them hit, used in Lungfish Genome Explorer for both human read removal and ribosomal RNA removal. See also: host depletion, minimizer, ribosomal RNA.
@@ -151,6 +153,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Edit distance**{#edit-distance}. The number of single-base substitutions, insertions, and deletions separating an aligned read from the reference stretch it sits on, written into the read's optional `NM` tag by the mapper, so a read with `NM` of 0 matches the reference perfectly and is what the zero-mismatch alignment filter keeps. See also: BAM, percent identity, alignment.
 
 **ENA (European Nucleotide Archive)**{#ena}. The European mirror of the SRA, hosted at EMBL-EBI; one of three INSDC partners (with NCBI SRA and DDBJ) that share deposited sequencing data. Lungfish downloads SRA runs from ENA first because ENA serves pre-converted FASTQs directly, and falls back to the NCBI SRA Toolkit when ENA is unavailable. See also: SRA.
+
+**EsViritu**{#esviritu}. A read classifier built around a curated collection of viral genomes, which reports not only how many reads matched each virus but how much of that virus's genome those reads covered, shipped in Lungfish Genome Explorer's `metagenomics` plugin pack and run from **Tools > Classification > EsViritu...**. See also: read classification, coverage breadth, plugin pack.
 
 **Exon**{#exon}. One of the stretches of a gene that survives splicing and contributes to the mature transcript, so a protein-coding sequence split across three exons is written in a GenBank record as a `join()` of three ranges. See also: CDS, GFF.
 
@@ -238,6 +242,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **IQ-TREE**{#iqtree}. A maximum-likelihood phylogenetic inference program with a built-in ModelFinder step and ultrafast bootstrap support estimation, used by Lungfish to produce `.lungfishtree` bundles from MSA bundles. See also: MSA, phylogram, support value.
 
+**IUPAC ambiguity code**{#iupac-ambiguity-code}. A single letter standing for two or more possible bases at one position, defined by the International Union of Pure and Applied Chemistry so that uncertainty can be written inside a sequence rather than alongside it; `R` means A or G, `Y` means C or T, `M` means A or C, `K` means G or T, `S` means C or G, `W` means A or T, and `N` means any base at all. See also: consensus sequence, consensus FASTA, pileup.
+
 **iVar**{#ivar}. A toolkit written for amplicon sequencing data that soft-clips primer bases out of an aligned BAM using a primer scheme's BED coordinates and can then call variants from the trimmed result, shipped inside Lungfish Genome Explorer's Variant Calling pack. See also: primer trim, primer scheme, soft-clip, variant-caller.
 
 ## J
@@ -247,6 +253,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## K
 
 **k-mer**{#k-mer}. A substring of exactly k bases taken from a longer sequence, the unit several tools match on because comparing short fixed-length words is far faster than comparing whole sequences. bbduk spots a primer in a read by looking for the primer's k-mers. See also: bbduk, minimizer, Hamming distance.
+
+**Kraken 2**{#kraken2}. A read classifier that assigns each read to a taxon by matching the read's minimizers against a database of reference genomes, chosen for breadth rather than depth and run in Lungfish Genome Explorer from **Tools > Classification > Kraken2...**, usually with Bracken estimating abundances from its assignments afterwards. See also: read classification, minimizer, lowest common ancestor, taxon.
 
 ## L
 
@@ -261,6 +269,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **LoFreq**{#lofreq}. A variant caller that builds an error model from the base and mapping qualities of the reads and reports a position when the alternate reads are more numerous than that error model alone would produce, which lets it find variants present in a small fraction of the reads without assuming any fixed number of genome copies. Its default output carries no genotype or sample column and reports no indels unless indel calling is switched on. See also: variant-caller, allele frequency, INFO.
 
 **Lineage**{#lineage}. A named subgroup within a viral species, defined by a characteristic set of variants and assigned by a domain-specific tool (Pangolin for SARS-CoV-2, Nextclade for many viruses). LGE assigns lineages only through the Viral Recon pipeline, which runs Pangolin and Nextclade on the consensus it builds. Its other consensus paths produce FASTAs that downstream tools call lineages from. See also: consensus FASTA.
+
+**Lowest common ancestor**{#lowest-common-ancestor}. The most specific taxon that every organism matching a read belongs to, which a classifier reports instead of guessing when a read's sequence fits several relatives equally well, so a read shared across a whole genus is labelled with the genus rather than with one of its species. See also: taxon, taxonomic rank, read classification.
 
 ## M
 
@@ -285,6 +295,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Medaka**{#medaka}. Oxford Nanopore's own variant caller and consensus tool, which scores reads against a neural-network model named for the pore chemistry and basecaller version that produced them, run in Lungfish Genome Explorer from the Call Variants dialog against a FASTQ rebuilt from the chosen alignment rather than against the BAM. See also: Clair3, basecaller, variant-caller.
 
 **Metabarcoding**{#metabarcoding}. Identifying which species are present in a mixed sample by matching a short marker amplicon (such as 12S) against a reference of known sequences. See also: 12S.
+
+**Metagenomics**{#metagenomics}. The study of all the nucleic acid present in a mixed sample at once, rather than of one cultured organism, which is the setting read classification was built for and the reason its tools ask for large reference databases and a great deal of memory. See also: read classification, metabarcoding, shotgun.
 
 **Methods export**{#methods-export}. The Lungfish provenance export that emits a plain-prose Markdown paragraph naming each tool and its resolved version in the order the workflow ran them, suitable for pasting into a paper's methods section. See also: provenance sidecar.
 
@@ -392,6 +404,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Read**{#read}. One fragment of DNA reported by a sequencing instrument, stored as a string of bases beside an equal-length string of per-base quality scores, and written as one four-line record in a FASTQ file. See also: FASTQ, read length, Phred score.
 
+**Read classification**{#read-classification}. Assigning each read in a sequencing run to the organism it most likely came from, by comparing the read against a reference database of known genomes, which turns a FASTQ into a census of the taxa present and the share of reads at each one. See also: taxon, taxonomic rank, lowest common ancestor, metagenomics.
+
 **Read clumping**{#read-clumping}. The reordering of a read file so that reads sharing sequence content sit next to each other, which lets a general-purpose compressor find far more repetition and shrink the stored file; Lungfish applies it at import as the "Optimize storage" option, using BBTools clumpify or Trim Galore, and the reordering means the stored bundle no longer matches the source file's read order. See also: FASTQ.
 
 **Read group**{#read-group}. A labelled block written into a BAM header as an `@RG` line, naming the identifier, sample, library, sequencing platform, and platform unit a set of reads came from, which Lungfish Genome Explorer fills in for every mapping run so that tools grouping reads by sample, such as joint variant callers, can do so. See also: BAM, mapping.
@@ -439,6 +453,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Sample metadata**{#sample-metadata}. Structured per-sample fields (collection date, source, and so on) imported from a CSV or TSV sheet and attached to samples in a project. See also: BioSample.
 
 **Sample sheet**{#sample-sheet}. A CSV listing one sequencing sample per row with the sample's name and the paths to its read files, used at import to pair reads and name bundles explicitly instead of matching mate suffixes in filenames; Lungfish requires the columns `sample`, `r1`, and `r2`, and carries any further columns through as per-sample metadata. See also: sample metadata, paired-end.
+
+**samtools**{#samtools}. The standard toolkit for reading and writing alignment files, whose subcommands index a BAM, count its records, build a pileup, and call a consensus from one, and which Lungfish Genome Explorer installs and runs for you behind the alignment surfaces rather than asking you to type it. See also: BAM, pileup, consensus sequence, mpileup.
 
 **savONT**{#savont}. A clustering option for full-length ONT MHC amplicons, an alternative to pbAA. See also: clustering, pbAA.
 
@@ -496,6 +512,12 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Target enrichment**{#target-enrichment}. A library preparation that pulls chosen regions out of a randomly sheared sample using complementary probes, so reads concentrate on the targets without carrying primer sequence at their ends and without needing a primer trim. See also: library prep, amplicon, shotgun.
 
+**Taxon**{#taxon}. Any named group on the tree of life, at any level of the naming hierarchy, so *Homo sapiens*, *Streptococcus*, and *Coronaviridae* are each one taxon, and a classifier's answer for a single read is the name of one of them. See also: taxonomic rank, lowest common ancestor, read classification.
+
+**Taxonomic rank**{#taxonomic-rank}. The level of the biological naming hierarchy a taxon belongs to, running from domain down through phylum, class, order, family, and genus to species, which is what a classifier's result table reports in its Rank column and what each ring of a sunburst chart stands for. See also: taxon, clade, read classification.
+
+**TaxTriage**{#taxtriage}. A pathogen-detection workflow run as a Nextflow pipeline inside a container, which classifies reads against an installed Kraken 2 database and scores each organism it reports for confidence, opened in Lungfish Genome Explorer from **Tools > Classification > TaxTriage...**. See also: read classification, Nextflow, container, Kraken 2.
+
 **Tiling**{#tiling}. An amplicon design in which many primer pairs produce overlapping amplicons laid end to end, so that together they cover a whole region of interest rather than one locus. See also: amplicon, primer scheme.
 
 **Tip**{#tip}. The end point of a branch on a phylogenetic tree, standing for one of the sequences that went in, so five aligned sequences give five tips and a missing tip means an input was dropped. See also: internal node, clade, topology.
@@ -513,6 +535,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## V
 
 **Variant-caller**{#variant-caller}. The program that compares aligned reads to a reference and emits a VCF describing positions where the sample differs. Lungfish offers five viral callers (LoFreq for short-read viral data, iVar for primer-trimmed amplicon data, Medaka and Clair3 for Oxford Nanopore data, and bcftools as a general cross-check) plus two GATK germline options for human work. See also: pileup, VCF.
+
+**Variant-only bundle**{#variant-only-bundle}. A `.lungfishref` bundle built around one or more imported VCFs and holding no reference sequence of its own, which is what Lungfish Genome Explorer creates when you import a VCF with no reference bundle open and name the result at the Name Imported Variant Bundle prompt. It records the ploidy it assumed under an Import Settings group and tries to fetch a matching reference from NCBI in the background. See also: reference bundle, variant track, VCF.
 
 **Variant track**{#variant-track}. One named set of variant calls stored inside a reference bundle, written as a bgzip-compressed VCF with a tabix index and a SQLite copy of the same rows that the Variants tab queries when you sort or filter. A bundle can hold several, and when it does they all load into the one table at once with the Source column naming which track each row came from. See also: reference bundle, table drawer, VCF.
 
