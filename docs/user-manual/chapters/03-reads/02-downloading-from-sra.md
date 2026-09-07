@@ -2,285 +2,223 @@
 title: Downloading Reads from the SRA
 chapter_id: 03-reads/02-downloading-from-sra
 audience: bench-scientist
-prereqs: [01-foundations/02-sequencing-reads, 01-foundations/06-the-lungfish-project, 01-foundations/08-provenance-and-reproducibility]
-estimated_reading_min: 8
-task: Download sequencing reads from the NCBI SRA by run accession.
-tags: [reads, sra, ena, download, fastq]
+prereqs: [01-foundations/02-sequencing-reads, 01-foundations/06-the-lungfish-project, 03-reads/01-importing-fastq]
+estimated_reading_min: 15
+task: Search the Sequence Read Archive for a sequencing run and download it into the project as a read bundle.
+tags: [reads, sra, ena, download, fastq, accession, amplicon]
 tools: []
+parameters_refs: [fetch.sra]
 entry_points:
-  - "Tools > Search Online Databases > Search SRA"
-  - "CLI: lungfish fetch sra search, lungfish fetch sra download"
-  - "CLI: lungfish fetch ena reads, lungfish fetch ena fasta"
-shots: []
-planned_shots:
-  - id: sra-search-results
-    caption: "The SRA search dialog showing search results with run accessions."
-  - id: sra-operations-record
-    caption: "The Operations Panel row for an SRA download, with the provenance disclosure expanded."
+  - Tools > Search Online Databases > Search SRA...
+  - "CLI: lungfish-cli fetch sra search <query>"
+  - "CLI: lungfish-cli fetch sra download <accession>"
+  - "CLI: lungfish-cli fetch sra info <accession>"
+shots:
+  - id: sra-runs-pane
+    caption: "The Database Browser on its SRA Runs pane, with the Import Accessions button above the query field and the Advanced Search Filters panel expanded to show Platform, Strategy, Layout, Min Size (Mbases), Publication Date, and Max Results."
+  - id: sra-results-download-selected
+    caption: "The results list with the SRR32909537 run ticked and the dialog's primary button at the bottom of the window reading Download Selected instead of Search."
+  - id: sra-import-configuration-sheet
+    caption: "The Import FASTQ configuration sheet as it opens for an SRA download, with Platform on Illumina and Pairing on Paired-end, both read from the run's archive metadata."
+  - id: sra-bundle-in-sidebar
+    caption: "The downloaded SRR32909537 read bundle under the project's Imports folder in the sidebar, open in the FASTQ viewport."
 illustrations: []
-glossary_refs: [SRA, ENA, FASTQ]
+glossary_refs: [SRA, ENA, FASTQ, accession, run-accession, library-strategy, library-layout, operations-panel, project, bundle, provenance, provenance-sidecar, paired-end, interleaved-fastq, amplicon, insdc, phred-score, sparkline, mitochondrial-genome]
 features_refs: [fetch.sra, fetch.ena]
 fixtures_refs: []
-brand_reviewed: false
-lead_approved: false
+brand_reviewed: true
+lead_approved: true
 ---
 
 ## What it is
 
-This chapter is about fetching reads from a public archive by accession. To import FASTQ files you already have on disk, see [Importing FASTQ](01-importing-fastq.md).
+The Sequence Read Archive, written [SRA](../../GLOSSARY.md#sra), is the public warehouse for raw sequencing reads. When a paper reports new sequencing data, the reads are almost always deposited there. Lungfish Genome Explorer (LGE) searches that archive from inside the app and pulls a chosen run straight into your [project](../../GLOSSARY.md#project), so reads named in a paper become working data without a browser download and without a manual import afterwards.
 
-The NCBI Sequence Read Archive (SRA) is the public warehouse for raw
-sequencing reads. When a paper reports new sequencing data, the reads are
-almost always in SRA, tagged with an accession that opens with `SRR`,
-`ERR`, or `DRR`. That leading letter tells you which of the three
-International Nucleotide Sequence Database Collaboration mirrors deposited
-the data first. The data itself sits on all three.
+The archive nests four kinds of [accession](../../GLOSSARY.md#accession), one inside the next, and only the innermost is what you download. A project holds samples, each sample holds experiments, and each experiment holds runs. A project accession begins `SRP`, or `PRJNA` in NCBI's own BioProject numbering, and gathers every experiment in one study. A sample accession begins `SRS` and names the biological material. An experiment accession begins `SRX` and gathers runs that share a library and a platform. A library here is one prepared pool of DNA fragments ready for the instrument, not a cloned collection. A [run accession](../../GLOSSARY.md#run-accession) begins `SRR`, `ERR`, or `DRR` and names one pass of one library through one instrument. Those three run prefixes and the two project prefixes record only which of the partner archives took the deposit, not any difference in the data. LGE downloads at the run level, because a run is what produces [FASTQ](../../GLOSSARY.md#fastq) files.
 
-SRA nests four accession types. A **run** (`SRR…`) is a single
-sequencing run on one library. An **experiment** (`SRX…`) gathers runs that
-share a library and platform. A **sample** (`SRS…`) is the biological
-material that was sequenced. A **project** (`SRP…`, sometimes written as a
-BioProject `PRJNA…`) gathers every experiment in one study. Lungfish
-downloads at the run level, because runs are what produce FASTQ files.
+LGE reaches the archive through **Tools > Search Online Databases > Search SRA...**, which opens the Database Browser on its SRA Runs pane. That window is the same one [Downloading from NCBI](../02-sequences/02-downloading-from-ncbi.md) uses for finished sequences. Three tabs across the top of it switch between GenBank & Genomes, SRA Runs, and Pathoplexus, and the pane below the tabs is whichever one you have chosen. Search from the query field, tick a run, and download it.
 
-Lungfish reaches the archive through `Tools > Search Online Databases >
-Search SRA`. Paste a run accession, or search by free text: organism,
-study, author. The dialog reads the run's metadata to tell single-end from
-paired-end, then writes the FASTQs to the project's `Downloads/` folder next
-to a provenance sidecar that records which source served the data and how.
-Lungfish prefers ENA, the European Nucleotide Archive, EMBL-EBI's mirror of
-the SRA, because ENA serves ready-made FASTQs. It falls back to NCBI's SRA
-Toolkit when ENA is out of reach. So when you set out to reproduce a published
-analysis, or to pull a known sample for testing a workflow, find its SRR
-accession and use this dialog rather than a browser download: the dialog
-records provenance a browser never will.
+What arrives is a finished bundle rather than loose files. LGE fetches the FASTQs from [ENA](../../GLOSSARY.md#ena), the European mirror of the same archive, then runs the same import the Import Center runs. You never open the Import Center yourself in this procedure. Each run lands as a `.lungfishfastq` [bundle](../../GLOSSARY.md#bundle) under the project's `Imports/` folder with its archive [provenance](../../GLOSSARY.md#provenance) written into the bundle's metadata sidecar. Provenance is the record of where a file came from and what was done to it. The practical consequence is that a downloaded run and an imported run are the same kind of object from the moment either one lands, so every later chapter treats them identically.
 
-## What you will learn
+## Why you would do this
 
-This chapter shows you how to download a single SRA run by
-accession, search SRA with a free-text query, recognise when Lungfish has
-fallen back from ENA to the SRA Toolkit by reading the Operations Panel
-provenance disclosure, and find the resulting FASTQs in the project's
-`Downloads/` folder, ready for the next step.
+Two situations send you to the archive. You want to reproduce a published analysis, and the reads behind it carry a run accession printed in the paper. Or you want a known dataset to test a workflow against before you spend your own samples on it.
+
+This chapter downloads `SRR32909537`, a human amplicon run that targets the [mitochondrial genome](../../GLOSSARY.md#mitochondrial-genome), the small circular genome carried inside mitochondria rather than in the nucleus. An [amplicon](../../GLOSSARY.md#amplicon) is a stretch of a genome copied many times by PCR before sequencing, so an amplicon run reads one target region deeply rather than the whole genome thinly. This run is 115,776 read pairs of 151-base Illumina reads, which is an ordinary depth for a single amplicon target and neither unusually shallow nor unusually deep. Those pairs hold 34,964,352 bases in total, a figure that already counts both mates of every pair. The two compressed files come to about 28 MB together, small enough to finish in under a minute on an ordinary connection and large enough to behave like a real dataset in every later chapter.
+
+The run belongs to BioProject `PRJNA1243402`, one of 238 human amplicon runs deposited in the same study, which makes it a fair example of what a search returns in practice. You will rarely find one run sitting alone.
+
+Download it once and the bundle is yours to reuse. Quality control, trimming, and mapping all take it as input.
+
+## Before you start
+
+You need a project open. If you do not have one, choose **File > New Project** (Cmd-N), or click Create Project on the Welcome window, and pick a folder. The active project decides where the reads land, so open the right one before you search.
+
+This chapter uses a live SRA search rather than a downloaded fixture. A fixture is the manual's own frozen copy of a dataset, kept so the numbers printed here can be checked, and there is none here because the archive itself is the source. Every number in this chapter came from a real search and a real download run on 2026-09-06, and the run accession is fixed, so a repeat of these steps returns the same figures.
+
+You need a working internet connection. No extra software has to be installed for this chapter. The download itself takes about 20 seconds for this run, and the import that follows takes a few seconds more.
 
 ## Procedure
 
-There are two tasks here: searching the SRA for runs that match a query,
-and downloading a specific run by accession. Both run through the same
-dialog.
+1. Choose **Tools > Search Online Databases > Search SRA...**. The Database Browser opens on its SRA Runs pane, headed SRA Runs with the line "Search sequencing runs and import accession lists." beneath it. An Import Accessions button sits near the top of the pane in its own card, and the query field sits below that card with an unlabelled scope popup at its left end. That popup reads All Fields until you change it.
 
-### Search the SRA
+2. Click the Show button on the Advanced Search Filters panel below the query field. Six controls appear, Platform, Strategy, Layout, Min Size (Mbases), Publication Date, and Max Results. These narrow the search itself rather than the list you already have, so set them before you search rather than after. Set **Platform** to ILLUMINA, **Strategy** to AMPLICON, and **Layout** to PAIRED. The Settings section describes each control in full.
 
-1. Open the project you want the reads to land in. Downloads always go into
-   the project's `Downloads/` folder, so the active project picks the
-   destination.
-2. Choose `Tools > Search Online Databases > Search SRA`. The search dialog
-   opens with a single query field at the top.
-3. Type a query and press Return. An accession like `SRR36291587` returns a
-   single row. A free-text query like `SARS-CoV-2 wastewater Madison` returns
-   a page of matching runs, ordered by SRA's relevance score. The command-line
-   search, `lungfish fetch sra search`, caps results at `--limit 20` by
-   default; raise it when a broad query truncates.
-4. Read the results table. Each row shows the run accession, the parent
-   study, the sample name, the library layout of single or paired, the
-   library strategy such as WGS, AMPLICON, or RNA-Seq, the platform of
-   Illumina, Oxford Nanopore, or PacBio, and the size in bases.
-5. Sort or filter to find the run you want. Click a column header to sort.
-   Use the filter chips above the table to restrict by platform or layout
-   when a query returns many candidates.
+    <!-- SHOT: sra-runs-pane -->
 
-When you already hold a list of run IDs, skip the free-text search. The SRA
-Runs pane's **Import Accessions** button loads a CSV or plain-text file of
-accessions in one step: Lungfish runs the whole list as a single query and
-fills the results table with those runs, so you can select and download the
-batch at once.
+3. Type `Homo sapiens mitochondrion` into the query field and click Search. That text matches the mitochondrial target this run was built to sequence. The results list fills with runs that match every filter you set.
 
-<!-- planned: sra-search-results -->
+4. Tick `SRR32909537` in the results list. Each row carries the run accession in the left, its length in bases at the right, and the run title and organism beneath. When the list is long and the rows look alike, set the scope popup to Accession, type the accession itself, and search again, which returns that one run on its own. Two buttons in this window read Search, so watch the right one. The Search button beside the query field never changes its title. The dialog's primary button at the bottom of the window is the one that changes from Search to Download Selected as soon as a row is ticked, and it goes back to Search when nothing is ticked.
 
-### Download a run
+    <!-- SHOT: sra-results-download-selected -->
 
-1. Select one or more rows in the results table. The Download button
-   activates as soon as a row is selected.
-2. Confirm the **Layout** dropdown reads **Auto-detect (recommended)**.
-   Auto-detect leans on the run's SRA metadata to choose single-end or
-   paired-end output. Override it only when you know the metadata is wrong,
-   which is rare but does happen with older deposits.
-3. Click **Download**. The dialog closes and the Operations Panel
-   ([Provenance and Reproducibility](../01-foundations/08-provenance-and-reproducibility.md))
-   opens a new row for the download.
-4. Wait for the row to reach `Completed`. A 1 Gbase paired Illumina run
-   typically takes 1 to 5 minutes from ENA and 5 to 20 minutes from the SRA
-   Toolkit fallback, network depending.
-5. Open the project sidebar's `Downloads/` folder. Single-end runs land as
-   `<accession>.fastq.gz`. Paired runs land as `<accession>_1.fastq.gz` and
-   `<accession>_2.fastq.gz`, matching the convention every downstream tool
-   in Lungfish expects.
+5. Click Download Selected. LGE reads the run's archive metadata, then shows the Import FASTQ configuration sheet with the platform and the pairing it read from that metadata. For this run Platform reads Illumina and Pairing reads Paired-end. Read those two values, check that they match what you expect, and click Import.
 
-<!-- planned: sra-operations-record -->
+    <!-- SHOT: sra-import-configuration-sheet -->
 
-### Worked example: SRR36291587
+Override the Pairing popup before you import when you know the archive metadata is wrong, which the troubleshooting section below explains. Every other control on that sheet works exactly as [Importing Sequencing Reads](01-importing-fastq.md) describes, because it is the same sheet.
 
-The SARS-CoV-2 sample used in the variant-calling chapter carries accession
-`SRR36291587`. Pull it in four moves. First, open or create a project; the
-variant chapter assumes one named `pilot-variants/`, so use that name
-if you plan to follow it next. Then choose
-`Tools > Search Online Databases > Search SRA`, paste `SRR36291587`, and
-press Return. The single result row reports a paired-end Illumina run,
-library strategy AMPLICON, roughly 0.5 Gbases; select it and click
-**Download** with layout set to Auto-detect. When the Operations
-Panel row turns green, the project's `Downloads/` folder holds
-`SRR36291587_1.fastq.gz` and `SRR36291587_2.fastq.gz`. These are the files
-[Quality Control](03-quality-control.md) and the variant chapter both expect.
+Watch the progress in the [Operations Panel](../../GLOSSARY.md#operations-panel), which you open with **Operations > Show Operations Panel** (Cmd-Shift-P) and which reports every download alongside every other running job. When it finishes, a bundle named `SRR32909537` appears under `Imports/` in the sidebar. Click it once to open it in the FASTQ viewport.
 
-The same download from the CLI:
+<!-- SHOT: sra-bundle-in-sidebar -->
 
-```sh
-lungfish fetch sra download SRR36291587 --output-dir Downloads
+### Downloading a list of accessions
+
+When you already hold run identifiers, skip the free-text search. Click Import Accessions on the SRA Runs pane and pick a CSV or plain-text file listing them. One accession per line is enough, with no header row, so a file whose first line reads `SRR32909537` and whose second reads `SRR32909543` works. LGE parses the file, sets the scope popup to Accession, and runs one search for the whole list, so the results fill with those runs and you tick and download them as a batch. A file with no recognisable accession in it raises an alert reading "No Valid Accessions" rather than searching for nothing.
+
+## Settings
+
+These are the controls on the SRA Runs pane. Six of them sit in the Advanced Search Filters panel, which stays collapsed until you click Show, and the seventh is the scope popup on the query field itself. All seven shape the search, and none of them touches the download. The settings that shape the download are on the Import FASTQ configuration sheet, which [Importing Sequencing Reads](01-importing-fastq.md) documents in full.
+
+Every entry ends by saying whether the setting reaches the command line. The command line is optional throughout this chapter, so if you work only in the dialog, those last sentences are safe to skip.
+
+**Platform.** Keeps only runs produced on that sequencing instrument family, among Any, ILLUMINA, OXFORD_NANOPORE, PACBIO_SMRT, ION_TORRENT, ULTIMA, ELEMENT, and BGISEQ, of which OXFORD_NANOPORE and PACBIO_SMRT are the long-read families and the rest are short-read. The default is Any, which mixes short-read and long-read runs in one list. Set it when your analysis assumes one read type, since short and long reads need different tools all the way downstream. This setting has no command-line flag.
+
+**Strategy.** Keeps only runs whose library was built for one purpose, among Any, WGS, AMPLICON, RNA-Seq, WXS, Targeted-Capture, and OTHER, where WGS is whole-genome shotgun, WXS is whole-exome shotgun, and AMPLICON is targeted PCR product. The default is Any, so every [library strategy](../../GLOSSARY.md#library-strategy) comes back together. Set it to AMPLICON when you want tiled primer-scheme data and whole-genome runs would be off target. This setting has no command-line flag.
+
+**Layout.** Keeps only runs whose reads come in mate pairs, or only runs whose reads are single, among Any, PAIRED, and SINGLE. The default is Any, which returns both [library layout](../../GLOSSARY.md#library-layout) kinds mixed together. Set it to PAIRED when the workflow you plan to run needs both mates. This setting has no command-line flag.
+
+**Min Size (Mbases).** Drops runs that produced less sequence than the amount you enter, measured in millions of bases. It starts empty, so no size floor applies and the shallowest deposits in the study still appear. Set it to exclude runs too thin to give the depth your analysis needs, and read the floor against this chapter's own run, which produced about 35 million bases, so a floor of 10 keeps it while a floor of 50 would drop it. This setting has no command-line flag.
+
+**Publication Date.** Keeps only runs released inside the range you enter, through two fields labelled From and To. Both sides start empty, so the whole history of the archive is in scope. Set a start date when you are following an outbreak and older deposits are irrelevant. This setting has no command-line flag.
+
+**Max Results.** Caps how many runs the search returns, offering 50, 100, 200, 500, and 1000. The default is 50, which is enough to look at without waiting. Raise it when a broad query is clearly truncating results you need. On the command line this is `--limit`, which defaults to 20 rather than 50. The two defaults differ deliberately, because a dialog shows a longer list without cost while a command-line default stays deliberately small.
+
+**(search scope).** Restricts the query text to one indexed field rather than matching anywhere in the run record, through the unlabelled popup at the left-hand end of the query field, offering All Fields, Accession, Organism, Title, BioProject, and Author. The default is All Fields, which is right when you do not yet know which part of a record your search word sits in. Narrow it to BioProject when you want every run from one study, or to Accession when you already hold the identifier. This setting has no command-line flag.
+
+## Reading the results
+
+Two surfaces carry numbers worth reading, the search results list and the bundle that lands.
+
+Each row in the results list shows the run accession in monospaced type, the sequence length in bases at the right of the same line, then the run title and the organism beneath it. The list is not a sortable table and it carries no column headers, so the filters above it are how you narrow a large result set. Ticking a row is what arms the download.
+
+The command line prints the same runs as a real table, which is easier to scan when you are choosing among many. Here is the search this chapter used, run on 2026-09-06.
+
+```text
+Accession    Organism      Platform  Strategy  Layout  Reads         Size
+──────────────────────────────────────────────────────────────────────────
+SRR32909537  Homo sapiens  ILLUMINA  AMPLICON  PAIRED  115.8K reads  23 MB
+SRR32909543  Homo sapiens  ILLUMINA  AMPLICON  PAIRED  73.7K reads   14 MB
+SRR32909542  Homo sapiens  ILLUMINA  AMPLICON  PAIRED  56.5K reads   10 MB
 ```
 
-The CLI writes the FASTQs and the provenance sidecar to the same folder the
-GUI uses; the two paths are interchangeable. By default it pulls from ENA. Add
-`--use-toolkit` to force the NCBI SRA Toolkit path, `prefetch` then
-`fasterq-dump`, which is now and then the only way to fetch a run
-ENA has not yet mirrored.
+Read that Reads column carefully, because it counts spots rather than individual reads. A spot is the archive's word for one fragment the instrument read from end to end, so a paired run reports one spot for every pair of mates. The 115.8K figure for `SRR32909537` is 115,776 spots, which is 115,776 pairs, which is 231,552 reads once the two mates are counted separately. The Size column is the archive's own compressed figure and it undercounts what actually arrives, since the two downloaded files came to 12,840,092 bytes (12.8 MB) and 15,276,682 bytes (15.3 MB) against the 23 MB the table promised. The delivered total of about 28 MB is the figure to trust.
 
-To read a run's metadata without downloading a byte, `lungfish fetch sra info
-<accession>` prints one record:
+Confirm a run before downloading it with `fetch sra info`, which reads the archive record without pulling a byte. It prints the same labelled fields for every run, filled in from that run's own record.
 
-```sh
-lungfish fetch sra info SRR36291587
+```text
+Accession : SRR32909537
+Experiment: SRX28184639
+Study     : SRP573913
+BioProject: PRJNA1243402
+BioSample : SAMN47626540
+Organism  : Homo sapiens
+Platform  : ILLUMINA
+Strategy  : AMPLICON
+Source    : GENOMIC
+Layout    : PAIRED
+Reads     : 115.8K reads
+Bases     : 34964352
+Size      : 23 MB
 ```
 
-It reports the Experiment, Study, BioProject, and BioSample the run belongs to,
-its Organism, Platform, Strategy, Source, and Layout, and the Reads, Bases, and
-Size totals. Add `--api-key` to lift the NCBI rate ceiling, and `--format json`
-to emit the same fields as structured output for a script.
+The bundle that lands under `Imports/` behaves exactly like an imported one. Its FASTQ viewport shows the nine summary cards and the three [sparkline](../../GLOSSARY.md#sparkline) charts that [Importing Sequencing Reads](01-importing-fastq.md) walks through. A sparkline is a small chart drawn inline beside the cards, with no axes or labels of its own. For this run every read is exactly 151 bases, so the Length Dist. sparkline is a single spike rather than a spread. That single spike is expected here and is not a warning sign, because an untrimmed Illumina run carries one fixed read length until trimming shortens some reads.
 
-## Fetching from ENA directly
+The bundle also carries where it came from, in two separate files. The metadata sidecar describes the reads themselves and records the ENA read record, the download date, the download source, and the sequencing platform that was confirmed on the import sheet. The [provenance sidecar](../../GLOSSARY.md#provenance-sidecar) instead records the steps that produced the bundle, from the archive fetch through the import. Select the bundle in the sidebar and open the Inspector's Provenance section to read that history without leaving the app.
 
-The download path above resolves through ENA on its own, so most people never
-call the archive by name. When you do want to reach the European Nucleotide
-Archive directly, say to see the exact FASTQ URLs behind a run or to
-pull a reference sequence ENA holds, `lungfish fetch ena` opens it up through
-three subcommands: `search`, `reads`, and `fasta`.
+## What good looks like
 
-`lungfish fetch ena search <query>` looks up sequences by free text and prints
-a table of matching accessions with each record's title, organism, and length:
+Four checks are worth running before you build anything on downloaded reads.
 
-```sh
-lungfish fetch ena search "Ebola virus" --organism "Zaire ebolavirus"
-```
+Confirm the accession. The bundle name should read the run accession you asked for, here `SRR32909537`. A different name means a different run was ticked, which is easy to do in a list of 238 near-identical rows.
 
-Narrow a broad query with `--organism` to filter by species, and raise
-`--limit` when the default of 20 rows truncates the list. Pass `--format json`
-for the same fields as structured output. The same `--limit` bounds
-`fetch ena reads` below.
+Confirm the read count against the archive. `fetch sra info` reported 115.8K and 34,964,352 bases, and that first figure counts spots, so it means 115,776 pairs. The bundle's Reads card counts individual reads instead, so it should read 231,552 for this run, twice the archive figure. A count well under 231,552 means the download stopped short.
 
-`lungfish fetch ena reads <accession>` looks up a run or study accession and
-prints its metadata, platform, library strategy, layout, read count, and file
-size, alongside the exact ENA FASTQ download URLs:
+Confirm the pairing. This run is PAIRED in the archive and the bundle should hold both mates. A Reads card showing 115,776 rather than 231,552 means only one mate arrived and the import ran as single-end, which the troubleshooting section below covers.
 
-```sh
-lungfish fetch ena reads SRR36291587
-```
+Confirm the folder. A downloaded run lands under `Imports/`, alongside anything you imported from disk, and not under `Downloads/`, which holds reference bundles fetched from NCBI. A read bundle anywhere else came from a different path than the one you thought you took.
 
-This resolves the URLs; it does not pull the bytes. To download and checksum the
-reads with a provenance sidecar, use `lungfish fetch sra download`, covered
-above, which prefers those same ENA URLs and falls back to the SRA Toolkit.
-The `fetch ena` subcommands write no provenance sidecar of their own, so
-treat them as a lookup and inspection tool, not the recorded download step.
+## Which path served your download
 
-`lungfish fetch ena fasta <accession> --save-to <path>` fetches a sequence
-rather than reads, in FASTA form, handy on the odd occasion when ENA holds a
-record NCBI has not mirrored. For reference sequences that need annotations,
-prefer the NCBI path in
-[Downloading from NCBI](../02-sequences/02-downloading-from-ncbi.md); the ENA
-FASTA carries bases only. In short: use `fetch ena reads` to see what ENA
-will serve for a run, and `fetch sra download` to pull the reads with
-provenance.
-
-## Interpretation
-
-### What the Operations Panel row tells you
-
-Every SRA download drops one row into the Operations Panel. The small triangle
-on its left expands the provenance disclosure, the record Lungfish kept of the
-download. Its most useful line is which source produced the bytes: an ENA
-download records an EBI host, while the SRA Toolkit fallback records the
-`prefetch` and `fasterq-dump` commands it ran. The record is there so a
-co-author or reviewer can confirm later which path produced the bytes you
-analysed. See
-[Provenance and Reproducibility](../01-foundations/08-provenance-and-reproducibility.md)
-for the full sidecar schema and how to export a methods paragraph from it.
-
-### Which path served your download
-
-Lungfish prefers ENA and falls back to the NCBI SRA Toolkit when ENA refuses
-or times out. The two paths produce equivalent FASTQs but differ in speed
-and in the machinery underneath. The table below sums up when each one fires.
+LGE prefers ENA and falls back to NCBI's SRA Toolkit when ENA is out of reach. The two paths produce equivalent FASTQs and differ in speed and in the machinery underneath.
 
 | Aspect | ENA (preferred) | NCBI SRA Toolkit (fallback) |
 |---|---|---|
 | What you get | Pre-converted FASTQ over HTTPS | `.sra` archive, then converted locally |
-| Tools involved | Direct HTTPS fetch plus checksum verify | `prefetch` then `fasterq-dump` |
+| Tools involved | Direct HTTPS fetch | `prefetch` then `fasterq-dump` |
 | Typical speed | Fast, often network-limited | Slower, conversion-limited |
 | When it fires | First attempt for every accession | ENA refuses or times out, or `--use-toolkit` is set |
-| How to force it | Default | `lungfish fetch sra download --use-toolkit` |
+| How to force it | Default | `lungfish-cli fetch sra download --use-toolkit` |
 
-ENA hosts FASTQs directly because the European archives chose to keep the
-converted form beside the deposit. NCBI holds the same data as `.sra`
-archives and asks for a conversion step on download. A newly released run is
-sometimes on NCBI alone for its first few hours; a very old run is sometimes
-on ENA alone. The fallback exists so either case still ends in a file.
+ENA hosts FASTQs directly because the European archives chose to keep the converted form beside the deposit. NCBI holds the same data as `.sra` archives and asks for a conversion step on download. LGE installs `prefetch` and `fasterq-dump` for you as part of its managed SRA Toolkit environment, so the fallback path needs nothing from you beyond a working connection. A newly released run is sometimes on NCBI alone for its first few hours, and a very old run is sometimes on ENA alone. The fallback exists so either case still ends in a file. Both archives are [INSDC](../../GLOSSARY.md#insdc) partners, so the data underneath is the same deposit either way.
 
-### Reading the Downloads folder
+The provenance sidecar names which path ran, and the Inspector's Provenance section is where you read it. For the download this chapter made, `selectedStrategy` read `ena-direct` and each download step recorded a `curl` command, the standard file-transfer program, against a `ftp.sra.ebi.ac.uk` address. A toolkit download instead records the `prefetch` and `fasterq-dump` commands it ran, with their full argument lists.
 
-After a clean download of a paired run, you should see two
-gzip-compressed FASTQs plus a provenance sidecar written beside them.
-The command-line download names each sidecar
-`<file>.lungfish-provenance.json`:
+## Troubleshooting
 
-```text
-Downloads/
-  SRR36291587_1.fastq.gz
-  SRR36291587_2.fastq.gz
-  SRR36291587_1.fastq.gz.lungfish-provenance.json
+Three failures account for most bad downloads.
+
+**Rate limits.** ENA and NCBI both throttle anonymous requests when too many arrive from one network. The symptom is a download that starts, crawls, and ends in a partial file or an HTTP 429 in the log, where 429 is the web server's code for too many requests. Click View Log on the download's row in the Operations Panel to read it. A failed row carries no retry control of its own, so wait a few minutes, then start the download again from the SRA Runs pane exactly as you did the first time. An NCBI API key lifts the ceiling on searches and is free, optional, and worth requesting only if you search heavily. You pass it with `lungfish-cli fetch sra search --api-key <key>` after requesting the key from your NCBI account settings.
+
+**Network failures mid-download.** A flaky connection leaves a partial file and the download reports as failed. Start it again from the same pane. When the failure survives several attempts, the toolkit fallback often succeeds where a direct ENA fetch does not, because it moves the bytes over a different transport, and `--use-toolkit` on the command line forces it.
+
+**Archive metadata that disagrees with the data.** A small share of older deposits are tagged SINGLE in their metadata even though the data underneath is paired. LGE reads that metadata to fill the import sheet, so the sheet will offer Single-end and the reads will import as one file. The fix is to set the sheet's Pairing popup to Paired-end before you import, or to Interleaved when a single file holds both mates as consecutive records, which you recognise because the two mates of each pair alternate down the file rather than sitting in two separate files. Searching the run accession on the NCBI website reaches the run page, which shows the real layout and settles which is right.
+
+## On the command line
+
+This section is optional. If you work entirely in the dialog you have just used, you can skip it.
+
+The commands below are the ones this chapter's numbers came from. The first searches, the second reads one record, and the third downloads.
+
+```bash
+# Search, and cap the list at 15 rows.
+lungfish-cli fetch sra search "Homo sapiens mitochondrion AMPLICON Illumina" --limit 15
+
+# Read one run's archive record without downloading anything.
+lungfish-cli fetch sra info SRR32909537
+
+# Download the run's FASTQ files into a folder.
+lungfish-cli fetch sra download SRR32909537 --output-dir ./fastq
 ```
 
-The `_1` and `_2` suffixes are the convention every downstream Lungfish
-operation expects. Rename them and pair detection breaks. The provenance
-sidecar travels with the FASTQs, so copy or move it beside the reads whenever
-you reorganise the folder.
+`--limit` caps the number of results and defaults to 20, which is lower than the dialog's default of 50. `--output-dir` names the destination and defaults to the current directory. `--use-toolkit` forces the SRA Toolkit path, which needs `prefetch` and `fasterq-dump` installed. `--api-key` sends your NCBI key so the service allows a higher request rate. Every `fetch` subcommand also takes `--format` with `text`, `json`, or `tsv`, alongside the usual `--verbose`, `--quiet`, `--debug`, and `--log-file` options.
 
-### Troubleshooting
+The command line differs from the app in what it leaves behind. It writes loose files rather than a bundle, so a paired run lands as `SRR32909537_1.fastq.gz` and `SRR32909537_2.fastq.gz`, and a single-end run lands as `SRR32909537.fastq.gz`. Beside them it writes one provenance sidecar for the whole download, named `.lungfish-provenance.json` and placed in the output directory rather than named after any one file. To get a bundle from those files, import them with `lungfish-cli import fastq`, which is the step the app performs for you.
 
-A download can fail or look wrong in three common ways.
+The `fetch` command reaches three other places besides the archive. `fetch ncbi` pulls a sequence record by accession, `fetch search` queries NCBI's sequence databases, and `fetch genome` builds an indexed reference bundle, all of which [Downloading from NCBI](../02-sequences/02-downloading-from-ncbi.md) covers.
 
-**Rate limits.** ENA and NCBI both throttle anonymous requests when too many
-arrive from one network. The symptom is a download that starts, crawls,
-and ends in a partial file or an HTTP 429 in the operation log.
-Wait a few minutes and click **Retry** on the Operations Panel row. For the
-command-line search, an NCBI API key lifts your rate ceiling: pass it with
-`lungfish fetch sra search --api-key <key>`, and grab a free key from your NCBI
-account settings.
+### Reaching ENA directly
 
-**Network failures mid-download.** A flaky connection leaves a partial
-file. Lungfish marks the row `Failed`; retry from the same Operations Panel
-row. When the failure survives several retries, the SRA Toolkit fallback,
-`--use-toolkit`, often succeeds where direct ENA fails, because the Toolkit
-moves the bytes over a different transport.
+The download path above resolves through ENA on its own, so most people never call the mirror by name. When you want to see the exact URLs behind a run, `fetch ena reads` prints them.
 
-**"Metadata says single but the file has two reads."** A small share of
-older SRA deposits were tagged single-end in metadata even though the
-data underneath is paired. Auto-detect trusts the metadata, so you can end
-up with one interleaved FASTQ where you expected two files. Interleaved means
-read 1 and read 2 alternate inside a single file instead of living in two
-separate ones. The fix is to re-run the download with the **Layout**
-dropdown forced to **Paired**. When in doubt, the run page on NCBI's web SRA
-viewer shows the actual spot layout under "Layout" and settles which is
-right.
+```bash
+lungfish-cli fetch ena reads SRR32909537
+```
+
+For this run it printed the Run, Study, Platform, Strategy, Layout, Reads, and File Size fields, followed by the two FASTQ URLs under `ftp.sra.ebi.ac.uk`. Note that its File Size of 28.1 MB is the delivered size, the same figure the two downloaded files add up to, and it is the one to trust against the 23 MB the SRA search reported. This resolves the URLs and does not pull the bytes, so treat it as a lookup rather than a recorded download step.
+
+Two sibling subcommands round out the set. `fetch ena search <query>` searches ENA for sequences rather than runs, with `--organism` to filter by species and `--limit` to bound the list. `fetch ena fasta <accession> --save-to <path>` fetches a sequence in FASTA form, which helps on the odd occasion when ENA holds a record NCBI has not mirrored. For a reference that needs annotations, prefer the NCBI path instead, since the ENA FASTA carries bases only.
 
 ## Next
 
-Continue to [Quality Control](03-quality-control.md) to inspect the QC
-profile of the reads you just pulled down.
+Continue to [Quality Control](03-quality-control.md) to run the first full quality pass on the reads you just pulled down.
