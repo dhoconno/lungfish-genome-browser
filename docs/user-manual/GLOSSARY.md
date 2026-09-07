@@ -104,6 +104,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Depth**{#depth}. Synonym for coverage in this manual. The number of reads stacked at one reference position. See also: coverage.
 
+**Download Center**{#download-center}. The surface that reports the progress of anything Lungfish fetches from the internet, whether a reference record from NCBI or a sequencing run from the SRA, and the place to look when a download does not appear where you expected it. See also: Operations Panel, SRA.
+
 **Duplex read**{#duplex-read}. An Oxford Nanopore read produced by basecalling both strands of the same DNA molecule and reconciling them into a single high-accuracy consensus; duplex Q30+ approximates Illumina-grade accuracy and is the basis for modern Medaka-duplex models. See also: simplex read, basecaller.
 
 ## E
@@ -189,6 +191,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **LabKey**{#labkey}. A laboratory data management platform; Lungfish can export genotype results as LabKey-ready CSV files.
 
 **Library prep**{#library-prep}. The bench procedure that turns extracted nucleic acid into a form a sequencing instrument can read, and the step that decides whether reads land at random positions (shotgun), at designed primer coordinates (amplicon), or on probe-selected regions (target enrichment). See also: amplicon, shotgun, target enrichment.
+
+**Library layout**{#library-layout}. The archive field recording whether a sequencing run read each fragment from one end or from both, reported as SINGLE or PAIRED, which is how an SRA search can be restricted to runs whose reads come in mate pairs. See also: paired-end, single-end, SRA.
+
+**Library strategy**{#library-strategy}. The archive field recording what a sequencing library was built to do, with values such as WGS for whole-genome shotgun, AMPLICON for targeted PCR product, WXS for whole-exome capture, and RNA-Seq for transcript sequencing. See also: amplicon, shotgun, SRA.
 
 **Lineage**{#lineage}. A named subgroup within a viral species, defined by a characteristic set of variants and assigned by a domain-specific tool (Pangolin for SARS-CoV-2, Nextclade for many viruses). Lungfish does not assign lineages itself; it produces consensus FASTAs that downstream tools call lineages from. See also: consensus FASTA.
 
@@ -317,6 +323,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Reverse complement**{#reverse-complement}. The sequence read from the opposite DNA strand, obtained by reading the bases backwards and swapping each for its pairing partner (A for T, C for G), so reading frames -1, -2, and -3 are the three frames counted along it and Lungfish runs the transformation from **Sequence > Reverse Complement...**. See also: strand, reading frame.
 
 **Rooting**{#rooting}. Choosing which point on a phylogenetic tree stands for the oldest ancestor, which is what turns a statement about who groups with whom into a statement about which lineage came first; IQ-TREE produces unrooted trees, so rooting in Lungfish Genome Explorer is the separate **Re-root Here** step. See also: outgroup, topology, internal node.
+
+**Run accession**{#run-accession}. The identifier naming one pass of one sequencing library through one instrument in a public read archive, written `SRR`, `ERR`, or `DRR` followed by digits according to which INSDC partner took the deposit, and the only accession level that resolves directly to FASTQ files. See also: accession, SRA, INSDC.
 
 **Run record**{#run-record}. The provenance a single Lungfish operation left behind, read in the Inspector's Provenance section as seven blocks (Run Summary, Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON) and stored on disk as one provenance sidecar. See also: provenance sidecar, workflow lineage.
 

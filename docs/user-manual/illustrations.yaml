@@ -198,15 +198,15 @@ chapters:
     illustrations:
       - id: msa-column-homology
         target_dimensions: 1400x600
-        asset: assets/illustrations-imagegen/02-sequences/04-msa-and-trees/msa-column-homology.png
-        source: assets/illustrations-imagegen/02-sequences/04-msa-and-trees/msa-column-homology.svg
+        asset: assets/illustrations-imagegen/02-sequences/04-aligning-sequences/msa-column-homology.png
+        source: assets/illustrations-imagegen/02-sequences/04-aligning-sequences/msa-column-homology.svg
         brief: >
           Three short sequences before and after MAFFT-style gap insertion so
           homologous bases share columns.
       - id: tree-anatomy
         target_dimensions: 1400x700
-        asset: assets/illustrations-imagegen/02-sequences/04-msa-and-trees/tree-anatomy.png
-        source: assets/illustrations-imagegen/02-sequences/04-msa-and-trees/tree-anatomy.svg
+        asset: assets/illustrations-imagegen/02-sequences/05-building-trees/tree-anatomy.png
+        source: assets/illustrations-imagegen/02-sequences/05-building-trees/tree-anatomy.svg
         brief: >
           Rectangular phylogram with tips, internal nodes, branch lengths, and
           bootstrap support values called out.
