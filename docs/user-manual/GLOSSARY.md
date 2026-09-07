@@ -918,9 +918,9 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Workflow package**{#workflow-package}. A `.lungfishflowpkg` folder holding a Nextflow or Snakemake pipeline together with a `manifest.json` that names the workflow, gives it a version and a category, declares which engine runs it, and declares the input bundle types it requires and the output bundle types it produces, from which Lungfish Genome Explorer generates the run form. A package is linked into the Workflow Library rather than copied into a project, and it can be enabled only when its runner is Nextflow or Snakemake and its manifest declares a required reference input, a required reads input, and at least one output. See also: workflow engine, run bundle, bundle.
 
-**Working directory**{#working-directory}. The folder a Terminal window is sitting in when a command is typed, which decides where relative paths point and where a command writes by default, and which the command `pwd` prints. See also: symlink, exit status.
-
 **Workflow Library**{#workflow-library}. The window opened with **Tools > Workflow Library...** that lists every specialized workflow and every linked workflow package as a card with an Enabled switch, and which is the only place a specialized workflow can be turned on before its Tools menu item stops reading `(not enabled)`. See also: workflow package, plugin pack.
+
+**Working directory**{#working-directory}. The folder a Terminal window is sitting in when a command is typed, which decides where relative paths point and where a command writes by default, and which the command `pwd` prints. See also: symlink, exit status.
 
 **Wrapper**{#wrapper}. A program that builds another program's command line and runs it for you, which is what Lungfish Genome Explorer does every time a dialog setting becomes a flag on samtools, iVar, or an assembler. See also: argument, command-line flag, provenance sidecar.
 
