@@ -6165,7 +6165,7 @@ operations:
       - Sources/LungfishGenotypeUI/GenotypeViewportExportService.swift
       - Sources/LungfishGenotypeUI/GenotypeResultDocumentSection.swift
       - Sources/LungfishIO/Bundles/ONTGenotypeResultBundle.swift
-      - Sources/LungfishCLI/Commands/GenotypeExportXLSXSubcommand.swift
+      - Sources/LungfishCLI/Commands/GenotypeExportXlsxSubcommand.swift
       - Sources/LungfishCLI/Commands/GenotypeExportLabKeySubcommand.swift
       - docs/user-manual/reviews/fidelity-2026-09/cli-help/genotype.txt
       - docs/user-manual/reviews/fidelity-2026-09/ground-truth/09-genotyping.md
