@@ -39,7 +39,7 @@ def _embed(indent, rel, alt):
     """
     caption = " ".join(str(alt).split())
     alt = caption.replace("]", "").replace("[", "")
-    lines = [f"![{alt}]({rel}){{ .screenshot }}", "", f"{caption}{{ .shot-caption }}"]
+    lines = [f"![{alt}]({rel}){{ .screenshot }}", "", caption, "{ .shot-caption }"]
     return "\n".join(indent + line if line else "" for line in lines)
 
 
