@@ -3774,7 +3774,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 48 | 07-assembly/03-running-flye-or-hifiasm | Running Flye or hifiasm | [assemble.flye, assemble.hifiasm] | hg002-long-reads | existing | done |
 | 49 | 07-assembly/04-extracting-contigs | Extracting Contigs | [assemble.extract-contigs] | human-mito | existing | done |
 | 50 | 08-workflows/01-the-workflow-builder | The Workflow Builder | [workflow.builder] | demo project | existing | queued |
-| 51 | 08-workflows/02-exporting-as-nextflow-or-snakemake | Exporting as Nextflow or Snakemake | [provenance.export] | demo project | existing | queued |
+| 51 | 08-workflows/02-exporting-as-nextflow-or-snakemake | Exporting as Nextflow or Snakemake | [provenance.export] | demo project | existing | done |
 | 52 | 08-workflows/03-running-external-workflows | Running External Workflows | [workflow.library-run] | hello-world packages | existing (add to nav) | queued |
 | 53 | 09-genotyping/01-what-is-mhc-genotyping | What Is MHC Genotyping | [] | Williams project | existing (add to nav) | queued |
 | 54 | 09-genotyping/02-running-genotyping | Running Genotyping | [genotype.miseq-amplicon, genotype.full-length-ont] | Williams project | existing (add to nav) | queued |

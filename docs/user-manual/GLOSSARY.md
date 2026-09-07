@@ -366,7 +366,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Metagenomics**{#metagenomics}. The study of all the nucleic acid present in a mixed sample at once, rather than of one cultured organism, which is the setting read classification was built for and the reason its tools ask for large reference databases and a great deal of memory. See also: read classification, metabarcoding, shotgun.
 
-**Methods export**{#methods-export}. The Lungfish provenance export that emits a plain-prose Markdown paragraph naming each tool and its resolved version in the order the workflow ran them, suitable for pasting into a paper's methods section. See also: provenance sidecar.
+**Methods export**{#methods-export}. The Lungfish provenance export that emits a short Markdown document with a Methods heading, a Computational Analysis section naming each successful step's tool and resolved version in the order they ran, a tool versions table, an input file list with checksums, and a reproducibility paragraph, written as a draft to edit before it goes into a paper. See also: provenance sidecar.
 
 **MHC (Major Histocompatibility Complex)**{#mhc}. The gene-dense immune region whose proteins hold up fragments of what is inside a cell for the immune system to inspect, the most variable region of a vertebrate genome, and the target of the amplicon genotyping workflows in this manual. See also: haplotype, immunogenetics, class I MHC, class II MHC.
 
