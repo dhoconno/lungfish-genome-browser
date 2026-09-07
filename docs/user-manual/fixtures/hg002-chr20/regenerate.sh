@@ -26,7 +26,10 @@ if [ ! -f expected/variants/bcftools/HG002.bcftools.vcf.gz ] || [ ! -f expected/
   "$CLI" import fasta "$HERE/GRCh38.chr20.10.0-10.5Mb.fasta" --name "chr20 10.0-10.5Mb" -o "$PROJ"
   BUNDLE="$(find "$PROJ/Reference Sequences" -maxdepth 1 -name '*.lungfishref' | head -1)"
 
-  "$CLI" bam adopt-mapping --bundle "$BUNDLE" --mapping-result "$HERE/expected/mapping" \
+  # adopt-mapping moves the BAM into the bundle, so adopt a copy and keep
+  # expected/mapping intact.
+  cp -R "$HERE/expected/mapping" "$SCRATCH/mapping"
+  "$CLI" bam adopt-mapping --bundle "$BUNDLE" --mapping-result "$SCRATCH/mapping" \
     --name "HG002 minimap2" --track-id hg002-minimap2
 
   if [ ! -f expected/variants/bcftools/HG002.bcftools.vcf.gz ]; then

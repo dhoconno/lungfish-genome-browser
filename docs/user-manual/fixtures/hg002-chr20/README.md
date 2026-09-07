@@ -90,7 +90,7 @@ The resulting read set is 45,574 read pairs (91,148 reads, 182,296 lines per fil
 - The reads were re-mapped with `regenerate.sh` (managed minimap2 via `lungfish-cli map --paired --mapper minimap2 --preset sr`) against `GRCh38.chr20.10.0-10.5Mb.fasta`.
   Results show 91,148 primary reads, 90,935 of them mapped (99.77%), mean depth 44.7x, mean identity 99.4%, coverage breadth 99.99% of the 500,001 bp slice.
   `samtools flagstat` reports 91,203 records in total because 55 reads also carry a supplementary alignment.
-  That supplementary count is what `mapping-result.json` counts as `totalReads`.
+  That supplementary count is what `mapping-result.json` counts as `totalReads`. The same file reports 90,990 mapped, which counts those supplementary records too, while 90,935 is the primary-mapped count. Both round to 99.77%.
   The reads align to the included reference as expected.
 - The benchmark VCF has 961 variant records inside the slice and is the truth set the variant-calling and variant-browser chapters compare their own calls against.
   It was NOT derived from the fixture's own reads. It comes independently from NIST's benchmark pipeline.
