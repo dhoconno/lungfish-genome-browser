@@ -1,14 +1,15 @@
 // Shared helpers for the 2026-09 campaign prose rules.
 //
-// report(): emits a lint message that is informational unless
-// LUNGFISH_MANUAL_STRICT=1, so the rules can land before every chapter has
-// been rewritten. The per-chapter pipeline and the final gate run strict.
+// report(): emits a lint message that fails the run. Strict is the default
+// now that every chapter has been rewritten (2026-09 campaign, Task 6.1).
+// Set LUNGFISH_MANUAL_STRICT=0 to make the campaign rules informational
+// again, for instance while drafting a chapter that is not yet gated.
 //
 // proseText(): the visible prose of a block node, with code, HTML, and link
 // URLs removed, so punctuation and word rules never fire on code or paths.
 export function report(file, message, node) {
   const msg = file.message(message, node);
-  if (process.env.LUNGFISH_MANUAL_STRICT !== "1") msg.fatal = false;
+  if (process.env.LUNGFISH_MANUAL_STRICT === "0") msg.fatal = false;
   return msg;
 }
 
