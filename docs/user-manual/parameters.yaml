@@ -3276,3 +3276,822 @@ operations:
       redraw. Above roughly 2 bp per pixel the viewport stops drawing individual reads
       and shows only the coverage curve. A read-group panel appears below these
       controls when the alignment carries more than one read group.
+
+  variants.call-lofreq:
+    title: Call Variants (LoFreq)
+    entry_points:
+      - "Tools > Call Variants..."
+      - "Inspector > Analysis > Variant Calling > Call Variants..."
+      - "CLI: lungfish-cli variants call --bundle <bundle> --alignment-track <track> --caller lofreq"
+    gating: [variant-calling]
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingCatalog.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishApp/Views/Inspector/Sections/ReadStyleSection.swift
+      - Sources/LungfishWorkflow/Variants/ViralVariantCallingPipeline.swift
+      - Sources/LungfishApp/App/MainMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings:
+      - label: Alignment Track
+        control: popup
+        default: the first analysis-ready BAM alignment track in the bundle
+        allowed: any analysis-ready BAM alignment track in the bundle
+        effect: Chooses which alignment the caller reads its evidence from. The alignment itself is never changed, only read.
+        when_to_change: Change it whenever the bundle holds more than one alignment and the first one is not the one you meant.
+        cli_flag: --alignment-track
+      - label: Output Variant Track Name
+        control: text
+        default: the alignment name, then a bullet, then LoFreq
+        allowed: any text, and the app appends a number when the name is already taken
+        effect: Names the variant track the run creates. That name becomes the value in the table drawer's Source column, which is how you tell two callers apart.
+        when_to_change: Change it when you want a shorter or more descriptive label than the generated one.
+        cli_flag: --name
+      - label: Minimum Allele Frequency
+        control: text
+        default: "0.05"
+        allowed: a decimal between 0 and 1, or blank
+        effect: Records the smallest fraction of reads that must carry an alternate base for the call to interest you. For LoFreq this number is written into the run's provenance record but is never passed to LoFreq itself.
+        when_to_change: Leave it alone for LoFreq, since changing it does not change the calls. Set a LoFreq threshold through Extra arguments instead.
+        cli_flag: --min-af
+      - label: Minimum Depth
+        control: text
+        default: "10"
+        allowed: a whole number, or blank
+        effect: Records how many reads must cover a position before a call there is trusted. For LoFreq this number is written into the run's provenance record but is never passed to LoFreq itself.
+        when_to_change: Leave it alone for LoFreq. Use Extra arguments with LoFreq's own --min-cov to set a real depth floor.
+        cli_flag: --min-depth
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any LoFreq flags, written exactly as LoFreq expects them
+        effect: Inserts your own text into the lofreq call command line, right after the word call and ahead of the reference, output, and BAM arguments. This is the only route to any LoFreq setting.
+        when_to_change: Use it when you need a LoFreq knob such as --min-cov 50, or --call-indels to switch on indel calling.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+      - flag: -t, --threads
+        default: auto
+        effect: Sets how many threads the run may use, where the GUI always takes the machine's processor count.
+    notes: >-
+      The dialog is two columns, a tool sidebar on the left and one scrolling detail
+      pane on the right, over a footer bar carrying the readiness text, Cancel, and
+      Run. The pane stacks Overview, Thresholds, LoFreq Settings, Extra arguments, and
+      Readiness. LoFreq Settings holds no controls, only the line "LoFreq is ready to
+      run directly on the selected bundle alignment track." The command built is
+      "lofreq call -f <reference> -o <output> <bam>". When Extra arguments contains
+      --call-indels the pipeline first runs "lofreq indelqual --dindel" and "lofreq
+      index" on a copy of the BAM. The result is sorted, bgzipped, and tabix-indexed,
+      and a SQLite variant database is written beside it.
+
+  variants.call-ivar:
+    title: Call Variants (iVar)
+    entry_points:
+      - "Tools > Call Variants..."
+      - "Inspector > Analysis > Variant Calling > Call Variants..."
+      - "CLI: lungfish-cli variants call --bundle <bundle> --alignment-track <track> --caller ivar --ivar-primer-trimmed"
+    gating: [variant-calling]
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingCatalog.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishWorkflow/Variants/ViralVariantCallingPipeline.swift
+      - Sources/LungfishWorkflow/Variants/IVarCodonMerger.swift
+      - Sources/LungfishWorkflow/Variants/IVarTSVToVCFConverter.swift
+      - Sources/LungfishApp/Services/CLIVariantCallingRunner.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings:
+      - label: Alignment Track
+        control: popup
+        default: the first analysis-ready BAM alignment track in the bundle
+        allowed: any analysis-ready BAM alignment track in the bundle
+        effect: Chooses which alignment iVar reads. Picking a different track also re-reads the primer-trim record filed beside that track's BAM.
+        when_to_change: Change it whenever the bundle holds more than one alignment, and always point it at the primer-trimmed one.
+        cli_flag: --alignment-track
+      - label: Output Variant Track Name
+        control: text
+        default: the alignment name, then a bullet, then iVar
+        allowed: any text, and the app appends a number when the name is already taken
+        effect: Names the variant track the run creates. That name fills the table drawer's Source column.
+        when_to_change: Change it when you want a shorter or more descriptive label than the generated one.
+        cli_flag: --name
+      - label: Minimum Allele Frequency
+        control: text
+        default: "0.05"
+        allowed: a decimal between 0 and 1, or blank
+        effect: Sets the smallest fraction of reads that must carry an alternate base before iVar reports it. It becomes iVar's -t value, so 0.05 means a base seen in five reads of every hundred is reported.
+        when_to_change: Lower it to about 0.01 when you are hunting minority variants in a deeply sequenced amplicon, and raise it when you only want near-fixed changes.
+        cli_flag: --min-af
+      - label: Minimum Depth
+        control: text
+        default: "10"
+        allowed: a whole number, or blank
+        effect: Sets how many reads must cover a position before iVar will call there. It becomes iVar's -m value.
+        when_to_change: Raise it when your coverage is deep and you want only well-supported calls.
+        cli_flag: --min-depth
+      - label: This BAM has already been primer-trimmed for iVar.
+        control: checkbox
+        default: off, or on and locked when a primer-trim record is found beside the BAM
+        allowed: on or off
+        effect: States that the primer bases have already been clipped out of this alignment. iVar assumes trimmed input, and the run stays blocked until this is set.
+        when_to_change: Set it once you have run Primer-trim BAM, or when you trimmed the BAM outside the app. Never set it for an untrimmed amplicon BAM.
+        cli_flag: --ivar-primer-trimmed
+      - label: Consensus allele frequency
+        control: number
+        default: "0.75"
+        allowed: a decimal between 0 and 1
+        effect: Sets the frequency above which a variant counts as the consensus base. Two adjacent changes in the same codon are folded into one row when both clear this bar.
+        when_to_change: Lower it when a real double change sits at an intermediate frequency and you want it merged anyway.
+        cli_flag: --ivar-consensus-af
+      - label: Merge AF distance
+        control: number
+        default: "0.25"
+        allowed: a decimal between 0 and 1
+        effect: Sets how close two adjacent frequencies must be before the changes are folded into one codon row. It is the second route to merging, for pairs that do not clear the consensus bar.
+        when_to_change: Tighten it when unrelated neighbouring changes are being merged, and loosen it when a genuine pair is staying split.
+        cli_flag: --ivar-merge-af-threshold
+      - label: Minimum ALT quality
+        control: number
+        default: "20"
+        allowed: a whole number of Phred quality units, zero or greater
+        effect: Marks a call with the bq filter when the average quality of the alternate bases falls below this. A Phred score of 20 means the machine expects one wrong base in a hundred.
+        when_to_change: Raise it when the run's base qualities were high and you want low-quality calls flagged.
+        cli_flag: --ivar-bad-quality-threshold
+      - label: Ignore strand bias (recommended for amplicons)
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Skips the check that a variant appears on both DNA strands in similar numbers. Amplicon libraries are lopsided by design, so that check flags real variants as artifacts.
+        when_to_change: Turn it off only for shotgun or metagenomic libraries, where strand imbalance really is a warning sign.
+        cli_flag: --ivar-no-ignore-strand-bias
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any iVar flags, written exactly as iVar expects them
+        effect: Inserts your own text into the ivar variants command line, right after the word variants and ahead of the flags the app builds.
+        when_to_change: Use it for an iVar option the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+      - flag: -t, --threads
+        default: auto
+        effect: Sets how many threads the run may use, where the GUI always takes the machine's processor count.
+    notes: >-
+      The detail pane stacks Overview, Thresholds, iVar Settings, iVar Options, Extra
+      arguments, and Readiness. Only iVar shows the iVar Options section and the
+      primer-trim toggle. When the app finds its own primer-trim record beside the BAM,
+      the toggle is checked and greyed out and a caption below it reads "Primer-trimmed
+      by Lungfish on <date> using <scheme>". Behind the dialog the pipeline exports the
+      bundle's annotations to ivar-annotations.gff3 and runs "samtools mpileup -aa -A
+      -d 600000 -B -Q 20 -q 0 -f <ref> <bam>" piped into "ivar variants". The GFF3 is
+      what lets adjacent within-codon changes merge into one row. The converter writes
+      TYPE as the only INFO key, leaves QUAL as a literal dot, and can emit the FILTER
+      codes PASS, ft, bq, and sb. Depth and frequency live in the per-sample fields DP
+      and ALT_FREQ, with MERGED_AF and MERGED_DP added on a merged row. A second
+      all-haplotypes VCF is written beside the primary one. The strand-bias checkbox is
+      inverted on the command line, since the flag turns the filter on rather than off.
+
+  variants.call-medaka:
+    title: Call Variants (Medaka)
+    entry_points:
+      - "Tools > Call Variants..."
+      - "Inspector > Analysis > Variant Calling > Call Variants..."
+      - "CLI: lungfish-cli variants call --bundle <bundle> --alignment-track <track> --caller medaka --medaka-model <model>"
+    gating: [variant-calling]
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingCatalog.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishWorkflow/Variants/ViralVariantCallingPipeline.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings:
+      - label: Alignment Track
+        control: popup
+        default: the first analysis-ready BAM alignment track in the bundle
+        allowed: any analysis-ready BAM alignment track in the bundle
+        effect: Chooses which alignment the run reads. Medaka works from reads rather than a pileup, so the app rebuilds a FASTQ from this alignment first.
+        when_to_change: Change it whenever the bundle holds more than one alignment.
+        cli_flag: --alignment-track
+      - label: Output Variant Track Name
+        control: text
+        default: the alignment name, then a bullet, then Medaka
+        allowed: any text, and the app appends a number when the name is already taken
+        effect: Names the variant track the run creates. That name fills the table drawer's Source column.
+        when_to_change: Change it when you want a shorter or more descriptive label than the generated one.
+        cli_flag: --name
+      - label: Minimum Allele Frequency
+        control: text
+        default: "0.05"
+        allowed: a decimal between 0 and 1, or blank
+        effect: Records a frequency floor in the run's provenance. It is never passed to Medaka, which decides frequencies with its own trained model.
+        when_to_change: Leave it alone for Medaka. Use Extra arguments for any real Medaka threshold.
+        cli_flag: --min-af
+      - label: Minimum Depth
+        control: text
+        default: "10"
+        allowed: a whole number, or blank
+        effect: Records a depth floor in the run's provenance. It is never passed to Medaka.
+        when_to_change: Leave it alone for Medaka. Use Extra arguments for any real Medaka threshold.
+        cli_flag: --min-depth
+      - label: Medaka Model
+        control: text
+        default: empty, with the placeholder r1041_e82_400bps_sup_v5.0.0
+        allowed: any Medaka model identifier
+        effect: Names the trained model Medaka scores the reads against. The model has to match the pore chemistry and the basecaller version the run used, because the error pattern it corrects for is specific to both.
+        when_to_change: Always, since the field starts empty and Run stays disabled until you fill it. Read the value off your sequencing run's basecaller report.
+        cli_flag: --medaka-model
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any Medaka flags, written exactly as Medaka expects them
+        effect: Inserts your own text into the medaka variant command line, right after the word variant. This is the only route to any Medaka setting beyond the model.
+        when_to_change: Use it when you need a Medaka option the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+      - flag: -t, --threads
+        default: auto
+        effect: Sets how many threads the run may use, where the GUI always takes the machine's processor count.
+    notes: >-
+      The Medaka Settings section holds only the model field. Medaka and Clair3 write to
+      the same stored setting, so a model typed for one is still there when you switch
+      to the other, even though the labels differ. Before Medaka runs, the pipeline
+      rebuilds a FASTQ from the alignment with "samtools fastq -F 2304", which drops the
+      secondary and supplementary placements. The command built is "medaka variant -i
+      <fastq> -r <reference> -o <output> -m <model> -t <threads>". Medaka is given no
+      annotations, so it never merges adjacent within-codon changes the way iVar does.
+      The primer-trim record is read only for iVar, so a Medaka run receives no signal
+      that the alignment was trimmed.
+
+  variants.call-bcftools:
+    title: Call Variants (bcftools)
+    entry_points:
+      - "Tools > Call Variants..."
+      - "Inspector > Analysis > Variant Calling > Call Variants..."
+      - "CLI: lungfish-cli variants call --bundle <bundle> --alignment-track <track> --caller bcftools"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingCatalog.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishWorkflow/Variants/ViralVariantCallingPipeline.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings:
+      - label: Alignment Track
+        control: popup
+        default: the first analysis-ready BAM alignment track in the bundle
+        allowed: any analysis-ready BAM alignment track in the bundle
+        effect: Chooses which alignment bcftools reads its pileup from.
+        when_to_change: Change it whenever the bundle holds more than one alignment.
+        cli_flag: --alignment-track
+      - label: Output Variant Track Name
+        control: text
+        default: the alignment name, then a bullet, then bcftools
+        allowed: any text, and the app appends a number when the name is already taken
+        effect: Names the variant track the run creates. That name fills the table drawer's Source column.
+        when_to_change: Change it when you want a shorter or more descriptive label than the generated one.
+        cli_flag: --name
+      - label: Minimum Allele Frequency
+        control: text
+        default: "0.05"
+        allowed: a decimal between 0 and 1, or blank
+        effect: Records a frequency floor in the run's provenance. It is never passed to bcftools.
+        when_to_change: Leave it alone for bcftools. Use Extra arguments for any real threshold.
+        cli_flag: --min-af
+      - label: Minimum Depth
+        control: text
+        default: "10"
+        allowed: a whole number, or blank
+        effect: Records a depth floor in the run's provenance. It is never passed to bcftools.
+        when_to_change: Leave it alone for bcftools. Use Extra arguments for any real threshold.
+        cli_flag: --min-depth
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any bcftools call flags, written exactly as bcftools expects them
+        effect: Inserts your own text into the bcftools call command line, right after the word call and ahead of the flags the app builds.
+        when_to_change: Use it to set ploidy on a viral or bacterial genome, for example --ploidy 1.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+      - flag: -t, --threads
+        default: auto
+        effect: Sets how many threads the run may use, where the GUI always takes the machine's processor count.
+    notes: >-
+      bcftools is the one caller in this dialog gated on the lungfish-tools pack, the
+      Required Setup pack, rather than on the Variant Calling pack, so it is usually
+      installed already and the gating list above is left empty to say so. Its
+      section reads only "bcftools will run mpileup and call as an orthogonal
+      cross-check on the selected BAM." The pipeline runs "bcftools mpileup -Ou -f
+      <reference> <bam>" piped into "bcftools call -mv -Ov -o <output>". That pileup has
+      no depth cap and no base-quality floor, where the iVar pileup sets both, which is
+      one reason the two callers disagree on the same alignment.
+
+  variants.call-clair3:
+    title: Call Variants (Clair3)
+    entry_points:
+      - "Tools > Call Variants..."
+      - "Inspector > Analysis > Variant Calling > Call Variants..."
+      - "CLI: lungfish-cli variants call --bundle <bundle> --alignment-track <track> --caller clair3 --medaka-model <model-path>"
+    gating: [variant-calling]
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingCatalog.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishWorkflow/Variants/ViralVariantCallingPipeline.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings:
+      - label: Alignment Track
+        control: popup
+        default: the first analysis-ready BAM alignment track in the bundle
+        allowed: any analysis-ready BAM alignment track in the bundle
+        effect: Chooses which alignment Clair3 reads. Clair3 works from the BAM directly rather than from a rebuilt FASTQ.
+        when_to_change: Change it whenever the bundle holds more than one alignment.
+        cli_flag: --alignment-track
+      - label: Output Variant Track Name
+        control: text
+        default: the alignment name, then a bullet, then Clair3
+        allowed: any text, and the app appends a number when the name is already taken
+        effect: Names the variant track the run creates. That name fills the table drawer's Source column.
+        when_to_change: Change it when you want a shorter or more descriptive label than the generated one.
+        cli_flag: --name
+      - label: Minimum Allele Frequency
+        control: text
+        default: "0.05"
+        allowed: a decimal between 0 and 1, or blank
+        effect: Records a frequency floor in the run's provenance. It is never passed to Clair3, which uses its own trained network.
+        when_to_change: Leave it alone for Clair3. Use Extra arguments for any real threshold.
+        cli_flag: --min-af
+      - label: Minimum Depth
+        control: text
+        default: "10"
+        allowed: a whole number, or blank
+        effect: Records a depth floor in the run's provenance. It is never passed to Clair3.
+        when_to_change: Leave it alone for Clair3. Use Extra arguments for any real threshold.
+        cli_flag: --min-depth
+      - label: Clair3 Model
+        control: text
+        default: empty, with the placeholder r1041_e82_400bps_sup_v5.0.0
+        allowed: a Clair3 model directory path, or an ONT model identifier
+        effect: Points Clair3 at the trained network it scores reads with. As with Medaka, the model has to match the pore chemistry and basecaller version of the run.
+        when_to_change: Always, since the field starts empty and Run stays disabled until you fill it.
+        cli_flag: --medaka-model
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any Clair3 flags, written exactly as Clair3 expects them
+        effect: Appends your own text to the end of the Clair3 command line. This is the only route to any Clair3 setting beyond the model.
+        when_to_change: Use it when you need a Clair3 option the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+      - flag: -t, --threads
+        default: auto
+        effect: Sets how many threads the run may use, where the GUI always takes the machine's processor count.
+    notes: >-
+      Clair3 shares its model setting with Medaka, so switching between the two callers
+      keeps whatever you typed even though the field label changes. The command built is
+      "run_clair3.sh --bam_fn=<bam> --ref_fn=<reference> --threads=<n> --platform=ont
+      --model_path=<model> --output=<directory>", with any extra arguments appended at
+      the end. The platform is hard-coded to ont. Lungfish Genome Explorer then reads
+      merge_output.vcf.gz back out of that output directory. Unlike the four other
+      callers, Clair3's extra arguments go at the end of the command rather than near
+      the front.
+
+  variants.call-gatk-haplotypecaller:
+    title: Call Variants (GATK HaplotypeCaller)
+    entry_points:
+      - "Tools > Call Variants..."
+      - "Inspector > Analysis > Variant Calling > Call Variants..."
+      - "CLI: lungfish-cli gatk haplotype-caller --reference <fasta> --bam <bam> --output <vcf>"
+    gating: [gatk-core, experimental]
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingCatalog.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishWorkflow/Conda/PluginPack.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/gatk.txt
+    settings:
+      - label: Alignment Track
+        control: popup
+        default: the first analysis-ready BAM alignment track in the bundle
+        allowed: any analysis-ready BAM alignment track in the bundle
+        effect: Chooses which alignment GATK reassembles reads from. GATK is a germline caller, so this should be a whole-genome or exome alignment rather than an amplicon one.
+        when_to_change: Change it whenever the bundle holds more than one alignment.
+        cli_flag: --bam
+      - label: Output Variant Track Name
+        control: text
+        default: the alignment name, then a bullet, then GATK HaplotypeCaller
+        allowed: any text, and the app appends a number when the name is already taken
+        effect: Names the variant track the run creates. The VCF itself lands under the bundle's variants/gatk folder.
+        when_to_change: Change it when you want a shorter or more descriptive label than the generated one.
+        cli_flag: null
+      - label: Minimum Allele Frequency
+        control: text
+        default: "0.05"
+        allowed: a decimal between 0 and 1, or blank
+        effect: Recorded with the run but not passed to GATK. GATK decides which alleles to emit from its own genotype likelihoods rather than from a frequency cut-off.
+        when_to_change: Leave it alone. Use Extra arguments for a real GATK threshold.
+        cli_flag: null
+      - label: Minimum Depth
+        control: text
+        default: "10"
+        allowed: a whole number, or blank
+        effect: Recorded with the run but not passed to GATK.
+        when_to_change: Leave it alone. Use Extra arguments for a real GATK threshold.
+        cli_flag: null
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any GATK HaplotypeCaller flags, written exactly as GATK expects them
+        effect: Adds your own arguments to the HaplotypeCaller command the app assembles. This is the only route to a GATK setting from inside the dialog.
+        when_to_change: Use it to restrict the run to an interval list, or to change ploidy on a non-diploid sample.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --emit-ref-confidence
+        default: GVCF
+        effect: Chooses whether the run writes a GVCF, which records confidence at every position including the matching ones, or a plain VCF of variants only. The dialog always asks for the plain VCF.
+      - flag: --ploidy
+        default: "2"
+        effect: Sets how many copies of each chromosome the sample carries, which is 2 for a human and 1 for a virus.
+      - flag: --intervals
+        default: none
+        effect: Restricts the run to the regions in a BED or interval-list file, which is much faster than calling the whole genome.
+      - flag: --pcr-indel-model
+        default: CONSERVATIVE
+        effect: Tells GATK how much insertion and deletion noise to expect from the library's PCR step.
+      - flag: --stand-call-conf
+        default: "30.0"
+        effect: Sets the confidence score a call must reach before it is emitted, when the run is not writing a GVCF.
+      - flag: --max-alternate-alleles
+        default: "6"
+        effect: Caps how many different alternate bases GATK will consider at one position, which bounds the work at messy sites.
+      - flag: --pair-hmm-threads
+        default: "4"
+        effect: Sets how many threads the read-to-haplotype scoring step uses.
+      - flag: --execute
+        default: "false"
+        effect: Actually runs GATK through the managed pack. Without it the command is only constructed and printed.
+      - flag: --dry-run
+        default: "false"
+        effect: Prints the command preview and stops.
+    notes: >-
+      Both GATK entries sit behind the gatk-core pack, which is marked experimental, so
+      the sidebar row is disabled with the reason "Requires GATK Core Pack" until the
+      pack is installed. The GATK HaplotypeCaller Settings section holds no controls,
+      only the line "GATK HaplotypeCaller will write a standard genotype VCF for the
+      selected BAM." The dialog fixes reference confidence to NONE, so it always
+      produces a plain VCF, and it takes the reference FASTA and the BAM path from the
+      bundle rather than asking. The full germline toolchain, ten subcommands in all,
+      is on the command line only, and is registered separately as variants.gatk-plans.
+
+  variants.call-gatk-whatshap-phased:
+    title: Call Variants (GATK + WhatsHap Phased)
+    entry_points:
+      - "Tools > Call Variants..."
+      - "Inspector > Analysis > Variant Calling > Call Variants..."
+      - "CLI: lungfish-cli variants phase --reference <fasta> --bam <bam> --output-vcf <vcf>"
+    gating: [gatk-core, phasing, experimental]
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingCatalog.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishApp/Views/Inspector/InspectorViewController+VariantWorkflow.swift
+      - Sources/LungfishWorkflow/Variants/PhasedVariantCallingPlan.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings:
+      - label: Alignment Track
+        control: popup
+        default: the first analysis-ready BAM alignment track in the bundle
+        allowed: any analysis-ready BAM alignment track in the bundle
+        effect: Chooses which alignment the plan is built around. Phasing needs reads long enough to span two nearby variants, so the choice of alignment decides whether phasing can work at all.
+        when_to_change: Change it whenever the bundle holds more than one alignment.
+        cli_flag: --bam
+      - label: Output Variant Track Name
+        control: text
+        default: the alignment name, then a bullet, then GATK + WhatsHap Phased
+        allowed: any text, and the app appends a number when the name is already taken
+        effect: Names the track the plan would create. The phased VCF path is set to the bundle's variants/phased folder.
+        when_to_change: Change it when you want a shorter or more descriptive label than the generated one.
+        cli_flag: null
+      - label: Minimum Allele Frequency
+        control: text
+        default: "0.05"
+        allowed: a decimal between 0 and 1, or blank
+        effect: Recorded with the plan but not passed to either tool.
+        when_to_change: Leave it alone. Use Extra arguments for a real GATK threshold.
+        cli_flag: null
+      - label: Minimum Depth
+        control: text
+        default: "10"
+        allowed: a whole number, or blank
+        effect: Recorded with the plan but not passed to either tool.
+        when_to_change: Leave it alone. Use Extra arguments for a real GATK threshold.
+        cli_flag: null
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any GATK HaplotypeCaller flags, written exactly as GATK expects them
+        effect: Adds your own arguments to the HaplotypeCaller half of the plan. The dialog offers no equivalent for the WhatsHap half.
+        when_to_change: Use it to restrict the calling step to an interval list.
+        cli_flag: --extra-gatk-args
+    cli_only:
+      - flag: --output-dir
+        default: the folder holding the output VCF
+        effect: Chooses where the written command plan and its provenance record land.
+      - flag: --sample
+        default: none
+        effect: Names the sample WhatsHap should phase, for a VCF carrying more than one.
+      - flag: --threads
+        default: "1"
+        effect: Sets how many threads the GATK scoring step uses, where the GUI plan takes the machine's processor count.
+      - flag: --extra-whatshap-args
+        default: none
+        effect: Adds your own arguments to the WhatsHap phase command.
+      - flag: --execute
+        default: "false"
+        effect: Actually runs GATK and WhatsHap through the managed packs. Without it the plan is written and printed but nothing runs.
+      - flag: --dry-run
+        default: "false"
+        effect: Writes and prints the command plan without running either tool.
+    notes: >-
+      Phasing works out which nearby variants sit on the same copy of a chromosome,
+      which matters when two changes in one gene could either disable both copies or
+      leave one intact. This entry needs two packs, gatk-core and phasing, and both are
+      marked experimental. The Settings section holds no controls, only the line "GATK
+      HaplotypeCaller and WhatsHap will be assembled as a phase-aware command plan."
+      Selecting this caller and clicking Run currently ends in an alert titled "Variant
+      Calling Not Ready", because the dialog builds a phased plan into
+      pendingPhasedVariantPlan while the launcher in
+      InspectorViewController+VariantWorkflow.swift only ever reads pendingGATKRequest
+      and pendingRequest. The working route to a phased plan is the command line, with
+      lungfish-cli variants phase. That is registered separately as variants.phase.
+
+  variants.filter-table:
+    title: Filtering the variants table
+    entry_points:
+      - "Open a reference bundle, then the table drawer's Variants tab"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Viewer/AnnotationTableDrawerView.swift
+      - Sources/LungfishApp/Views/Viewer/AnnotationTableDrawerView+Columns.swift
+      - Sources/LungfishApp/Views/Viewer/AnnotationTableDrawerView+Filtering.swift
+      - Sources/LungfishApp/Views/Viewer/SmartFilterTokens.swift
+      - Sources/LungfishApp/Views/Viewer/VariantQueryBuilderSheet.swift
+      - Sources/LungfishApp/Views/Viewer/QueryRule.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController+AnnotationDrawer.swift
+    settings:
+      - label: Calls / Genotypes
+        control: radio
+        default: Calls
+        allowed: Calls, Genotypes
+        effect: Switches the table between one row per variant and one row per sample genotype at each variant. At narrow window widths the second label shortens to GT.
+        when_to_change: Switch to Genotypes when the VCF holds several samples and you want to compare their calls side by side.
+        cli_flag: null
+      - label: Region / Genome
+        control: radio
+        default: Region
+        allowed: Region, Genome
+        effect: Decides whether the table lists only the variants inside the stretch the viewport is showing, or queries the whole genome. Its tooltip reads "Choose whether variants follow the visible region or query the whole genome".
+        when_to_change: Switch to Genome when you are counting or filtering across the whole reference rather than reading one locus.
+        cli_flag: null
+      - label: Presets
+        control: popup
+        default: no chips applied, and the strip starts collapsed
+        allowed: fourteen chips in four sections, Biological Effect, Quality / QC, Population / Frequency, and Sample / Genotype
+        effect: Opens a strip of one-click filters. Biological Effect holds SNV, Indel, High Impact, Moderate+, and ClinVar Path. Quality / QC holds PASS, Qual >= 30, and DP >= 10. Population / Frequency holds Rare (<1%), Minor (<=20%), Mixed (20-80%), and Dominant (>=80%). Sample / Genotype holds Het Only and Bookmarked.
+        when_to_change: Use it whenever you want a common filter without composing a query. The button is titled "Presets" followed by a triangle, and it hides itself when the window is narrow or the VCF defines no INFO keys.
+        cli_flag: null
+      - label: Search Builder...
+        control: popup
+        default: one blank rule, with Match All logic
+        allowed: any number of rules across the seven categories
+        effect: Opens the Variant Query Builder sheet, which is the only way to compose a filter by hand. Each rule picks a category, a field, an operator, and a value, and the sheet writes the resulting query text for you.
+        when_to_change: Use it when a preset chip is not specific enough, for example to keep a coordinate window or to test one sample's genotype.
+        cli_flag: --filter
+      - label: Auto / Haploid / Diploid
+        control: popup
+        default: Auto
+        allowed: Auto, Haploid, Diploid
+        effect: Tells the three frequency chips how to read allele fractions. Auto guesses from the size of the reference, and the other two force the choice. Its tooltip offers Auto from reference size, or forcing haploid or diploid.
+        when_to_change: Force Haploid when you are reading a virus or a bacterium and the automatic guess got it wrong.
+        cli_flag: null
+      - label: Clear
+        control: popup
+        default: hidden until a filter is active
+        allowed: press to clear
+        effect: Drops every active variant filter, both the chips and anything the Search Builder wrote. Its tooltip reads "Clear variant filter".
+        when_to_change: Use it whenever you want the full table back.
+        cli_flag: null
+    cli_only: []
+    notes: >-
+      The variant free-text field is permanently hidden, so the chips and the Search
+      Builder are the whole filtering surface. The drawer opens by itself when the
+      bundle you load carries a variant or annotation track, sits at 250 points tall by
+      default, and remembers a height you drag it to. The query language behind both
+      surfaces recognises the clause keys text, chr, pos, range, region, qual, sc,
+      filter, genes, and type, and anything else becomes a filter on an INFO key of that
+      name. Colons and equals signs are interchangeable, so pos:100-200 and pos=100-200
+      both work, and coordinates take a range rather than a comparison. Clauses are
+      separated with a semicolon and always combine with AND. Per-sample clauses take
+      the form Sample[<name>].<field> with GT, AF, and DP as the only fields. Three
+      chip groups behave like radio buttons within themselves, the two type chips, the
+      two impact chips, and the three frequency chips. The Search Builder is disabled on
+      a very large variant database, and its tooltip then explains why. The sheet's own
+      built-in presets include High-Confidence Coding, Rare Pathogenic, and Quality
+      Review, and Save Preset... stores one of your own.
+
+  variants.query:
+    title: Query bundle variants
+    entry_points:
+      - "CLI: lungfish-cli variants query <bundle-path> --filter <filter> --output <vcf>"
+    gating: []
+    sources:
+      - Sources/LungfishCLI/Commands/VariantsCommand.swift
+      - Sources/LungfishIO/Bundles/VariantSmartFilter.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings: []
+    cli_only:
+      - flag: <bundle-path>
+        default: none
+        effect: Names the .lungfishref bundle whose variant database is queried. The bundle must already carry a variant track.
+      - flag: --filter
+        default: none
+        effect: Holds the smart filter that decides which variants are written out, for example Sample[NA12878].GT=1/1. Several clauses are separated with a semicolon and always combine with AND.
+      - flag: -o, --output
+        default: none
+        effect: Names the VCF the matching variants are written to.
+      - flag: --limit
+        default: "5000"
+        effect: Caps how many variants the export writes, so a broad filter on a large database does not run away.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+      - flag: -t, --threads
+        default: auto
+        effect: Sets how many threads the query may use.
+    notes: >-
+      This command has no dialog. The in-app equivalent is the table drawer's Search
+      Builder, and the two share the same filter grammar, so a query you build in the
+      sheet can be pasted straight into --filter. The command stages the output first,
+      writes a provenance record beside it, and publishes the new VCF only once that
+      record is safely saved, restoring the previous record if anything fails. The
+      grammar accepts the plain clause keys, INFO-key comparisons, per-sample clauses
+      of the form Sample[<name>].<field>, a count over all samples written as
+      count(Sample[*].GT=1/1) >= 5, and a sample-to-sample comparison such as
+      Sample[A].GT != Sample[B].GT. Per-sample clauses accept only GT, AF, and DP.
+
+  variants.extract-sample:
+    title: Extract one sample's variants
+    entry_points:
+      - "CLI: lungfish-cli variants extract-sample <bundle-path> --sample <sample> --output <vcf>"
+    gating: []
+    sources:
+      - Sources/LungfishCLI/Commands/VariantsCommand.swift
+      - Sources/LungfishApp/Views/Viewer/AnnotationTableDrawerView+Columns.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings: []
+    cli_only:
+      - flag: <bundle-path>
+        default: none
+        effect: Names the .lungfishref bundle whose variant database holds the sample.
+      - flag: --sample
+        default: none
+        effect: Names the one sample to pull out, using the sample name as the VCF spells it.
+      - flag: -o, --output
+        default: none
+        effect: Names the single-sample VCF that is written.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+      - flag: -t, --threads
+        default: auto
+        effect: Sets how many threads the extraction may use.
+    notes: >-
+      This command has no dialog. It is the narrow cousin of variants query, splitting
+      one sample out of a multi-sample variant database rather than filtering rows. The
+      drawer's Samples tab is the closest in-app surface, but it only hides and shows
+      samples in the table rather than writing a file. Sample names can be read off that
+      tab, whose columns are a visibility checkbox, Sample, Display Name, and Source.
+
+  variants.gatk-plans:
+    title: GATK germline command plans
+    entry_points:
+      - "CLI: lungfish-cli gatk <subcommand>"
+    gating: [gatk-core, experimental]
+    sources:
+      - Sources/LungfishWorkflow/Conda/PluginPack.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/gatk.txt
+    settings: []
+    cli_only:
+      - flag: --execute
+        default: "false"
+        effect: Runs the tool through the managed gatk-core environment and writes a provenance record naming the files it produced. Every subcommand accepts it, and without it the command is only constructed.
+      - flag: --dry-run
+        default: "false"
+        effect: Prints the command preview and stops. Every subcommand accepts it.
+      - flag: --extra-args
+        default: none
+        effect: Adds your own arguments to the constructed command. Every subcommand accepts it.
+      - flag: haplotype-caller
+        default: none
+        effect: Builds a HaplotypeCaller command that calls germline variants from one BAM, with --emit-ref-confidence, --ploidy, --intervals, --pcr-indel-model, --stand-call-conf, --max-alternate-alleles, and --pair-hmm-threads.
+      - flag: joint-genotype
+        default: none
+        effect: Builds the commands that combine several per-sample GVCFs into one cohort VCF, with --gvcf repeated per sample, --intermediate, and --combine-strategy set to auto, combine-gvcfs, or genomicsdb.
+      - flag: filter
+        default: none
+        effect: Builds a VariantFiltration command that flags calls failing a preset, with --preset set to best-practices-snp, best-practices-indel, or best-practices-both.
+      - flag: select
+        default: none
+        effect: Builds a SelectVariants command that pulls out one sample, one variant type, or one set of intervals, with --sample, --type, and --intervals.
+      - flag: variants-to-table
+        default: none
+        effect: Builds a VariantsToTable command that flattens a VCF into a spreadsheet-friendly TSV, with --fields defaulting to CHROM,POS,REF,ALT,QUAL,AF,DP.
+      - flag: bqsr
+        default: none
+        effect: Builds the BaseRecalibrator and ApplyBQSR commands that correct systematic base-quality errors, with --known-sites repeated for dbSNP and Mills, --recal-table, and --create-output-bam-index.
+      - flag: markdup
+        default: none
+        effect: Builds a Picard MarkDuplicates command, with --bam repeated per lane, --metrics, --create-index, --remove-duplicates, and --validation-stringency.
+      - flag: validate-sam
+        default: none
+        effect: Builds a Picard ValidateSamFile command that checks a BAM for format problems, with --mode set to SUMMARY or VERBOSE, --validate-index, and --ignore-warnings.
+      - flag: leftalign
+        default: none
+        effect: Builds a LeftAlignAndTrimVariants command that writes insertions and deletions in a canonical position, with --split-multi-allelics, --max-indel-length, and --max-leading-bases.
+      - flag: collect-metrics
+        default: none
+        effect: Builds a Picard CollectVariantCallingMetrics command that summarises a call set against dbSNP, with --output-prefix, --dbsnp, --sequence-dictionary, and --gvcf-input.
+    notes: >-
+      This whole toolchain is command line only. The GUI reaches just one of its ten
+      subcommands, HaplotypeCaller, through the Call Variants dialog, and with far fewer
+      settings. The command overview states the contract plainly, that it "Builds
+      reproducible GATK command lines by default" and that --execute is what actually
+      runs anything. The gatk-core pack is marked experimental and pins GATK 4.6.2.0.
+      Every subcommand takes --reference or --vcf as its main input and --output as its
+      destination, and the same three shared flags above.
+
+  variants.phase:
+    title: Phase-aware GATK plus WhatsHap plan
+    entry_points:
+      - "CLI: lungfish-cli variants phase --reference <fasta> --bam <bam> --output-vcf <vcf>"
+    gating: [gatk-core, phasing, experimental]
+    sources:
+      - Sources/LungfishWorkflow/Variants/PhasedVariantCallingPlan.swift
+      - Sources/LungfishApp/Views/BAM/BAMVariantCallingDialogState.swift
+      - Sources/LungfishWorkflow/Conda/PluginPack.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/variants.txt
+    settings: []
+    cli_only:
+      - flag: --reference
+        default: none
+        effect: Names the reference FASTA both tools are run against.
+      - flag: --bam
+        default: none
+        effect: Names the input alignment. Phasing needs reads long enough to span two nearby variants, so long reads or linked reads work best.
+      - flag: --output-vcf
+        default: none
+        effect: Names the final phased VCF the plan produces.
+      - flag: --output-dir
+        default: the folder holding the output VCF
+        effect: Chooses where the written command plan and its provenance record land.
+      - flag: --sample
+        default: none
+        effect: Names the sample WhatsHap should phase, for a VCF carrying more than one.
+      - flag: --threads
+        default: "1"
+        effect: Sets how many threads the GATK read-to-haplotype scoring step uses.
+      - flag: --extra-gatk-args
+        default: none
+        effect: Adds your own arguments to the HaplotypeCaller half of the plan.
+      - flag: --extra-whatshap-args
+        default: none
+        effect: Adds your own arguments to the WhatsHap phase half of the plan.
+      - flag: --execute
+        default: "false"
+        effect: Runs GATK and WhatsHap through the managed tool packs rather than only writing the plan.
+      - flag: --dry-run
+        default: "false"
+        effect: Writes and prints the command plan without running either tool.
+    notes: >-
+      Phasing sorts nearby variants onto the same copy of a chromosome or onto opposite
+      copies, which is what separates two changes that disable both copies of a gene
+      from two that leave one copy intact. The plan is two steps, GATK HaplotypeCaller
+      to make the calls and WhatsHap to phase them against the reads. This is the
+      working route to a phased plan, since the dialog's GATK + WhatsHap Phased entry
+      builds its plan but never launches it and ends in a "Variant Calling Not Ready"
+      alert. Two experimental packs are needed, gatk-core for GATK 4.6.2.0 and phasing
+      for WhatsHap 2.3.
