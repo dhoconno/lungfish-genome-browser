@@ -20,6 +20,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Amplicon**{#amplicon}. A target region of a genome amplified by PCR, used as the unit of an amplicon-based sequencing protocol such as ARTIC or QIASeqDIRECT. A run produces many overlapping amplicons that together tile the region of interest.
 
+**Annotation track**{#annotation-track}. One named set of features stored together inside a reference bundle and drawn as a single layer in the annotation lane of the sequence viewport, carrying both a display name and a stable track ID, so a GenBank import creates one named Imported Annotations and a bundle can hold several tracks at once. See also: reference bundle, GFF, sequence viewport.
+
 **Assembly bundle**{#assembly-bundle}. A `.lungfishref` bundle that holds a de novo assembly produced inside the project, typically by SPAdes or MEGAHIT, and lives under the project's `Analyses/` folder alongside every other result. The internal structure is identical to a reference bundle; only the folder placement distinguishes the two. See also: reference bundle, bundle.
 
 ## B
@@ -34,7 +36,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Barcode kit**{#barcode-kit}. The named set of barcode sequences a sequencing kit uses to tag samples, which Lungfish reads to demultiplex a run. See also: barcode, demultiplex.
 
-**BCF**{#bcf}. The compact binary form of VCF, holding the same rows and header but packed for machines, which is what a Lungfish reference bundle stores under its `variants/` folder alongside a CSI index and an optional SQLite sidecar. See also: VCF, CSI.
+**BCF**{#bcf}. The compact binary form of VCF, holding the same rows and header but packed for machines. Lungfish Genome Explorer reads an imported BCF with a CSI index beside it, but stores the variant tracks it writes as a bgzip-compressed VCF with a tabix index under the bundle's `variants/` folder, alongside a SQLite sidecar that indexes the same rows. See also: VCF, CSI, tabix.
 
 **Benchmark VCF**{#benchmark-vcf}. A variant call set produced independently of the reads under study and treated as an answer key, such as the Genome in a Bottle small-variant benchmark for HG002 that this manual compares its own calls against. See also: VCF, variant-caller.
 
@@ -126,7 +128,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **GenomicsDB**{#genomicsdb}. GATK's on-disk multi-sample variant store that scales joint genotyping to large cohorts better than a single combined GVCF; Lungfish builds one with `GenomicsDBImport` when a cohort exceeds 50 samples. See also: GVCF, joint genotyping.
 
-**Genotype**{#genotype}. A compact notation for which alleles are observed at a variant position, written diploid-style as `0/1` (heterozygous) or `1/1` (homozygous alternate), where `0` is the reference allele and `1` the first alternate. Lungfish's iVar lane writes the bare haploid `1` instead, which is the honest notation for an organism carrying one genome copy. See also: heterozygous, homozygous, FORMAT.
+**Genotype**{#genotype}. A compact notation for which alleles are observed at a variant position, written diploid-style as `0/1` (heterozygous) or `1/1` (homozygous alternate), where `0` is the reference allele and `1` the first alternate. The Lungfish Genome Explorer iVar pipeline writes the bare haploid `1` instead, which is the honest notation for an organism carrying one genome copy. See also: heterozygous, homozygous, FORMAT.
 
 **Genotype matrix**{#genotype-matrix}. The Lungfish dashboard that presents genotype calls as allele-target rows by sample columns, with a haplotype tape, cohort summary, and per-sample evidence; it is not one of the five genomic viewport classes. See also: haplotype, cohort.
 
@@ -282,6 +284,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Reproducibility**{#reproducibility}. The property that a workflow re-run with the same inputs, the same plugin pack version, and the same Lungfish build produces output that matches the original by checksum (bit-identical) or by content (logically equivalent); the provenance sidecar carries every field needed to verify this. See also: provenance sidecar.
 
+**Reverse complement**{#reverse-complement}. The sequence read from the opposite DNA strand, obtained by reading the bases backwards and swapping each for its pairing partner (A for T, C for G), so reading frames -1, -2, and -3 are the three frames counted along it and Lungfish runs the transformation from **Sequence > Reverse Complement...**. See also: strand, reading frame.
+
 **Run record**{#run-record}. The provenance a single Lungfish operation left behind, read in the Inspector's Provenance section as seven blocks (Run Summary, Warnings, Lineage, Files and Outputs, Invocation and Options, Runtime, and Raw JSON) and stored on disk as one provenance sidecar. See also: provenance sidecar, workflow lineage.
 
 ## S
@@ -289,6 +293,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Sample metadata**{#sample-metadata}. Structured per-sample fields (collection date, source, and so on) imported from a CSV or TSV sheet and attached to samples in a project. See also: BioSample.
 
 **savONT**{#savont}. A clustering option for full-length ONT MHC amplicons, an alternative to pbAA. See also: clustering, pbAA.
+
+**Sequence viewport**{#sequence-viewport}. The centre pane of a Lungfish project window when a reference bundle is open, drawing one sequence along a horizontal axis as three stacked lanes rather than three separate panes, with the numbered position ruler on top, the bases in the middle, and the annotation features as coloured blocks below. See also: reference bundle, annotation track, Inspector.
 
 **SH-aLRT**{#sh-alrt}. The Shimodaira-Hasegawa approximate likelihood ratio test, a fast branch-support measure IQ-TREE reports as a percentage at each internal node; read alongside bootstrap support, with values at or above 80 treated as reliable. See also: support value, IQ-TREE.
 
@@ -300,7 +306,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Single-end**{#single-end}. A sequencing protocol that reads each DNA fragment from one end only, producing one FASTQ file per sample; common for Oxford Nanopore and for some Illumina shotgun protocols. See also: FASTQ, paired-end.
 
-**Smart-filter token**{#smart-filter-token}. One of the named filter chips above the Variants tab, such as PASS, SNV, or DP >= 10, that applies a common variant filter with a single click and appears only when the loaded track carries the field it needs. See also: filter profile, FILTER.
+**Smart-filter token**{#smart-filter-token}. One of the named filter chips revealed by the Presets button above the Variants tab, such as PASS, SNV, or DP >= 10, that applies a common variant filter with a single click and appears only when the loaded track carries the field it needs. See also: filter profile, FILTER.
 
 **Soft-clip**{#soft-clip}. A flag in a BAM record (the `S` letter in a CIGAR string) marking bases at the start or end of a read that are present in the record but excluded from pileup, coverage, and variant calling; primer trimming works by soft-clipping primer-derived bases rather than deleting them. See also: primer trim, CIGAR.
 
