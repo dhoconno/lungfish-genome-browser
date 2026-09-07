@@ -4,7 +4,7 @@ chapter_id: 99-test/bad-sentence-colon
 audience: bench-scientist
 prereqs: []
 estimated_reading_min: 3
-shots: []
+shots: [{id: demo-shot, caption: "Demo."}]
 glossary_refs: []
 features_refs: []
 fixtures_refs: []
@@ -32,3 +32,11 @@ The clock read 12:30 when it finished, and `a:b` is a path.
 ## Procedure
 
 Choose a mapper: minimap2 is the default.
+
+The next screen shows:
+<!-- SHOT: demo-shot -->
+
+1. Sample name.
+2. Reference sequence.
+
+Visit https://example.com:8080/path for details.
