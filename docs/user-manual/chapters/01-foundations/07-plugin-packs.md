@@ -3,301 +3,222 @@ title: Plugin Packs
 chapter_id: 01-foundations/07-plugin-packs
 audience: bench-scientist
 prereqs: [01-foundations/06-the-lungfish-project]
-estimated_reading_min: 8
-task: Install and verify Lungfish Genome Explorer plugin packs from the Plugin Manager.
-tags: [foundations, plugin-pack, installation]
+estimated_reading_min: 12
+task: Install and verify Lungfish Genome Explorer plugin packs and reference databases from the Plugin Manager.
+tags: [foundations, plugin-pack, installation, databases]
 tools: []
+parameters_refs: [classify.install-database]
 entry_points:
-  - "Tools > Plugin Manager (Cmd-Shift-B)"
+  - Tools > Plugin Manager... (Cmd-Shift-B)
+  - Settings > Advanced
+  - "CLI: lungfish-cli conda packs"
+  - "CLI: lungfish-cli conda db list"
 shots:
   - id: plugin-manager-window
-    file: ../../assets/screenshots/01-foundations/07-plugin-packs/plugin-manager-window.png
-    caption: "The Plugin Manager window on the Packs tab, showing the Required Setup section with every Third-Party Tools entry ready, the Read Mapping pack with all three mappers ready, and the Variant Calling pack with three of four callers ready (Clair3 needs install)."
+    caption: "The Plugin Manager on the Packs tab, with the Required Setup section above the Optional Tools section and the Read Mapping card showing its three mappers."
+  - id: plugin-manager-offline-commands
+    caption: "The offline strip at the foot of one pack card, showing the two greyed command lines and the Copy button beside them."
+  - id: plugin-manager-installed-tab
+    caption: "The Installed tab with one environment row expanded to list the packages and versions inside it, and the Check for Tool Updates button above the list."
   - id: plugin-manager-databases-tab
-    file: ../../assets/screenshots/01-foundations/07-plugin-packs/plugin-manager-databases-tab.png
-    caption: "The Plugin Manager window on the Databases tab, showing Kraken2 databases (some installed, others available to download), the EsViritu Viral DB, and the NCBI Taxonomy. Each row reports size, RAM requirement, install date, version, and whether an update is available."
+    caption: "The Databases tab, with installed databases beside ones offering a Download button, the recommended-database banner at the top, and the total storage readout at the foot."
 illustrations: []
-glossary_refs: [plugin-pack]
+glossary_refs: [plugin-pack, conda, micromamba, required-setup-pack, managed-environment, post-install-hook]
 features_refs: []
 fixtures_refs: []
-brand_reviewed: false
-lead_approved: false
+brand_reviewed: true
+lead_approved: true
 ---
 
-Lungfish Genome Explorer (LGE) does not bundle every bioinformatics
-tool. The viral genomics field moves fast, each tool updates on its own
-schedule, and no single user ever needs all of them at once. Bundling
-everything would mean a multi-gigabyte download, a slower release
-cadence, and a near-certainty that something would be stale the day you
-installed it. So LGE ships small and pulls in tools on demand.
+## What it is
 
-A [plugin pack](../../GLOSSARY.md#plugin-pack) is a themed group of
-related command-line tools, installed together because the chapters that
-use one tend to use the rest. The `read-mapping` pack hands you four read
-mappers, `minimap2`, `BWA-MEM2`, `Bowtie2`, and `BBMap`, plus `samtools`,
-the workhorse that sorts, indexes, and queries BAM alignment files. The
-`variant-calling` pack hands you four variant callers, iVar, LoFreq,
-Medaka, and Clair3, alongside `bcftools` for working with VCF files and
-the indexing utilities they depend on.
+Lungfish Genome Explorer (LGE) does not carry every bioinformatics tool inside the application. A bioinformatics tool here means a small program that reads sequencing files and writes an answer back out. Tools update on their own schedules, no one person uses all of them, and bundling the lot would make the download enormous and stale on arrival. So LGE ships small and installs tools on request.
 
-You install and update packs from the GUI, through `Tools > Plugin
-Manager`, described below, and never need to know how they are laid out
-on disk. The packs live in a hidden directory in your home folder and
-are shared across every LGE project on the machine. Install a pack once
-and every project sees it.
+A [plugin pack](../../GLOSSARY.md#plugin-pack) is a themed group of related command-line tools installed together, because the chapters that need one tend to need the rest. A command-line tool is a program with no window of its own, which LGE runs for you behind the scenes, so installing one never means you have to type anything. The `read-mapping` pack hands you three read mappers, `minimap2`, `BWA-MEM2`, and `Bowtie2`. All three do the same job, and each workflow chapter names the one it uses. The `variant-calling` pack hands you four variant callers, iVar, LoFreq, Medaka, and Clair3, which differ mainly in the sequencing technology they were built for, and again each chapter names its own. A mapper places each sequencing read at the position on a reference genome it best matches, a reference genome being a finished genome sequence used as a yardstick, and a variant caller reads those placements and reports where the sample differs from the reference.
 
-In practice, when a workflow chapter says "install the `read-mapping`
-pack first," you open the Plugin Manager, click **Install** next to that
-pack, and move on. Packs install fast and verify fast, and you do it just
-once per machine.
+Names in this typeface, such as `read-mapping`, are the internal ids LGE uses for a pack. On screen the same pack shows a plain-language title, Read Mapping, and the table further down pairs every id with the title on its card.
 
-## What you will learn
+One pack is not optional. The pack shown in the Plugin Manager as Third-Party Tools, which this manual calls the [Required Setup pack](../../GLOSSARY.md#required-setup-pack) after the section it sits in, holds the seventeen everyday utilities LGE leans on to open a project at all. Knowing what is in it answers the question the pack table below would otherwise raise, which is where the ordinary file-handling tools went. `samtools` and `bcftools`, which sort and query alignment and variant files, are there. So are `fastp` and `Deacon`, which trim reads and strip human reads out of a sample. Trimming cuts low-quality ends and leftover adapter sequence off each read. So is BBMap, a general-purpose read mapper, which arrives inside the entry the card labels `bbtools`. The remaining utilities are internal helpers that no workflow chapter asks you for by name. None of these live in an optional pack, because everything else assumes they are already present.
 
-Finish this chapter and you can install one or more plugin packs from the
-Plugin Manager window, list which packs are installed, recognise a
-"missing tool" error from a workflow operation as nothing more than a
-missing pack, and re-run an install to confirm a pack is current. You
-will type no commands. The Plugin Manager handles the download, the
-channel configuration, and the per-tool environment layout for you.
+Installation is handled by [conda](../../GLOSSARY.md#conda), a package manager that installs compiled scientific software along with the shared code it depends on. That shared code is called a library in software, which has nothing to do with a sequencing library. LGE drives conda with [micromamba](../../GLOSSARY.md#micromamba), a small standalone program that does the same job faster, and you never touch it directly. Every tool lands in a [managed environment](../../GLOSSARY.md#managed-environment) of its own, which is a private folder holding that tool and the code it depends on, so two tools that want different versions of the same shared code never collide and neither one breaks the other. The whole collection sits in a hidden folder at `~/.lungfish/conda`, where the `~` stands for your home folder, the one named after your account. You never need to open that folder yourself. It sits outside any project, and every project on the machine shares it, so you install a pack once and every project sees it.
 
-## System requirements
+In practice, when a later chapter says to install a pack first, you open the Plugin Manager, click one button, and carry on.
 
-Plugin packs run on macOS 26 Tahoe or later, on Apple Silicon Macs. A
-16 GB Mac handles the default viral, mapping, variant-calling, and
-assembly examples in this manual. Broad metagenomics databases ask for
-more memory, because tools such as Kraken2 load the active database
-straight into RAM. Keep at least 50 GB of free disk before installing
-packs, and reach for a larger external or shared volume if you plan to
-install Standard or PlusPF classification databases.
-The About window states the same hardware floor: macOS 26 Tahoe or later,
-Apple Silicon, 16 GB RAM minimum, 32 GB RAM recommended for metagenomics
-and assembly, and 100 GB free disk recommended for a working set of tool
-packs, databases, and projects.
+## Why you would do this
 
-If your internal SSD is full, or you simply want large databases off the
-boot drive, you can stage LGE projects and the database storage location
-onto an external SSD. Use a genuine SSD over Thunderbolt, USB-C, or
-USB 3. A spinning external hard drive is too slow for the working set of
-reads, alignments, and database indices that LGE produces, and it will
-make operations the docs call fast feel sluggish or stalled. The
-storage-location settings live in the Plugin Manager's Databases tab.
+Every workflow chapter in this manual opens by naming a pack. The workflow chapters are the ones that walk a dataset through an analysis, and they begin after this Foundations part ends. That opening instruction is only actionable if you know where the packs live and what "installed" looks like. Learning it once here means the rest of the manual can say "install the `assembly` pack" and move on.
 
-## The packs you will meet in this manual
+The second reason is that a missing pack does not look like a missing pack when you first meet one. It looks like a workflow that refuses to start with a message about a tool you have never heard of. Reading this chapter turns that dead end into a one-click fix.
 
-The table below lists the packs later chapters reference, the tools each
-one installs, and the chapters that need them. There is no need to install
-everything upfront. Install a pack the first time a chapter asks for it.
+The third reason is disk. Reference databases are large, some of them very large, and they are tracked separately from the tools. Knowing which database your work actually needs, before you download one, is the difference between the 8 GB Standard-8 collection and the 72 GB PlusPF, both described later in this chapter.
 
-| Pack | Tools | Used by |
-|---|---|---|
-| `read-mapping` | minimap2, BWA-MEM2, Bowtie2, BBMap, samtools | Map Reads chapter, Primer Trim chapter |
-| `variant-calling` | iVar, LoFreq, Medaka, Clair3, bcftools, tabix, bgzip | Variants chapters |
-| `gatk-core` | GATK4 | Human germline variants dry-run chapters |
-| `phasing` | WhatsHap | Phased variant command plans |
-| `classification-kraken2` | Kraken2, KrakenTools | Kraken2 classification chapter |
-| `classification-esviritu` | EsViritu and its references | EsViritu classification chapter |
-| `classification-taxtriage` | TaxTriage workflow tools | TaxTriage classification chapter |
-| `classification-naomgs` | NAO-MGS pipeline tools | NAO-MGS classification chapter |
-| `wastewater-surveillance` | Freyja | Freyja lineage demixing chapter |
-| `assembly` | SPAdes, MEGAHIT, SKESA, Flye, Hifiasm | Assembly chapters |
-| `read-qc` | fastp | Read QC chapter |
-| `decontamination` | Deacon, RiboDetector | Host decontamination chapter |
+## Before you start
 
-A typical pack install pulls 100 MB to 300 MB across the wire and
-finishes in 30 seconds to 3 minutes, depending on your network. The first
-install on a fresh machine runs slower, because LGE has to download and
-set up its managed tool runner once. Every install after that is faster.
+You need a project open. If you do not have one, choose **File > New Project** (Cmd-N), or click Create Project on the Welcome window, and pick a folder. This chapter uses no fixture file, so there is nothing to download before you begin. Everything here happens in the Plugin Manager window, against your own machine.
 
-`gatk-core` runs larger than the viral caller packs, because GATK4 ships
-as a Java toolkit with its own runtime. Budget roughly 600 MB of
-installed space for it. The [Human Germline Variants](../06-human-germline-variants/01-haplotype-caller.md)
-chapter walks through how LGE invokes GATK, and what is and is not yet
-wired into the GUI for that workflow.
+LGE runs on macOS 26 Tahoe or later, on Apple Silicon Macs. The About window, the first item in the application menu at the left of the menu bar, states the full minimum requirements. It asks for 16 GB of memory as a minimum and recommends 32 GB for metagenomics and assembly. Your own Mac reports how much memory it has in **Apple menu > About This Mac**. A Mac at the 16 GB minimum runs everything in this manual, and only the largest reference databases are out of reach, so a smaller number slows work down or narrows your database choice rather than blocking it.
+
+Separately, the app recommends 100 GB of free disk for tool packs, databases, and projects. Nothing enforces that figure, so a smaller disk does not block an install, but a download that runs out of room fails partway. Finder reports free space in the sidebar of any window, or in **Apple menu > About This Mac** under Storage. Metagenomics is the study of all the DNA in a mixed sample at once, and it asks for the most memory here because tools such as Kraken2 load their whole reference database into RAM before classifying a single read.
+
+If your startup disk is small, or you want the large databases off the boot drive, you can move the shared storage location onto an external drive. The setting that moves the storage location sits on the Plugin Manager's Databases tab.
+
+Nothing in this chapter needs Docker Desktop, the container software some other pipelines rely on, so you do not need to install it.
 
 ## Procedure
 
-### Install a pack from the Plugin Manager
+1. Open the Plugin Manager from **Tools > Plugin Manager...** (Cmd-Shift-B). Three tabs run across the top. **Installed** lists the managed environments LGE has built. **Packs** holds the groups of tools available to install. **Databases** holds the reference databases that classification and decontamination workflows read.
 
-The Plugin Manager is the recommended way to install and update packs.
-Open it from the menu bar at **Tools > Plugin Manager**, or with
-`Cmd-Shift-B`. Three tabs run across the top. **Installed** lists every
-tool LGE currently knows about. **Packs** holds the themed groups of
-tools available to install. **Databases** holds the reference databases
-that classification and other workflows depend on.
+2. Look at the **Packs** tab. Two sections stack down the window. **Required Setup** holds the Third-Party Tools pack described above. **Optional Tools** holds everything else, one card per pack.
 
-<!-- SHOT: plugin-manager-window -->
-![The Plugin Manager on the Packs tab. The Required Setup section at the top shows every Third-Party Tool with a green Ready badge. Below it, optional packs (Read Mapping, Variant Calling) list each tool inside the pack and its individual status. Most tools here are Ready; Clair3 inside Variant Calling shows Needs install.](../../assets/screenshots/01-foundations/07-plugin-packs/plugin-manager-window.png)
+    <!-- SHOT: plugin-manager-window -->
 
-Each pack expands to show the tools inside it, and every tool wears one
-of four status labels. **Ready** means installed and working. **Needs
-install** means not installed yet. **Needs reinstall** means installed
-but failing its integrity check, which re-running the install will
-repair. **Storage unavailable** means the external SSD or shared root the
-install lives on is not currently mounted. When every tool in a pack
-reads Ready, the pack as a whole is ready to use.
+3. Expand a pack card to see the tools inside it. Every tool wears one of four status labels. **Ready** means installed and working. **Needs install** means not installed yet. **Needs reinstall** means installed but failing its integrity check, which re-running the install repairs. An integrity check confirms the installed files are complete and undamaged, and it never touches your own data. **Storage unavailable** means the external drive the install lives on is unplugged. Two rows on the Required Setup card are reference data rather than programs, and those read **Needs download** or **Needs refresh** instead. A pack is ready to use when every row inside it reads Ready.
 
-Click **Install** next to a pack to start, or **Install All** when
-several tools in it are missing. Progress streams into the window as LGE
-downloads the tools and sets them up. When every tool flips to **Ready**,
-you are done. There is no need to restart LGE. The next workflow
-operation that reaches for one of the pack's tools will find it.
+4. Click **Install All** on the `read-mapping` pack. The Required Setup card says **Install** instead, because it is installed as one unit, and on a first launch it is present but not yet installed, so you click it too. Progress streams into the card as LGE downloads the tools and builds their environments. Leave the lid open until the card finishes, since a sleeping Mac pauses the download. There is no need to restart the app afterwards. The next operation that reaches for one of those tools will find it.
 
-To install several packs, click **Install** on each. The packs are
-independent, so they install in parallel without stepping on one another.
+5. Click **Install All** on the `variant-calling` pack. Packs are independent, so starting a second one is safe. LGE takes an exclusive lock on the install root, so the second install waits for the first to finish rather than running beside it. On a fresh machine the first install is the slowest, usually a few minutes on a fast connection, because LGE sets up micromamba along the way, and every install after it is quicker.
 
-Installing is reversible. Each optional pack that is already installed
-shows a **Remove All** button in place of Install. Click it and LGE tears
-down every managed environment the pack owns, then flips the pack back to
-**Needs install**, ready to reinstall whenever a later chapter calls for
-it. The Required Setup pack has no Remove All, since LGE leans on it to
-run.
+Both packs should now read Ready on every tool. Clicking Install on a pack that is already installed runs the integrity check again rather than downloading anything, which is the way to confirm an install survived a closed lid, a dropped network, or a reboot.
 
-### Worked example: install read-mapping and variant-calling
+Any of this reverses when you need the space back. An installed optional pack shows **Remove All** where Install was, and clicking it tears down every environment the pack owns and returns it to **Needs install**. The Required Setup pack has no Remove All, since LGE needs it to run.
 
-Most variant-calling workflows in this manual need two packs together. On
-the **Packs** tab of the Plugin Manager, click **Install** next to
-`Read Mapping`, then **Install All** next to `Variant Calling`. On a
-fresh machine the first install takes 1 to 3 minutes, depending on your
-network, because LGE sets up its managed tool runner along the way. The
-second install is quicker, the runner already in place.
+### The packs, and what is in them
 
-To verify, look at the Plugin Manager and confirm every tool in both
-packs shows the green **Ready** badge. Click **Install** again on a pack
-that is already installed and LGE runs an integrity check, re-verifying
-the tools and reporting them current. That is the recommended way to
-confirm an install survived an interruption, whether you closed the lid
-mid-install, dropped the network, or hit an unexpected reboot.
+Ten packs are available in the Plugin Manager. Seven cards show until you turn on **Show Experimental Features** in **Settings > Advanced**, and the three marked experimental appear alongside them once you do. Experimental packs install and run like any other. They are simply less tested than the rest.
 
-### Manage installed environments from the Installed tab
+| Pack id | Shown as | Approximate size | Tools |
+|---|---|---|---|
+| `read-mapping` | Read Mapping | 260 MB | minimap2, BWA-MEM2, Bowtie2 |
+| `variant-calling` | Variant Calling | 260 MB | LoFreq, iVar, Medaka, Clair3 |
+| `assembly` | Genome Assembly | 950 MB | SPAdes, MEGAHIT, SKESA, Flye, hifiasm |
+| `metagenomics` | Metagenomics | 1.2 GB | Kraken 2, Bracken, EsViritu, RiboDetector |
+| `full-length-mhc-genotyping` | Full-length MHC Genotyping | 650 MB | Savont, NCBI BLAST+ |
+| `multiple-sequence-alignment` | Multiple Sequence Alignment | 120 MB | MAFFT |
+| `phylogenetics` | Phylogenetics | 180 MB | IQ-TREE |
+| `gatk-core` | GATK Core (experimental) | 600 MB | GATK4 |
+| `phasing` | Variant Phasing (experimental) | 180 MB | WhatsHap |
+| `wastewater-surveillance` | Wastewater Surveillance (experimental) | 1.5 GB | Freyja, iVar, Pangolin, Nextclade, minimap2 |
 
-The **Installed** tab lists every managed environment LGE has built, one
-per tool. Click a row to expand it and read the exact packages and their
-versions inside, the quickest way to confirm what a given tool actually
-pulled in. Each row also carries a **Remove** button that deletes that
-single environment and all of its packages, finer-grained than the
-pack-level Remove All on the Packs tab.
+The list above is complete. Every pack the Plugin Manager can install appears in it. MHC in the genotyping pack's name stands for major histocompatibility complex, the cluster of immune genes that varies more between individuals than any other part of the genome, and Savont is the tool that genotypes it from full-length sequencing reads.
 
-LGE keeps its own housekeeping honest too. An interrupted install or an
-old plugin sometimes leaves behind an environment with a bare hexadecimal
-hash name rather than a tool name. LGE hides these from the tool list and
-gathers them into an **Orphaned Environments** row that reports how many
-it found. Its **Remove** button clears them in one pass to reclaim disk.
-Removing them is safe: nothing in the packs table depends on a hash-named
-environment.
+Add the ten sizes together and the optional packs come to about 5.9 GB, on top of the 2.7 GB Required Setup pack. Most people install two or three packs rather than all ten. The `gatk-core` pack runs larger than the viral caller packs, because GATK4 ships as a Java toolkit with its own runtime.
+
+Some packs finish with extra work after the tools land. LGE calls these [post-install hooks](../../GLOSSARY.md#post-install-hook), small follow-up commands a pack declares for itself, such as fetching the lineage data Freyja needs to be useful. Lineage data is the reference list of named virus variants a surveillance tool matches a sample against. A pack that has hooks shows the count on its card, and resting the pointer on the count without clicking lists what they do.
 
 ### Install a pack without internet access
 
-An air-gapped or firewalled Mac cannot reach the tool channels, so LGE
-lets you carry a pack across by hand. Every pack card on the **Packs** tab
-shows two greyed command lines and a **Copy** button that places both on
-the clipboard. On a networked Mac, run the first command to bundle the
-pack into a single archive. Move that archive to the offline Mac and run
-the second command to install from it:
+An air-gapped Mac is one deliberately kept off the network, and a firewalled one sits behind rules that block outside downloads, which is how many campus and hospital networks are set up. Neither can reach the tool channels, so LGE lets you carry a pack across by hand. Every pack card carries two greyed command lines and a **Copy** button that puts both on the clipboard.
+
+<!-- SHOT: plugin-manager-offline-commands -->
+
+Both commands are typed into the Terminal application, the macOS window where you type commands instead of clicking, which the [previous chapter](06-the-lungfish-project.md) shows you how to open. Run the first command on a networked Mac to bundle the pack into one archive. Move the archive to the offline Mac and run the second to install from it.
 
 ```bash
-lungfish conda export-pack --pack read-mapping --output ./read-mapping-conda-offline-pack.tgz
-lungfish conda install --offline --from-bundle ./read-mapping-conda-offline-pack.tgz
+lungfish-cli conda export-pack --pack read-mapping --output ./read-mapping-conda-offline-pack.tgz
+lungfish-cli conda install --offline --from-bundle ./read-mapping-conda-offline-pack.tgz
 ```
 
-The Copy button fills in whichever pack you are looking at, so the archive
-name always matches its pack id. This is the one place in this chapter
-where you type a command. Every other install path runs from the buttons
-above.
+The Copy button fills in whichever pack card you took it from, so the archive name always matches the pack id. This is the only step in the walkthrough where you type a command, and every other install path in it runs from a button.
 
-### Check database versions and update state
+### Manage installed environments
 
-Reference databases are tracked apart from the tool packs. The
-**Databases** tab in the Plugin Manager lists every available database,
-grouped by the tool that consumes it, Kraken2, EsViritu, and the rest.
-Each row shows the database's size, its RAM requirement, its install
-state or a **Download** action when it is not installed, the install
-date, the version, and whether the local copy is **Up to date**.
+The **Installed** tab lists every managed environment LGE has built, one per tool. Click a row to expand it and read the exact packages and versions inside, which is the fastest way to confirm what a tool actually pulled in. Each row carries a **Remove** button that deletes that one environment, finer-grained than the pack-level Remove All.
+
+<!-- SHOT: plugin-manager-installed-tab -->
+
+**Check for Tool Updates…** sits above the list. It compares the tools installed on this machine against the exact versions your copy of LGE expects, and reports anything that has drifted. That expected set is called the pinned dependency list, and this chapter uses that one name for it throughout. The pinned list is versioned in step with the app, so a build of LGE 2026.9.13 checks against the 2026.9.13 pinned list, and the two never disagree about which version of a tool is the right one.
+
+An interrupted install sometimes leaves an environment behind named with a long string of letters and numbers rather than a tool name. LGE hides these from the tool list and gathers them into an **Orphaned Environments** row that reports how many it found. Its **Remove** button clears them in one pass. Removing them is safe, since nothing in the packs list depends on one of those leftovers.
+
+## Settings
+
+The Databases tab is where reference databases are downloaded, updated, and removed. Its five controls follow. Two of them touch a database LGE builds on your own machine from downloaded source sequences rather than fetching ready-made, which the Reading the results section below describes, and those cannot be replaced in place. Each entry ends with the command that does the same job outside the app, and the commands all start with `lungfish-cli` when you type them into the Terminal. A word in angle brackets such as `<name>` marks a name you replace with your own, brackets included.
+
+**Download.** Fetches one database and unpacks it into the app's managed storage, showing the download size, the memory the database needs while it runs, and a progress bar with a Cancel button. Nothing is installed until you ask, because the collection runs from half a gigabyte to seventy-two gigabytes and no machine needs all of it. Download the one your work needs, and take the header's recommendation as the safe first choice, since it names the database that fits your Mac's memory. On the command line this is `lungfish-cli conda db download <name>`.
+
+**Remove.** Deletes an installed database and frees its disk space, after a confirmation sheet that names the database. Nothing is removed unless you ask, since a removed database has to be downloaded again from scratch. Remove one you no longer classify against, because the large collections take tens of gigabytes. On the command line this is `lungfish-cli conda db remove <name> --delete-files`.
+
+**Update.** Replaces an installed database with the version named in the app's pinned dependency list. Nothing is updated unless you ask, and the locally built databases described above cannot be replaced in place, so they are reported as skipped instead. Update when the row says an update is available and you want your results to match the current pinned build. On the command line this is `lungfish-cli conda db update <name> --yes`.
+
+**Refresh.** Re-reads the catalog and the installed set, so a database that arrived some other way shows up. The list is loaded once when you open the tab, which is why it can go stale while the window stays open. Use it when a download you started elsewhere has finished and the list still looks unchanged. On the command line this is `lungfish-cli conda db list`.
+
+**Storage Settings....** Opens the setting that decides where downloaded databases live, with the current folder and the total space in use shown along the foot of the tab. It points at the app's own managed storage folder by default, the shared folder holding both the managed environments and the databases, which is the one place LGE can always reach. Change it when the startup disk is too small for a Standard database and you want to keep databases on an external drive. There is no command-line equivalent for this setting.
+
+## Reading the results
 
 <!-- SHOT: plugin-manager-databases-tab -->
-![The Plugin Manager on the Databases tab. Kraken2 databases are listed first; the EuPathDB46, MinusB, PlusPF, PlusPF-16, PlusPF-8, Standard, and Standard-8 databases show a Download button (not installed), while Standard-16 and Viral show the green Installed badge with a Remove action. A "Recommended for your system" banner at the top suggests the PlusPF-16 database for a 48 GB Mac. The EsViritu Viral DB and NCBI Taxonomy are installed at the bottom.](../../assets/screenshots/01-foundations/07-plugin-packs/plugin-manager-databases-tab.png)
 
-A "Recommended for your system" banner at the top of the Databases tab
-points to the database that best fits your Mac's RAM. Any database whose
-RAM requirement outstrips your system reads "(exceeds system RAM)"
-inline, so you avoid loading it by mistake. From the same tab you
-download a new database, update an existing one, or remove one to reclaim
-disk. LGE handles the storage location, the download, and the integrity
-check. While a database is downloading, its row shows a progress bar with
-a **Cancel** button. Cancel stops the transfer and leaves the database
-uninstalled, ready to start again later.
+The Databases tab groups its rows by the tool that reads them. Each row reports the database's size, the memory it wants, its install state, the install date, the version, and whether the local copy is up to date. An installed row reads **Installed**, and one you have not fetched yet shows a **Download** button in that place instead. The memory figure is there because a database is not only a stored file. Kraken2 loads the whole thing into RAM before it classifies a single read, which is the memory question Before you start raised. A banner at the top reads "Recommended for your system" and names the database that fits your Mac's memory. Any database asking for more memory than you have reads "(exceeds system RAM)" inline, so you do not load one by mistake.
 
-## Interpretation
+Thirteen databases are listed. Kraken2 is the classifier that reads a database of reference genomes and reports which organism each sequencing read most likely came from. Nine of the thirteen rows are Kraken2 collections, which differ in what organisms they cover and how much memory they need.
 
-### What "already installed" means
+| Database | Memory it wants | What it covers |
+|---|---|---|
+| Standard | about 67 GB | Archaea, bacteria, viruses, plasmids, human, and vector sequence, meaning the cloning-vector DNA used to carry inserts in the lab |
+| Standard-8 and Standard-16 | 8 GB and 16 GB | The same collection as Standard, compressed to fit smaller machines |
+| PlusPF | about 72 GB | Standard plus protozoa and fungi, with PlusPF-8 and PlusPF-16 capped the same way |
+| Viral | about 0.5 GB | RefSeq viral genomes only, the smallest of the set |
+| MinusB | about 11 GB | Standard with the bacteria taken out, for a sample where a bacterial background would swamp what you are after |
+| EuPathDB46 | about 34 GB | Eukaryotic pathogens such as *Plasmodium* and *Toxoplasma*, with 46 being the release number |
 
-When you click **Install** again on a pack and LGE reports it already
-installed, the tools are present on disk and their integrity matches what
-this version of LGE expects. A mismatch would trigger a reinstall rather
-than a silent skip, so "already installed" means the pack is genuinely
-current.
+Compression is what makes Standard-8 and Standard-16 fit a smaller Mac, and it costs some sensitivity. A compressed database keeps fewer reference sequence fragments, so a read that the full Standard would have assigned to a species is more often left unassigned or reported at genus level instead. On a 16 GB Mac that tradeoff is the price of running the analysis at all.
 
-### What a "missing tool" error looks like
+Two more Kraken2 databases are assembled on your machine rather than downloaded, which the same **Download** button does after fetching their source sequences. SILVA and Greengenes are both built from ribosomal RNA reference collections, the gene regions used to identify bacteria and archaea by sequence. SILVA is the larger of the two at about 12 GB against Greengenes at about 8 GB, so reach for SILVA when you want the broader reference, and for Greengenes when you are matching results against earlier work that used it. Because they are built locally, they cannot be updated in place, and the Update control reports them as skipped. Rebuild them by downloading them again.
 
-When a workflow operation needs a tool from a pack you have not
-installed, it fails fast with a message naming the missing tool and the
-pack that provides it. Run Map Reads without the `read-mapping` pack, for
-instance, and you get an error like "missing tool: minimap2. Install the
-`read-mapping` plugin pack." The fix is simple: install the named pack
-and re-run the operation. Your original input files and project state are
-untouched, because nothing was partially written.
+The last two rows are not Kraken2 at all. The EsViritu Viral DB holds a curated set of viral genome sequences, broad enough to name most viruses you would meet in a clinical or environmental sample. Reach for it when viruses are the whole question, and for the Kraken2 Viral database when you want viruses reported alongside everything else Kraken2 covers. The NCBI Taxonomy is a small download that turns numeric taxon identifiers into names.
 
-If this error shows up on a machine where you believe the pack is
-installed, open the Plugin Manager and confirm every tool in the pack
-reads **Ready**. If any tool reads **Needs install** or **Needs
-reinstall**, click **Install**, or **Install All**, and let LGE repair
-the state in place. For deeper trouble, such as network blocks, locked
-package caches, or an interrupted earlier install, see the
-[Plugin packs and conda environments](../appendices/troubleshooting.md#plugin-packs-and-conda-environments)
-section of the **Troubleshooting** appendix.
+Three more reference sets handle host and background sequence, and they do not appear on this tab. The Human Read Scrubber Database serves NCBI's scrubber, which strips a patient's own reads out of a clinical sample before analysis. The Human Read Removal Data entry is a prebuilt Deacon index that strips human reads, and Ribosomal RNA Removal Data is a Deacon index that strips ribosomal RNA. All three arrive with Required Setup, and on the command line `lungfish-cli conda db install-managed --list` names them.
+
+### What a missing tool looks like
+
+Run an operation that needs a tool you have not installed and it stops before doing any work, naming the tool and the pack. Run Map Reads without the `read-mapping` pack, for example, and you get "minimap2 is not installed. Install the read-mapping plugin pack first." The operation stopped before writing anything, so your input files and project are exactly as they were. Install the named pack and run it again.
+
+If that message appears on a machine where you believe the pack is installed, open the Plugin Manager and check the pack's tools on the **Packs** tab. Anything reading **Needs install** or **Needs reinstall** is repaired by clicking Install All on that same Packs tab. If instead a row on the **Installed** tab expands to an empty package list, the environment is present but hollow, and clicking Install All on the pack rebuilds it. On a shared workstation, an install that stops with `conda root is read-only; reinstall as the admin user` needs whoever administers the machine, as the last section of this chapter explains. For network blocks, locked package caches, or an install that died halfway, see the [Plugin packs and conda environments](../appendices/troubleshooting.md#plugin-packs-and-conda-environments) section of the **Troubleshooting** appendix.
 
 ### Disk usage
 
-A full set of the packs in the table above lands in the 1 to 3 GB range,
-with the classification tool packs the largest of the bunch. The
-classification *databases* are the real weight, tracked separately in the
-Plugin Manager's Databases tab, and they can run to tens of gigabytes for
-Standard or PlusPF. Project folders never hold pack binaries, so a
-project archive stays small and portable.
+Required Setup alone is roughly 2.7 GB, and all ten optional packs together add about 5.9 GB, for something under 9 GB with everything installed. The databases are the real weight, and a single Standard or PlusPF collection at 67 GB or 72 GB outweighs every tool on the machine put together. Project folders never hold tool binaries or databases, so a project stays small and portable no matter how much you have installed.
 
-## Notes for shared workstations and lab administrators
+## What good looks like
 
-This section is for IT staff and lab administrators setting up LGE on a
-shared workstation. Routine users can skip it.
+Four checks tell you the machine is set up the way you think it is. Every tool in the packs you installed reads **Ready** on the Packs tab. The Installed tab lists an environment for each of those tools, and expanding one shows real package versions rather than an empty list. The Databases tab shows an install date and a version for each database you downloaded, with no "(exceeds system RAM)" beside the one you plan to classify against. And **Check for Tool Updates…** comes back with nothing pending.
 
-On a shared workstation, an administrator can place LGE's tool packs and
-reference databases on a larger shared volume, so every lab user draws on
-one installation. LGE reads the `LUNGFISH_CONDA_ROOT` environment
-variable to make this work. Set it, and every LGE process, GUI and CLI
-alike, uses that location as the install root for packs and databases.
+When one of those disagrees, suspect the install rather than the app. An interrupted download, an external drive unplugged mid-run, or a database downloaded outside the window and never refreshed accounts for most of what looks like a broken feature.
 
-The recommended setup pattern:
+## On the command line
 
-1. The admin sets `LUNGFISH_CONDA_ROOT` in a shell startup file that lab
-   users inherit, then opens LGE and installs the packs and databases
-   from the Plugin Manager.
-2. The admin leaves the install root readable and executable for lab
-   users, but writable only by the admin account.
-3. Routine users open LGE, see the packs and databases as
-   **installed**, and run workflows. The Plugin Manager will not let them
-   mutate a read-only root.
+This section is optional. Skip it unless you drive a Mac remotely, over SSH, which means working on a distant machine by typing commands into a terminal on your own. Everything the Plugin Manager does has a command-line equivalent, which is what makes that possible. The `lungfish-cli` program ships inside the application, so installing LGE gave it to you, and the [CLI Reference](../appendices/cli-reference.md) appendix says where it lives and how to run it. Its `conda` command group manages tools and databases. Two of its other subcommands are worth knowing, `envs` to list the managed environments and `list` to show what is inside one.
 
-LGE's pack and database operations take an exclusive lock on the install
-root, so a second install waits its turn rather than corrupting the
-shared environment. If a routine user tries to install into a read-only
-admin root, LGE stops with `install root is read-only; reinstall as the
-admin user`.
+```bash
+# What is available, and what is on this machine already.
+lungfish-cli conda packs
+lungfish-cli conda envs
+lungfish-cli conda list --env minimap2
 
-To relocate the whole managed storage root, not just the conda install
-root, set `LUNGFISH_STORAGE_ROOT` instead. `LUNGFISH_CONDA_ROOT` still
-takes priority for the conda install location when both are set.
+# Install a pack, then a database sized for this Mac.
+lungfish-cli conda install --pack read-mapping
+lungfish-cli conda db recommend
+lungfish-cli conda db download Viral
+lungfish-cli conda db info Viral
+
+# Bring the machine in line with the pinned dependency list.
+lungfish-cli tools update --plan
+lungfish-cli tools update --apply --yes
+lungfish-cli conda db update --all --yes
+```
+
+Two command groups sit beside `conda`. `lungfish-cli tools update` compares this machine against the pinned dependency list bundled with the build and reports, or performs, the installs and updates needed to bring it in line. A word beginning with two dashes, such as `--plan`, is an option you add to change what the command does. With `--plan`, the default, it prints the work and exits without changing anything. With `--apply --yes` it does the work. `lungfish-cli provision-tools` installs micromamba itself, copying the version pinned in the app resources into place so conda workflows can run at all, and LGE normally does this for you without being asked. Its `--status` option reports whether micromamba is installed, and `--list-tools` names it without installing anything.
+
+## Notes for shared workstations
+
+Skip this section. It is written for whoever administers a machine several people share, and nothing in it is needed to use LGE on your own Mac.
+
+On a shared workstation, an administrator can put the tool packs and databases on a larger shared volume so every user draws on one installation. LGE reads the `LUNGFISH_CONDA_ROOT` environment variable to make this work. Set it, and every LGE process, window and command line alike, treats that location as the install root.
+
+The pattern that works is to set `LUNGFISH_CONDA_ROOT` in a shell startup file the other accounts inherit, install the packs and databases once from the Plugin Manager as the administrator, then leave the root readable and executable for everyone but writable only by the administrator. Other users then open LGE, see the packs and databases as installed, and run workflows against them. LGE takes an exclusive lock on the install root during any pack or database operation, so a second install waits its turn rather than corrupting a shared environment. An install attempt into a read-only root stops with `conda root is read-only; reinstall as the admin user`.
+
+To relocate the whole managed storage root, not just the conda install root, set `LUNGFISH_STORAGE_ROOT` instead. When both are set, `LUNGFISH_CONDA_ROOT` still wins for the conda install location.
 
 ## Next
 
-Continue to [Provenance and Reproducibility](08-provenance-and-reproducibility.md)
-to learn how LGE records every operation, including which pack
-versions ran, and how to export a workflow for sharing or publication.
+Continue to [Provenance and Reproducibility](08-provenance-and-reproducibility.md) to learn how LGE records every operation it runs, including which tool versions were installed at the time, and how to export that record for sharing or publication.

@@ -3730,7 +3730,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 4 | 01-foundations/04-alignment-files | Alignment Files | [] | hg002-chr20 | existing | done |
 | 5 | 01-foundations/05-variants-and-vcf | Variants and VCF Files | [] | hg002-chr20 | existing | done |
 | 6 | 01-foundations/06-the-lungfish-project | The Lungfish Genome Explorer Project | [] | demo project | existing | done |
-| 7 | 01-foundations/07-plugin-packs | Plugin Packs | [classify.install-database] | none | existing | queued |
+| 7 | 01-foundations/07-plugin-packs | Plugin Packs | [classify.install-database] | none | existing | done |
 | 8 | 01-foundations/08-provenance-and-reproducibility | Provenance and Reproducibility | [provenance.export] | demo project | existing | queued |
 | 9 | 02-sequences/01-importing-and-viewing | Importing and Viewing | [import.reference, import.annotation-track] | hbb-gene | existing | queued |
 | 10 | 02-sequences/02-downloading-from-ncbi | Downloading from NCBI | [fetch.ncbi, fetch.pathoplexus] | live fetch | existing | queued |

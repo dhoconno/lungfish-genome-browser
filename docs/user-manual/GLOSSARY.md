@@ -198,6 +198,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Micromamba**{#micromamba}. A small standalone bootstrap that speaks the conda protocol without requiring a full Anaconda installation, used by Lungfish as the engine for plugin pack installs. See also: conda, plugin pack.
 
+**Mitochondrial genome**{#mitochondrial-genome}. The small circular DNA molecule carried inside the mitochondrion, the compartment that supplies a cell's chemical energy, separate from the nuclear chromosomes and present in many copies per cell, the human one being the 16,569-base record `NC_012920.1` known as the revised Cambridge Reference Sequence. See also: reference genome, accession.
+
 **Minimizer**{#minimizer}. The smallest k-mer within a sliding window of a sequence, picked as a compact fingerprint so a tool can match reads quickly without comparing every base; Kraken2 classifies on minimizers and Deacon counts minimizer hits to flag host reads. See also: Kraken2, Deacon.
 
 **MSA (Multiple Sequence Alignment)**{#msa}. A rectangular arrangement of two or more related sequences in which each column represents an inferred homologous position, with `-` gap characters padding insertions; in Lungfish stored as a `.lungfishmsa` bundle. See also: MAFFT.
@@ -273,6 +275,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Reference bundle**{#reference-bundle}. A `.lungfishref` bundle stored under a project's `Reference Sequences/` folder, containing a primary FASTA, an index, optional annotations such as GFF3 or GTF, any tracks attached to that reference (alignments, variants, classifications), and a manifest. See also: bundle, assembly bundle.
 
 **Reference genome**{#reference-genome}. A specific, community-agreed sequence used as the comparison point for samples; for SARS-CoV-2 the standard reference is `MN908947.3` (the Wuhan-Hu-1 isolate). Variants are described relative to a chosen reference, so reference choice affects which variants are reported and at what positions. See also: reference bundle.
+
+**RefSeq**{#refseq}. The curated subset of NCBI's sequence records, holding one reviewed, non-redundant record per sequence rather than every entry submitters deposited, recognisable by accession prefixes such as `NC_`, `NG_`, and `NM_` for records and `GCF_` for assemblies. See also: accession, INSDC, RefSeqGene.
 
 **RefSeqGene**{#refseqgene}. An NCBI RefSeq record covering one gene or gene cluster as a curated slice of a chromosome, given its own coordinate system starting at 1 and its own accession (for example `NG_000007.3` for the human beta-globin cluster), so gene-focused work does not have to carry whole-chromosome coordinates. See also: accession, reference genome.
 
