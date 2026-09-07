@@ -28,6 +28,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Allele frequency**{#allele-frequency}. The proportion of sequencing reads at a position that carry the alternate base. A clinical isolate usually shows allele frequencies near 0 or 1; a mixed-population sample (for example, wastewater) shows a full spectrum.
 
+**Allele-specific annotation**{#allele-specific-annotation}. A per-row VCF statistic that GATK computes separately for each alternate allele rather than pooling them, written with an `AS_` prefix such as `AS_QD`, so a position carrying two different alternate alleles gets one quality figure for each instead of one blended figure for both. Lungfish Genome Explorer always requests these in a joint-genotyping run. See also: INFO, joint genotyping, GenotypeGVCFs.
+
 **Amplicon**{#amplicon}. A target region of a genome amplified by PCR, used as the unit of an amplicon-based sequencing protocol such as ARTIC or QIASeqDIRECT. A run produces many overlapping amplicons that together tile the region of interest.
 
 **Amplicon dropout**{#amplicon-dropout}. The failure of one amplicon in a tiled protocol to amplify, so no reads cover the stretch of genome it should have carried and a variant caller reports nothing there, which is indistinguishable from a genuinely unchanged region unless you read the per-amplicon coverage table. See also: amplicon, coverage, mosdepth.
@@ -109,6 +111,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Codon**{#codon}. A run of three consecutive bases inside a protein-coding gene that together encode one amino acid. Three adjacent SNPs falling inside one codon describe one amino acid change, not three; iVar can group them into a single VCF row when given a GFF annotation. See also: VCF.
 
 **Cohort**{#cohort}. A set of samples genotyped and compared together, presented across the columns of the genotype comparison matrix. See also: genotype matrix.
+
+**CombineGVCFs**{#combinegvcfs}. The GATK tool that merges several per-sample GVCFs into one combined GVCF held in a single file, which Lungfish Genome Explorer chooses over GenomicsDB for cohorts of 50 samples or fewer because a single file is simpler to move and inspect at that scale. See also: GVCF, GenomicsDB, joint genotyping, GenotypeGVCFs.
 
 **Conda**{#conda}. A package manager that handles compiled non-Python dependencies cleanly, used in Lungfish to install bioinformatics tools from the bioconda channel into per-tool environments under `~/.lungfish/conda`. See also: micromamba, plugin pack.
 
@@ -210,7 +214,13 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Genotype**{#genotype}. A compact notation for which alleles are observed at a variant position, written diploid-style as `0/1` (heterozygous) or `1/1` (homozygous alternate), where `0` is the reference allele and `1` the first alternate. The Lungfish Genome Explorer iVar pipeline writes the bare haploid `1` instead, which is the honest notation for an organism carrying one genome copy. See also: heterozygous, homozygous, FORMAT.
 
+**GenotypeGVCFs**{#genotypegvcfs}. The GATK tool that turns combined per-sample GVCF evidence into finished genotype calls, deciding at each position which alleles each sample carries and how confident that call is, and the second and final step of every joint-genotyping run Lungfish Genome Explorer builds. See also: GVCF, joint genotyping, CombineGVCFs, GenomicsDB.
+
 **Genotype matrix**{#genotype-matrix}. The Lungfish dashboard that presents genotype calls as allele-target rows by sample columns, with a haplotype tape, cohort summary, and per-sample evidence; it is not one of the five genomic viewport classes. See also: haplotype, cohort.
+
+**Genotype quality**{#genotype-quality}. The confidence a variant caller reports in the genotype it chose at one position, written as the per-sample `GQ` field on a Phred scale where 20 means a one in a hundred chance the chosen genotype is wrong and 99 is the usual ceiling, so it answers a different question from QUAL, which asks only whether any variant exists there. See also: genotype, FORMAT, Phred score.
+
+**Germline variant**{#germline}. A difference from the reference genome that a person inherited from their parents and therefore carries in every cell of their body, as opposed to a somatic variant that arose in one tissue during their lifetime, which is why a germline caller may assume every position carries the same fixed number of genome copies. See also: variant-caller, ploidy, genotype.
 
 **GFF (General Feature Format)**{#gff}. A tab-separated table format for genomic features (genes, CDS, mature peptides, regulatory elements). GFF3 is the current spec; Lungfish accepts GFF3 paired with a FASTA at bundle creation. See also: FASTA, reference bundle.
 
@@ -254,6 +264,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Interleaved FASTQ**{#interleaved-fastq}. A single FASTQ file holding a paired-end run with the two mates of each fragment written as consecutive records, forward then reverse, rather than split across an R1 and an R2 file. Lungfish stores a paired-end sample inside its bundle as one interleaved file, and offers Interleave and Deinterleave as explicit operations on files outside a bundle. See also: paired-end, FASTQ.
 
+**Interval list**{#interval-list}. A file naming the stretches of a reference genome a GATK command should restrict itself to, written either as a BED table of contig, start, and end, as a Picard-style `.interval_list`, or as a bare contig name, and passed to Lungfish Genome Explorer's GATK commands with `--intervals` so both steps of a joint-genotyping run read the same restricted region. See also: BED, contig, joint genotyping.
+
 **IQ-TREE**{#iqtree}. A maximum-likelihood phylogenetic inference program with a built-in ModelFinder step and ultrafast bootstrap support estimation, used by Lungfish to produce `.lungfishtree` bundles from MSA bundles. See also: MSA, phylogram, support value.
 
 **IUPAC ambiguity code**{#iupac-ambiguity-code}. A single letter standing for two or more possible bases at one position, defined by the International Union of Pure and Applied Chemistry so that uncertainty can be written inside a sequence rather than alongside it; `R` means A or G, `Y` means C or T, `M` means A or C, `K` means G or T, `S` means C or G, `W` means A or T, and `N` means any base at all. See also: consensus sequence, consensus FASTA, pileup.
@@ -287,6 +299,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Lineage**{#lineage}. A named subgroup within a viral species, defined by a characteristic set of variants and assigned by a domain-specific tool (Pangolin for SARS-CoV-2, Nextclade for many viruses). LGE assigns lineages only through the Viral Recon pipeline, which runs Pangolin and Nextclade on the consensus it builds. Its other consensus paths produce FASTAs that downstream tools call lineages from. See also: consensus FASTA.
 
 **Lineage barcode**{#lineage-barcode}. The table Freyja consults during demixing, recording which mutations define each named viral lineage, installed as a dated snapshot alongside the tool so that lineages named after that date cannot be reported until the snapshot is refreshed. See also: Freyja, demixing, lineage.
+
+**Local reassembly**{#local-reassembly}. The strategy a variant caller such as GATK HaplotypeCaller uses in stretches where the reads look unsettled, discarding the original alignment across that stretch, rebuilding the candidate sequences from the reads themselves, and rescoring every read against those candidates, which mainly repays its cost around indels because an aligner placing one read at a time often puts the same insertion in slightly different spots on different reads. See also: variant-caller, indel, alignment.
 
 **Lowest common ancestor**{#lowest-common-ancestor}. The most specific taxon that every organism matching a read belongs to, which a classifier reports instead of guessing when a read's sequence fits several relatives equally well, so a read shared across a whole genus is labelled with the genus rather than with one of its species. See also: taxon, taxonomic rank, read classification.
 
@@ -386,6 +400,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **p-distance**{#p-distance}. The simplest genetic distance between two aligned sequences: the proportion of positions at which they differ, with no model correction. One of the distance models Lungfish's `msa distance` can compute. See also: MSA.
 
+**Phase set**{#phase-set}. A stretch of a chromosome within which a phasing tool worked out which copy each variant sits on and is internally consistent, identified by the per-sample `PS` field that every variant in the set shares, so two variants carrying different `PS` values tell you nothing about each other even though both are phased. See also: read-backed phasing, haplotype, FORMAT.
+
 **Phred score**{#phred-score}. A logarithmic per-base quality value defined as `Q = -10 * log10(P)` where P is the error probability; Q20 = 1% error, Q30 = 0.1% error, Q40 = 0.01% error. Encoded in FASTQ files as ASCII characters offset by 33 (so `!` = Q0, `F` = Q37). See also: FASTQ.
 
 **PhiX**{#phix}. The small bacteriophage genome Illumina spikes into a sequencing run as a control, which is never part of the sample's biology and so is a standard thing to filter out, and which Lungfish Genome Explorer ships as the default reference for contaminant filtering. See also: bbduk, decontamination.
@@ -435,6 +451,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Read classification**{#read-classification}. Assigning each read in a sequencing run to the organism it most likely came from, by comparing the read against a reference database of known genomes, which turns a FASTQ into a census of the taxa present and the share of reads at each one. See also: taxon, taxonomic rank, lowest common ancestor, metagenomics.
 
 **Read clumping**{#read-clumping}. The reordering of a read file so that reads sharing sequence content sit next to each other, which lets a general-purpose compressor find far more repetition and shrink the stored file; Lungfish applies it at import as the "Optimize storage" option, using BBTools clumpify or Trim Galore, and the reordering means the stored bundle no longer matches the source file's read order. See also: FASTQ.
+
+**Read-backed phasing**{#read-backed-phasing}. Working out which copy of a chromosome each allele of a heterozygous variant sits on by finding single reads or read pairs that span two nearby variants at once, since a read comes from one physical DNA molecule and so reports the two alleles it covers as travelling together. Phased genotypes are written with an upright bar, as `0|1` rather than `0/1`. See also: phase set, haplotype, genotype.
 
 **Read group**{#read-group}. A labelled block written into a BAM header as an `@RG` line, naming the identifier, sample, library, sequencing platform, and platform unit a set of reads came from, which Lungfish Genome Explorer fills in for every mapping run so that tools grouping reads by sample, such as joint variant callers, can do so. See also: BAM, mapping.
 
@@ -503,6 +521,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **seqkit**{#seqkit}. A general-purpose toolkit for FASTA and FASTQ manipulation, used in Lungfish Genome Explorer for the read-length filter and for several sequence statistics. See also: FASTQ, read length.
 
 **Secondary alignment**{#secondary-alignment}. An extra record reporting another place a read could plausibly have come from, marked by FLAG bit 256 and produced in quantity by repeated regions, which Lungfish Genome Explorer excludes from a mapping run's BAM by default because the duplicate rows inflate read counts. See also: FLAG, primary alignment, supplementary alignment.
+
+**Sequence dictionary**{#sequence-dictionary}. A small `.dict` file written beside a reference FASTA listing every contig in it with that contig's length and checksum, which GATK requires before it will read the reference and which Lungfish Genome Explorer does not create for you, so a first GATK run against a bare FASTA fails naming the missing file. See also: FASTA, reference genome, contig.
 
 **Sequence motif**{#sequence-motif}. A short run of bases whose presence in a read is the thing being looked for, such as a primer footprint, a restriction site, or a repeat, matched against the read's sequence rather than against its name. See also: read identifier, regular expression, Alu element.
 

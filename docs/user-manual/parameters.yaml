@@ -1850,8 +1850,10 @@ operations:
       panel, but the sheet holds no settings. It has a Browse... button, a read-only
       path readout, and a Validation section that reports Valid NAO-MGS results once
       it finds the virus-hits table. Point it at a results directory or at
-      virus_hits_final.tsv.gz directly. The imported result lands under the project's
-      Analyses folder as naomgs-<sample>.
+      virus_hits_final.tsv.gz directly. The Import Center writes the result under
+      the project's Analyses folder, and the command line writes it straight into
+      --output-dir with no Analyses component. On both paths the bundle is named
+      naomgs- followed by the input file's stem unless --sample-name overrides it.
 
   import.nvd:
     title: NVD Results

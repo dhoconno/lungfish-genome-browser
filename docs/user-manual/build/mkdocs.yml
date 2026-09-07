@@ -107,7 +107,7 @@ nav:
     - Running Kraken2: chapters/06-classification/02-running-kraken2.md
     - Running EsViritu: chapters/06-classification/03-running-esviritu.md
     - Running TaxTriage: chapters/06-classification/04-running-taxtriage.md
-    - Running NAO-MGS: chapters/06-classification/05-running-nao-mgs.md
+    - Importing NAO-MGS Results: chapters/06-classification/05-running-nao-mgs.md
     - BLAST Verification: chapters/06-classification/06-blast-verification.md
     - Running Freyja: chapters/06-classification/07-running-freyja.md
     - Importing CZ ID Results: chapters/06-classification/08-importing-cz-id-results.md

@@ -172,6 +172,16 @@ project. The demo project's `Analyses/nvd-demo` copy came from the command
 line with `Analyses` as the destination. A chapter may say the sidebar
 shows the result wherever it landed, since `AnalysesFolder` lists nvd and
 naomgs among both its known tools and its imported-result tools.
+Imported-result bundles are named `<tool>-<input stem>` rather than with a
+timestamp, so the NAO-MGS fixture imports as `naomgs-virus_hits_final`.
+
+The command-line section of every procedure chapter opens with chapter 33's
+fixed paragraph. "This section is optional. If you do your work in the LGE
+window, everything above is complete without it, and nothing here unlocks a
+result the dialog cannot produce. It is here for readers who want to script a
+run or repeat one on a server. The whole procedure runs headless, meaning with
+no window at all, by typing commands into the Terminal application." Swap
+"the dialog" for the surface the chapter uses.
 
 ## Variant track storage (settled by the chapter 5 fidelity review)
 

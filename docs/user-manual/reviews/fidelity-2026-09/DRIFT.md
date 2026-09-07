@@ -3759,7 +3759,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 33 | 06-classification/02-running-kraken2 | Running Kraken 2 | [classify.kraken2, classify.install-database, classify.taxonomy-browser, classify.extract-reads-by-taxon] | sarscov2-srr36291587 | existing | done |
 | 34 | 06-classification/03-running-esviritu | Running EsViritu | [classify.esviritu] | sarscov2-srr36291587 | existing | done |
 | 35 | 06-classification/04-running-taxtriage | Running TaxTriage | [classify.taxtriage] | sarscov2-srr36291587 | existing | done |
-| 36 | 06-classification/05-running-nao-mgs | Importing NAO-MGS Results | [import.nao-mgs] | NAO-MGS sample (open item) | existing (retitled) | queued |
+| 36 | 06-classification/05-running-nao-mgs | Importing NAO-MGS Results | [import.nao-mgs] | NAO-MGS sample (open item) | existing (retitled) | done |
 | 37 | 06-classification/06-blast-verification | BLAST Verification | [classify.blast-verify] | sarscov2-srr36291587 | existing | done |
 | 38 | 06-classification/07-running-freyja | Running Freyja | [workflow.freyja-demix] | sarscov2-srr36291587 | existing | done |
 | 39 | 06-classification/08-importing-cz-id-results | Importing CZ ID Results | [import.cz-id] | CZ ID export (open item) | existing | queued |

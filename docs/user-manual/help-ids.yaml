@@ -360,9 +360,9 @@ viewport.TaxTriageResultViewer:
 
 viewport.NAOMGSResultViewer:
   chapter: 06-classification/05-running-nao-mgs
-  anchor: interpretation
+  anchor: reading-the-results
   scope: viewport
-  description: NAO-MGS surveillance viewport with longitudinal abundance charts.
+  description: NAO-MGS surveillance viewport with a per-taxon table, sample filter, and miniBAM read evidence.
 
 viewport.CzIdResultViewer:
   chapter: 06-classification/07-importing-cz-id-results
