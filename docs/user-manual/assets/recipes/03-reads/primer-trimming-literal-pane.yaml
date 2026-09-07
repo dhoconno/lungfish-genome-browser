@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Primer Trimming pane with Primer Source on Literal Sequence (the default).
+id: primer-trimming-literal-pane
+chapter: 03-reads/04-trimming-and-filtering
+caption: The Primer Trimming pane with Primer Source on Literal Sequence, showing the Primer Sequence
+  field above the three compact fields labelled k, mink, and hdist.
+viewport_class: fastq
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - fastq: Imports/HG002.lungfishfastq
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Selected Imports/HG002 in the sidebar.
+  # PROSE-ONLY: Chose Tools > Trimming & Filtering > Primer Trimming...
+  # PROSE-ONLY: Left Primer Source on its default, Literal Sequence.
+crop:
+  mode: region
+  region:
+  - 242
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

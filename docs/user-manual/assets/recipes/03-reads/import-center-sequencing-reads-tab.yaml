@@ -1,0 +1,30 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: the Import Center on its Sequencing Reads tab, with Sequencing Read Files, FASTQ Sample Sheet, and ONT Run Folder cards
+id: import-center-sequencing-reads-tab
+chapter: 03-reads/01-importing-fastq
+caption: The Sequencing Reads tab of the Import Center, showing its cards with Sequencing Read Files among
+  them.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: File > Import Center...
+  # PROSE-ONLY: Click the Sequencing Reads tab
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

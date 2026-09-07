@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Orient Reads pane with a reference already chosen in the Inputs section (before_rr, Analyses/HG002-chrM).
+id: orient-reads-pane
+chapter: 03-reads/08-read-processing
+caption: The Orient Reads pane, showing the Word Length field, the Database Mask segments, the Extra arguments
+  field, and the reference chosen in the Inputs section.
+viewport_class: fastq
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - fastq: Imports/HG002.lungfishfastq
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Selected Imports/HG002 in the sidebar.
+  # PROSE-ONLY: Chose Tools > Read Processing > Orient Reads...
+  # PROSE-ONLY: Reference popup already showed before_rr (Analyses/HG002-chrM); left Word Length at 12 and Database Mask on dust.
+crop:
+  mode: region
+  region:
+  - 242
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Low-Complexity Filter pane with the Advanced disclosure open on Window and K-mer.
+id: low-complexity-pane
+chapter: 03-reads/05-decontamination
+caption: The Low-Complexity Filter pane, showing the Entropy Threshold slider at 0.60 with the Advanced
+  disclosure open on the Window and K-mer fields.
+viewport_class: fastq
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - fastq: Imports/HG002.lungfishfastq
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Selected Imports/HG002 in the sidebar.
+  # PROSE-ONLY: Chose Tools > Decontamination > Low-Complexity Filter...
+  # PROSE-ONLY: Clicked the Advanced disclosure triangle to reveal Window and K-mer.
+crop:
+  mode: region
+  region:
+  - 242
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

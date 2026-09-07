@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Merge Overlapping Pairs pane with Strictness on Normal and Minimum Overlap 12, both defaults.
+id: merge-overlapping-pairs-pane
+chapter: 03-reads/08-read-processing
+caption: The Merge Overlapping Pairs pane of the FASTQ/FASTA Operations dialog, with the Strictness segments
+  set to Normal and the Minimum Overlap field reading 12.
+viewport_class: fastq
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - fastq: Imports/HG002.lungfishfastq
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Selected Imports/HG002 in the sidebar.
+  # PROSE-ONLY: Chose Tools > Read Processing > Merge Overlapping Pairs...
+  # PROSE-ONLY: Left Strictness on Normal and Minimum Overlap at 12.
+crop:
+  mode: region
+  region:
+  - 242
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png
