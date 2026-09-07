@@ -1,5 +1,5 @@
 import frontmatter from "remark-frontmatter";
-import writtenIdentity from "./rules/written-identity.js";
+import appName from "./rules/app-name.js";
 import palette from "./rules/palette.js";
 import typography from "./rules/typography.js";
 import voice from "./rules/voice.js";
@@ -15,7 +15,7 @@ import aiTells from "./rules/ai-tells.js";
 export default {
   plugins: [
     [frontmatter, ["yaml"]],
-    writtenIdentity,
+    appName,
     palette,
     typography,
     voice,

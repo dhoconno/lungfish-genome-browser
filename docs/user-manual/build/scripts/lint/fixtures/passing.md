@@ -14,7 +14,7 @@ lead_approved: false
 
 ## What it is
 
-Lungfish reads VCF files.
+Lungfish Genome Explorer reads VCF files.
 
 ## Procedure
 

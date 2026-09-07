@@ -25,13 +25,13 @@ test("known-good chapter produces no messages", async () => {
   assert.deepEqual(messages.map((m) => m.reason), []);
 });
 
-test("written-identity flags every wrong spelling", async () => {
-  const messages = await lint("bad-written-identity.md");
+test("app-name enforces first full mention, LGE after, and no bare Lungfish", async () => {
+  const messages = await lint("bad-app-name.md");
   const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /'LGE' before the first 'Lungfish Genome Explorer'/);
+  assert.match(reasons, /bare 'Lungfish'/);
   assert.match(reasons, /LUNGFISH/);
-  assert.match(reasons, /LungFish/);
-  assert.match(reasons, /Lung Fish/);
-  assert.match(reasons, /lowercase 'lungfish'/);
+  assert.equal((reasons.match(/bare 'Lungfish'/g) || []).length, 1);
 });
 
 test("palette flags non-palette hex in prose and SVG", async () => {
