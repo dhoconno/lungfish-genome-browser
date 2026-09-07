@@ -510,7 +510,7 @@ menu.File.Open:
   chapter: 01-foundations/06-the-lungfish-project
   anchor: the-welcome-window
   scope: menu
-  description: File > Open (Cmd-O)
+  description: File > Open Project Folder... (Cmd-O)
 
 menu.File.ImportCenter:
   chapter: 02-sequences/01-importing-and-viewing
@@ -534,7 +534,7 @@ menu.View.Sidebar:
   chapter: 01-foundations/06-the-lungfish-project
   anchor: a-tour-of-the-sidebar
   scope: menu
-  description: View > Show Sidebar (Cmd-Shift-S)
+  description: View > Show Sidebar (Ctrl-Cmd-S)
 
 menu.View.Inspector:
   chapter: 01-foundations/06-the-lungfish-project

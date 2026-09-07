@@ -2,176 +2,222 @@
 title: The Lungfish Genome Explorer Project
 chapter_id: 01-foundations/06-the-lungfish-project
 audience: bench-scientist
-prereqs: []
-estimated_reading_min: 8
-task: Understand the Lungfish Genome Explorer project window, sidebar, Inspector, and Operations Panel.
+prereqs: [01-foundations/01-what-is-a-genome]
+estimated_reading_min: 12
+task: Understand the Lungfish Genome Explorer project bundle, the sidebar, the Inspector, and the Operations Panel.
 tags: [foundations, project, sidebar, inspector, operations-panel, bundle, ui]
 tools: []
+parameters_refs: []
 entry_points:
-  - "File > New Project (Cmd-N)"
-  - "File > Open (Cmd-O)"
-  - "View > Show Inspector (Cmd-Opt-I)"
-  - "Operations > Show Operations Panel (Cmd-Shift-P)"
-  - "View > Show Sidebar (Cmd-Shift-S)"
+  - File > New Project (Cmd-N)
+  - File > Open Project Folder... (Cmd-O)
+  - View > Show Sidebar (Ctrl-Cmd-S)
+  - View > Show Inspector (Cmd-Opt-I)
+  - Operations > Show Operations Panel (Cmd-Shift-P)
 shots:
   - id: welcome-window
-    file: ../../assets/screenshots/01-foundations/06-the-lungfish-project/welcome-window.png
-    caption: "The Lungfish Genome Explorer Welcome window, with buttons for Create Project and Open Project and a list of recent projects."
+    caption: "The Lungfish Genome Explorer Welcome window, with the Create Project and Open Project cards, the Recent Projects list, and the required-setup panel below them."
   - id: empty-project-window
-    file: ../../assets/screenshots/01-foundations/06-the-lungfish-project/empty-project-window.png
-    caption: "A new empty Lungfish Genome Explorer project window with the sidebar on the left, an empty main viewport in the centre, and the Inspector on the right."
+    caption: "A new empty project window with the sidebar on the left, an empty viewport in the centre, and the Inspector on the right."
   - id: sidebar-folder-conventions
-    file: ../../assets/screenshots/01-foundations/06-the-lungfish-project/sidebar-folder-conventions.png
-    caption: "The sidebar of an active project, showing Analyses, Downloads, Imports, Multiple Sequence Alignments, Phylogenetic Trees, Reference Sequences, and Workflows folders."
+    caption: "The sidebar of the demo project, showing the Analyses group above the Imports, Reference Sequences, Primer Schemes, and Extractions folders."
   - id: inspector-fastq-selected
-    file: ../../assets/screenshots/01-foundations/06-the-lungfish-project/inspector-fastq-selected.png
-    caption: "Full project window with a paired-end FASTQ bundle selected in the sidebar. The FASTQ Operations panel fills the viewport, and the Inspector on the right shows dataset statistics, ingestion settings, processing history, and sample metadata."
+    caption: "The demo project with a paired-end FASTQ bundle selected in the sidebar, the FASTQ operations view filling the viewport, and the Inspector showing dataset statistics and sample metadata."
   - id: inspector-fastq-detail
-    file: ../../assets/screenshots/01-foundations/06-the-lungfish-project/inspector-fastq-detail.png
-    caption: "The Inspector pane in close-up for the same FASTQ selection, showing read counts, length and quality statistics, ingestion settings, the processing pipeline that produced this dataset, and editable sample metadata."
+    caption: "The Inspector in close-up for the same FASTQ selection, showing read counts, length and quality statistics, ingestion settings, the pipeline that produced the dataset, and the editable metadata fields."
+  - id: file-export-menu
+    caption: "The File > Export submenu open, showing the sequence, annotation, FASTQ, metadata, and image export items above the Provenance submenu."
   - id: operations-panel-row
-    file: ../../assets/screenshots/01-foundations/06-the-lungfish-project/operations-panel-row.png
-    caption: "An Operations Panel row mid-run for an EsViritu classification, expanded to show the CLI command, the View Log and Reveal in Finder buttons, the running log output, and the progress bar at 12 seconds elapsed."
+    caption: "An Operations Panel row mid-run, expanded to show the CLI command, the log buttons, the running log output, and the progress bar."
   - id: operations-panel-right-click-menu
-    file: ../../assets/screenshots/01-foundations/06-the-lungfish-project/operations-panel-right-click-menu.png
-    caption: "The right-click context menu on an Operations Panel row, showing Copy CLI Command, Copy Log, View Log, Reveal Log in Finder, and Cancel. Failed rows show two additional items, Copy Failure Report and Open GitHub Issue, in place of Cancel."
+    caption: "The right-click menu on an Operations Panel row, showing Run Again, Copy CLI Command, Copy Log, View Log, Reveal Log in Finder, and Cancel."
 illustrations: []
-glossary_refs: [project, bundle, reference-bundle, assembly-bundle, primer-scheme, inspector, operations-panel, sidebar, provenance]
+glossary_refs: [project, bundle, reference-bundle, primer-scheme, extraction, project-lock, inspector, operations-panel, sidebar, provenance, provenance-sidecar]
 features_refs: []
-fixtures_refs: []
-brand_reviewed: false
-lead_approved: false
+fixtures_refs: [demo-project]
+brand_reviewed: true
+lead_approved: true
 ---
 
-A Lungfish Genome Explorer (LGE) [project](../../GLOSSARY.md#project) keeps imported files, derived bundles, and their provenance together in a project folder. Native projects also store the sequence catalog and version history in an internal project database. The sidebar can show both stored sequences and files; a stored sequence is not necessarily a separate FASTA file in Finder.
+## What it is
 
-A handful of analyses lean on large reference databases: Kraken2 classification, EsViritu, and similar metagenomics workflows. LGE installs those databases once and shares them across every project on the machine. They sit outside the project folder on purpose, because copying tens of gigabytes into every project would be wasteful. The project's provenance still records the database name and version it used, so the analysis stays reproducible. Re-running it on another Mac takes a compatible LGE version, the installed plugin packs, and the same external databases the project references.
+A Lungfish Genome Explorer (LGE) [project](../../GLOSSARY.md#project) keeps imported files, derived bundles, and their [provenance](../../GLOSSARY.md#provenance) together in a `.lungfish` project bundle. Provenance is the record of where a file came from and what was done to it. A project bundle is an ordinary folder that Finder displays as one item rather than as a folder you can open. Double-click it and the app opens rather than a Finder window. To look inside, Control-click it (hold Control and click, or click with two fingers on a trackpad) and choose Show Package Contents. What you see there is an ordinary set of folders.
 
-Open a project and a window appears with three persistent panes. The [sidebar](../../GLOSSARY.md#sidebar) runs down the left and lists the project's contents as a folder tree. The main viewport fills the centre and shows whatever you select: a sequence track, an alignment, a variant table, a classification sunburst. The [Inspector](../../GLOSSARY.md#inspector) runs down the right with context-sensitive metadata and analysis actions for the current selection. A fourth surface, the [Operations Panel](../../GLOSSARY.md#operations-panel), opens in its own window from the **Operations** menu and reports every long-running job in the project.
+Inside that bundle sit two files you never edit. `.project.db` is hidden and `metadata.json` sits in plain sight beside the folders. `.project.db` is a SQLite database, which is a single-file database engine, and it holds the project's sequence catalog, the list of sequences the project knows about, along with its version history. `metadata.json` holds the project's own name, its format version, and the dates it was created and last changed. LGE writes both for you. Because the catalog is a database rather than a pile of files, the sidebar can show a stored sequence that has no separate FASTA file of its own in Finder.
 
-LGE also ships a command-line tool, `lungfish`, that mirrors most GUI actions. This chapter stays with the GUI. CLI commands appear inline in later chapters wherever the GUI introduces a new operation. Most people never touch the CLI directly; power users may enjoy driving LGE's data and tools without it.
+A small number of analyses lean on reference databases tens of gigabytes in size, such as the Kraken2 standard database used to identify which organisms a sample contains. LGE installs those once and shares them across every project on the machine, so they sit outside the bundle deliberately. LGE checks the free space for you and offers another storage location when the disk is short. The project's provenance still records which database name and version a run used, which keeps the result reproducible. Reproducing it on another Mac takes a compatible LGE version, the same plugin packs, which are the optional sets of analysis tools LGE installs on request, and the same shared databases.
 
-Read this chapter once before any other UI chapter. Every later chapter assumes you can find the sidebar, the Inspector, and the Operations Panel by name.
+Open a project and one window appears with three panes that stay put. The [sidebar](../../GLOSSARY.md#sidebar) runs down the left and lists the project's contents as a folder tree. The viewport fills the centre and shows whatever you select, such as a sequence track, an alignment, a variants table, or a classification chart. Later chapters introduce each of those views in turn, so nothing is lost if none of them means anything yet. The [Inspector](../../GLOSSARY.md#inspector) runs down the right and holds metadata and actions for the current selection. A fourth window, the [Operations Panel](../../GLOSSARY.md#operations-panel), opens from the **Operations** menu and reports every long-running job.
 
-## What you will learn
+LGE also ships a command-line tool, `lungfish-cli`, that mirrors most of what the window does. This chapter stays in the window. Read it once before any other interface chapter, because every later chapter assumes you can find the sidebar, the Inspector, and the Operations Panel by name.
 
-Five ideas carry through the rest of the manual. You will create a new LGE project from the Welcome window and learn to recognise the top-level project folders and what each holds. You will locate the Inspector pane and see how its contents shift with your selection. You will find the Operations Panel and read a progress row. And you will learn that a [bundle](../../GLOSSARY.md#bundle) in LGE is a folder, not a single file. Every later chapter builds on these.
+## Why you would do this
 
-## Saving and exporting
+Every other chapter in this manual starts by saying where something lands. Reads land under `Imports/`, references under `Reference Sequences/`, results under `Analyses/`. Reads are the short sequence fragments a sequencing machine produces from a sample. Those sentences only help if you already know that the project is one bundle on disk and that the sidebar is a picture of it. Learning the layout once means every later instruction reads as a location rather than as a puzzle.
 
-Project changes are stored when an import or edit completes successfully. Check the Operations Panel for running or failed work. Editing tools may ask you to apply or discard a draft before leaving. Lungfish remembers project windows and views when they close or the app quits. **File > About Saving…** explains this behavior; there is no separate document Save or Save As command.
+The layout also carries meaning that nothing else records. A file under `Imports/` came off your own disk, and its history reaches back only as far as your copy of it. A file under `Downloads/` came from a public archive, and it arrived with a [provenance sidecar](../../GLOSSARY.md#provenance-sidecar), a small JSON file naming the source URL, the accession, the time of the fetch, and a checksum of the bytes. A checksum is a short fingerprint calculated from a file's contents, and a matching one shows the file has not been altered since it was fetched. When you later need to reproduce a published analysis, the download is the one you want, and the folder name is what tells you which is which.
 
-Exports create separate files. Sequence and annotation exports use an explicit sidebar selection before falling back to the current document. Annotation export asks you to choose a source when several supported sources are selected, reports unsupported selections, and names the source and annotation count on the destination sheet. It does not silently combine annotations from different sources.
+This chapter uses the demo project, which is the worked project the manual's screenshots are taken from. It already holds imported reads, two reference bundles, and the results of several analyses, so every folder this chapter describes has something in it.
+
+## Before you start
+
+You need a project open. If you do not have one, choose **File > New Project** (Cmd-N), or click Create Project on the Welcome window, and pick a folder. This chapter uses the demo project. Build it by following the instructions in the manual's fixtures on GitHub at https://github.com/dhoconno/lungfish-genome-explorer/tree/main/docs/user-manual/fixtures/demo-project. That page asks you to create an empty project named LGE Manual Demo in the app first, saved under `~/Desktop/lge-docs/`, and then to copy one command into the Terminal application and press Return, so it does need a terminal, and the page shows you exactly what to paste. The command fills the project in about two minutes. The `~` at the front of a path is shorthand for your home folder, the one named after your account.
+
+You can also read this chapter against an empty project you make yourself. The tour of the sidebar then shows fewer folders, because a project grows most of them the first time a workflow needs one. Nothing here needs a plugin pack or Docker Desktop, so you can skip both for this chapter. Docker Desktop is a separate free application that runs an analysis tool inside a self-contained package of its own, which a few later chapters rely on.
+
+One rule about who creates a project is worth knowing before you start. Only the app creates the project store, the `.project.db` file described above. This manual calls that file the project store throughout, and it is one file inside the project bundle rather than the bundle itself. **File > New Project** creates it, and so does the Create Project card on the Welcome window. `lungfish-cli` never does. A folder built only from the command line therefore has no store, and the app opens it as a read-only view of the files with "(Read Only)" appended to the window title. The reverse order works. Create the project in the app first, close it, and the command line can then fill it with reads, references, and results.
+
+## Procedure
+
+1. Launch LGE with no project open. The Welcome window appears. It offers the Create Project and Open Project cards, a Recent Projects list holding your last ten projects, and a setup panel underneath.
+
+    <!-- SHOT: welcome-window -->
+
+2. Read the setup panel before you go further. It reports whether the Required Setup pack is installed, with one status card per tool behind the Show Details button. You do not need to click Install for this chapter, because nothing here runs an analysis tool. Its Install button runs the setup, and a "Need more space? Choose another storage location…" link opens a sheet that moves the folder where LGE keeps its shared tools and databases somewhere with more room. If an installation or a storage change is already running, the project opens as soon as it finishes.
+
+3. Click Open Project and choose the demo project at `~/Desktop/lge-docs/LGE Manual Demo.lungfish`. To make an empty project instead, click Create Project, pick a folder, type a name, and click Create. Either card has a menu equivalent, so **File > New Project** (Cmd-N) and **File > Open Project Folder...** (Cmd-O) do the same work from an open window. The wording differs between the Welcome window and the menu, and the actions do not.
+
+4. Look at the window that opens. The sidebar on the left carries the project name at the top and the folder tree below it. The viewport in the centre is empty until you select something. The Inspector on the right is empty for the same reason.
+
+    <!-- SHOT: empty-project-window -->
+
+5. Bring back any pane that is missing, then open the Operations Panel. **View > Show Sidebar** (Ctrl-Cmd-S) restores the sidebar and **View > Show Inspector** (Cmd-Opt-I) restores the Inspector. **Operations > Show Operations Panel** (Cmd-Shift-P) opens the Operations Panel in a window of its own, empty until something runs. Leave it open while you read the rest of this chapter.
+
+    Two more items widen the viewport when you need the room. **View > Focus Viewer** (Cmd-Opt-F) hides the sidebar and the Inspector at once, which helps when a wide result runs off the edge of the centre pane, and **View > Restore Side Panes** (Ctrl-Cmd-Opt-F) brings them back.
 
 ## The Welcome window
 
-Launch LGE with no project open and the Welcome window greets you. It offers two main actions and a list of recent projects. You can open projects with built-in viewers before installing external tools. Actions that need tools retain their setup requirements. Opening waits while an installation or storage change is in progress.
+The Welcome window greets you whenever LGE launches with no project open. The Create Project card makes a new empty project bundle at a location you pick. The Open Project card opens an existing one through a file dialog. The Recent Projects list holds the projects you opened lately, capped at ten entries, and a click on any row reopens it. The same list appears inside an open project as the **File > Open Recent** submenu.
 
-<!-- SHOT: welcome-window -->
-![The Lungfish Genome Explorer Welcome window, with Create Project and Open Project actions and a sidebar of recent projects.](../../assets/screenshots/01-foundations/06-the-lungfish-project/welcome-window.png)
-
-1. **Create Project** makes a new empty project folder at a location you pick. Shortcut: `Cmd-N`.
-2. **Open Project** opens an existing project folder you choose from the file dialog. Shortcut: `Cmd-O`.
-3. **Recent Projects** lists the projects you opened lately. Click any row to reopen it.
-
-Already have a project window open and want a second? `File > New Project` and `File > Open` work from the menu bar, no trip back to the Welcome window required. The menu items use the macOS names "New" and "Open", while the Welcome window cards say "Create Project" and "Open Project". Same actions, different surfaces.
-
-## Walkthrough: create your first project
-
-This walkthrough builds an empty project named `SARS-CoV-2 SRR36291587` inside your `Documents` folder, ready for later chapters to pick up. Nothing is imported yet. The goal is simply to recognise each surface.
-
-1. Launch LGE. The Welcome window appears.
-2. Click **Create Project**. A save dialog opens.
-3. In the dialog, navigate to `Documents`, type `SARS-CoV-2 SRR36291587` as the project name, and click **Create**.
-4. The Welcome window closes. A new project window opens, titled `SARS-CoV-2 SRR36291587`.
-5. The window opens with three panes. The sidebar on the left shows the project name up top and the top-level folders below. The centre sits empty, with placeholder text inviting you to import or download data. The Inspector on the right is empty too, because nothing is selected yet.
-
-<!-- SHOT: empty-project-window -->
-![A new empty Lungfish Genome Explorer project window with the sidebar on the left, an empty main viewport in the centre, and the Inspector on the right.](../../assets/screenshots/01-foundations/06-the-lungfish-project/empty-project-window.png)
-
-If the Inspector is not visible, choose `View > Show Inspector` or press `Cmd-Opt-I`. If the sidebar is not visible, choose `View > Show Sidebar` or press `Cmd-Shift-S`. The Operations Panel is hidden by default; bring it up with `Operations > Show Operations Panel` or `Cmd-Shift-P`.
-
-The project folder now exists on disk at `~/Documents/SARS-CoV-2 SRR36291587/`. Open it in Finder and you will find the same top-level folders the sidebar shows. LGE keeps no hidden state outside that folder for this project's data. The folder is the project.
+Below the cards sits the setup panel described in the procedure. It exists because analysis tools are installed separately from the app. You can open projects and use the built-in viewers before installing anything, and the actions that need external tools show their setup requirements when you reach them. The Plugin Packs chapter covers what gets installed and where.
 
 ## A tour of the sidebar
 
-An LGE project is a folder-backed workspace. Its most common top-level areas appear below. Some are created with the project; others show up the first time a workflow needs them. Either way, treat the sidebar as the canonical view of the project.
+The sidebar is the authoritative view of the project, so when it and Finder disagree, trust the sidebar. Some folders are created with the project and others appear the first time a workflow needs one, so a young project shows fewer than the demo project does. Most bench work starts in `Imports/` and `Reference Sequences/`, and results then appear under `Analyses/`. The other folders in the table below fill in as particular workflows need them.
 
 <!-- SHOT: sidebar-folder-conventions -->
-![The sidebar of a real project, showing the top-level folders described below. This particular project has accumulated Analyses, Downloads, Imports, Multiple Sequence Alignments, Phylogenetic Trees, Reference Sequences, and Workflows over time; a fresh project starts with fewer folders and grows them as workflows produce output.](../../assets/screenshots/01-foundations/06-the-lungfish-project/sidebar-folder-conventions.png)
 
-1. **Imports/** holds anything you brought in from a local file on your Mac: reads copied off a sequencer, a reference FASTA a colleague mailed you, a BED file from an old analysis. The origin is your own filesystem.
-2. **Downloads/** holds anything LGE fetched from the internet: reference genomes from NCBI, raw reads from SRA, sequences from Pathoplexus. Every download lands with a [provenance sidecar](../../GLOSSARY.md#provenance-sidecar) recording the URL, the accession, the timestamp, and the checksum.
-3. **Reference Sequences/** holds [reference bundles](../../GLOSSARY.md#reference-bundle), each carrying the extension `.lungfishref`. A reference bundle is a folder, not a single file. It contains a FASTA, an index, optional annotations such as GFF3 or GTF, and any tracks you have attached to that reference, including alignments, variants, and classifications.
-4. **Assemblies/** holds de novo [assembly bundles](../../GLOSSARY.md#assembly-bundle), also `.lungfishref`. The format matches a reference bundle exactly. Only the folder name separates "this came from SPAdes or MEGAHIT" from "this is a published reference".
-5. **Primer Schemes/** holds amplicon [primer-scheme](../../GLOSSARY.md#primer-scheme) bundles with the extension `.lungfishprimers`. Each bundle carries the BED coordinates, the primer sequences as a companion FASTA, and its provenance.
-6. **Analyses/** holds the outputs that do not naturally attach to a reference or assembly bundle: taxonomic classifier runs, minimap2 alignments against ad-hoc references, SPAdes assembly intermediates. Each analysis lives in its own timestamped subfolder with its own provenance sidecar.
+| Folder | What lands there |
+|---|---|
+| `Imports/` | Anything you brought in from your own disk, such as reads copied off a sequencer or a reference a colleague mailed you |
+| `Downloads/` | Anything LGE fetched from the internet, each item arriving with a provenance sidecar |
+| `Reference Sequences/` | Reference bundles, each carrying the extension `.lungfishref` |
+| `Primer Schemes/` | Primer-scheme bundles carrying the extension `.lungfishprimers`, which list the short DNA primers used to amplify a target region |
+| `Extractions/` | Reads and reference regions pulled out into new bundles by an extraction operation |
+| `Haplotype Definitions/` | Files listing which combinations of alleles travel together on one chromosome, used by the MHC genotyping chapters |
+| `Analyses/` | Every analysis result, each in its own subfolder named `<tool>-<timestamp>` |
 
-The split between `Imports/` and `Downloads/` matters because the two carry different provenance. An imported file's trail reaches back only as far as your local copy. A download carries the full network history: where it came from, when, and what checksum it matched at fetch time. Later workflows copy that provenance verbatim into the run record. When you need to reproduce a published analysis, prefer downloads.
+The angle brackets in `<tool>-<timestamp>` stand for values LGE fills in, so a real folder is named something like `kraken2-2026-09-04T14-12-33`. You never type that name yourself. Most results record their provenance beside the output, and the Provenance and Reproducibility chapter shows where each one keeps it.
 
-The split between `Reference Sequences/` and `Assemblies/` is a convention, not a technical divide. Both folders hold `.lungfishref` bundles with identical internal structure. The folder a bundle sits in tells you whether it was published, making it a reference, or generated in this project, making it an assembly. LGE workflows that need a reference accept bundles from either folder. The chapter that introduces each workflow says which one fits.
+The Analyses group in the sidebar is worth one caveat. LGE builds that group from the project's own records rather than reading the folder directly, so it can list a result whose files Finder shows somewhere else. An empty project shows no Analyses group at all, and one appears as soon as the first result lands.
+
+De novo assemblies are results, so they land under `Analyses/` beside everything else. A de novo assembly builds a genome sequence from reads alone, with no reference to compare against. They are packaged as `.lungfishref` bundles, exactly like a downloaded reference, and the two are interchangeable wherever a workflow asks for a reference. The folder tells you which is which. A bundle under `Reference Sequences/` was published by somebody else and a bundle under `Analyses/` was built here.
 
 ### What "bundle" means
 
-Every time this manual says "bundle", it means a folder that Finder shows as a single icon with an extension. A `.lungfishref` is neither a zipped archive nor a single file. It is a directory holding a `manifest.json` at the root, a primary FASTA, an index, optional annotations, optional attached tracks, and a `provenance/` subfolder. Right-click any bundle in Finder and choose **Show Package Contents** to look inside. The [Importing and Viewing](../02-sequences/01-importing-and-viewing.md) chapter documents the full structure.
+Every time this manual says [bundle](../../GLOSSARY.md#bundle), it means a folder that Finder shows as a single icon with an extension. A `.lungfishref` is neither a zip archive nor a single file. It is a directory holding a `manifest.json` at the root, a `genome/` folder with the bgzip-compressed FASTA and its indexes, and optional `annotations/`, `variants/`, and `tracks/` folders alongside a provenance record. A genome index is a small companion file that records where each position sits inside the sequence file, so a tool can read one gene without scanning the whole genome first. Bgzip is a block-compressed form of gzip that lets a tool jump straight to one part of the file without unpacking the rest.
 
-Bundles travel as a unit. Copy a `.lungfishref` to another project and the FASTA, the index, the annotations, and the provenance all move together. You cannot lose the index without the FASTA, or strand an annotation from the sequence it describes.
+Bundles travel as a unit. Copy a `.lungfishref` into another project and the sequence, its indexes, its annotations, and its provenance all move together. You cannot strand an index from the FASTA it belongs to, or an annotation from the sequence it describes.
+
+## Sharing a project and moving it forward
+
+A project can be opened by more than one person when it sits on shared storage, so LGE writes a lock record inside the bundle to say who holds it. The record names the user, the Mac it was taken on, the running copy of the app, the app version, and the time it was taken, and both the app and the CLI read it before touching the project. The **Project Is Open Read Only** message appears when the lock belongs to somebody else, and it means what it says. You can still open the project and look at everything in it. Only writing is blocked, so nothing you have already saved is at risk.
+
+A lock can outlive the copy of the app that took it, for example when a Mac is force-restarted mid-run. LGE calls that a stale lock and it has an explicit recovery path, which archives the old record and writes a note of why it was removed rather than deleting it quietly. The window has no button for this yet, so a stale lock is cleared from the command line. `lungfish-cli project lock <project>` takes a lock, `--mode` records what kind, and `lungfish-cli project unlock <project>` releases one, where `<project>` stands for the path to your own project bundle and the angle brackets are not typed. Both accept `--force`. On `lock` it replaces an active lock without the stale-owner checks, and on `unlock` it removes a lock even when another user or process holds it, so keep it for a lock you are certain nobody holds.
+
+Project bundles carry a schema version, which is a number recording the layout LGE used when it wrote the project. A project written by an older LGE may need migrating before a newer one opens it, and you would see a message saying so when you try to open it. `lungfish-cli project migrate <project>` handles that, and it is deliberately cautious. It scans the bundles inside the project, leaves anything already current alone, and reports any older layout it cannot safely convert instead of rewriting it. Run it with `--dry-run` first to see what it plans to do. When it reports a layout it cannot convert, keep the project on the LGE version that wrote it and ask the maintainers before going further.
+
+## Saving and exporting
+
+LGE saves for you, and there is no Save or Save As command to look for. Project changes are stored when an import or an edit finishes successfully, so check the Operations Panel for work that is still running or has failed. Some editing tools hold your unfinished changes as a draft and ask you to apply or discard it before you leave, the sample metadata fields at the bottom of the Inspector among them. LGE remembers project windows and views when they close or the app quits. **File > About Saving…** explains this behaviour in the app.
+
+Two menu items shape what enters and leaves a project. **File > Import Center...** (Cmd-Shift-I) is the main way data comes in, a tabbed window of cards where each card is a drop target for one kind of file. **File > Manage Project Storage…** goes the other way, reviewing what the project is using on disk and moving what you no longer need to the Trash.
+
+<!-- SHOT: file-export-menu -->
+
+Exports write separate files and never change the project. The **File > Export** submenu offers Sequences (FASTA/GenBank), Annotations (GFF3), FASTQ, Project Sample Metadata (CSV), Image (PNG), and Image (PDF), with a Provenance submenu underneath that the Provenance and Reproducibility chapter covers in full. Sequence and annotation exports choose their source in two steps. If you have selected an item in the sidebar, that is what gets exported. If you have selected nothing, LGE exports whatever the viewport currently shows. An annotation export asks you to choose a source when several supported sources are selected, reports the ones it cannot use, and names the source and the annotation count on the destination sheet. It never silently merges annotations from different sources.
 
 ## Searching the project
 
-A search field sits at the top of the sidebar, above the folder tree, and stays there in every project window. Type into it and LGE runs a live, project-wide search as you type, matching datasets, references, annotations, classification hits, and analyses. A background index keeps the results fast. While a query runs against it, a small spinner and a "Searching project" label appear just below the field. Clear the field and the sidebar returns to its full folder tree.
+A search field sits at the top of the sidebar in every project window. Type into it and LGE searches the whole project as you type, matching datasets, references, annotations, classification hits, and analyses against an index it maintains in the background. You do not wait for that index. Anything you import can be found as soon as the import finishes. While a query runs, a small spinner and a "Searching project…" label appear just below the field. Clear the field and the full folder tree returns.
 
-For structured queries, click the filter button to the right of the search field to open the Advanced Search popover. It assembles a query for you, so you need not memorise any syntax. A Scope selector narrows the search to one kind of data: All Project Data, EsViritu, Kraken/Bracken, TaxTriage, FASTQ Datasets, VCF + Reference, or JSON Manifests. Below it, structured fields filter by Keywords, Virus, Family, Species, and Sample, by Min Unique Reads and Min and Max Total Reads, and by a Date From and Date To range entered as `YYYY-MM-DD`. A "High-confidence pathogens only" checkbox restricts results to flagged pathogens. **Apply** writes the assembled query into the sidebar search field and runs it. **Clear** empties both the popover and the field.
+For a structured query, click the filter button to the right of the field to open the Advanced Search popover, which assembles the query so you need not learn any syntax. A Scope selector narrows the search to one kind of data, offering All Project Data, EsViritu, Kraken/Bracken, TaxTriage, FASTQ Datasets, VCF + Reference, and JSON Manifests. EsViritu, Kraken/Bracken, and TaxTriage are analysis tools that identify which organisms a sample contains, and the Classification chapters cover each of them, so leave the scope on All Project Data until you have run one. Below it, fields filter by Keywords, Virus, Family, Species, and Sample, by Min Unique Reads and Min and Max Total Reads, and by a Date From and Date To range typed as `YYYY-MM-DD`. Leaving the read-count fields blank is normal and returns everything, and a value like 50 in Min Unique Reads is a reasonable first cut when a classification returns too many faint hits. A "High-confidence pathogens only" checkbox restricts results to the organisms the classification tool itself flagged as confident calls. Apply writes the assembled query into the sidebar field and runs it, and Clear empties both the popover and the field.
 
 ## The Inspector
 
-The [Inspector](../../GLOSSARY.md#inspector) is the right-hand pane, and it reacts to you. Its contents change the moment you change what is selected in the sidebar or the main viewport.
-
-Select a paired-end FASTQ bundle in `Imports/` and the Inspector shows the read count, the average length, the per-base quality summary, and a button to run a classification or a mapping. Select an alignment track inside a `.lungfishref` and it switches to alignment statistics: mapped read count, mean coverage, coverage uniformity, and a button to call variants. Open a variant track, click a row in the variant table at the bottom of the viewport, and the Inspector switches again, now to that variant's `INFO` and `FORMAT` fields, the supporting read counts on each strand, and a button to copy the position to the clipboard. Variant rows live in the table drawer rather than the sidebar, because a track holds far more variants than the sidebar could usefully list. Wherever you select from, the Inspector is where the per-item detail lands.
+The Inspector is the right-hand pane, and it reacts to you. Its contents change the moment you change what is selected in the sidebar or the viewport.
 
 <!-- SHOT: inspector-fastq-selected -->
-![Full project window with a paired-end FASTQ bundle selected in the sidebar. The viewport shows the FASTQ Operations panel and a preview of the reads; the Inspector on the right shows dataset statistics, ingestion settings, the processing pipeline that produced the dataset, and editable sample metadata.](../../assets/screenshots/01-foundations/06-the-lungfish-project/inspector-fastq-selected.png)
 
-The FASTQ Inspector rewards a close look, because the same pattern repeats for every other selection type. The top of the pane names the item: a FASTQ dataset, with a read count. Below that come summary statistics, then the ingestion settings recorded when the file was imported, then the processing pipeline that produced this exact dataset, each step carrying its tool name, command line, and elapsed time. Editable sample metadata sits at the bottom.
+Select the `HG002` paired-end FASTQ bundle under `Imports/` in the demo project and the Inspector shows the read count, the mean length, a per-base quality summary, and buttons to run a classification or a mapping. Paired-end means the sequencer read the same DNA fragment from both ends, giving two reads that belong together. The per-base quality summary is the average Phred score across the reads, a number saying how confident the sequencer was in each base it called. Scores above 30 are good and mean about one wrong base in a thousand, and an average below 20 is worth investigating before you go on.
+
+Select an alignment track inside a `.lungfishref` and it switches to alignment statistics, showing the mapped and unmapped read counts, the proportion of reads that mapped, the mapper and preset that produced the alignment, and a button to call variants. Click a row in the Variants tab of the table drawer, the panel that slides up from the bottom of a reference bundle viewport, and the Inspector switches again. It shows that variant's position, alleles, quality, and filter, a genotype summary with the alternate allele frequency, its `INFO` fields, and a Copy Info button that puts the whole summary on the clipboard. `INFO` fields come from the VCF file format, the standard text format for recording variants, and the Variant Calling chapters cover what each field holds. Variants live in the table drawer rather than the sidebar because a single track holds far more of them than a sidebar could usefully list.
 
 <!-- SHOT: inspector-fastq-detail -->
-![The Inspector pane in close-up for the same FASTQ selection, showing dataset statistics (7,831,352 reads, 803.9 Mb of bases, mean length 102.6 bp, mean quality 29.2), ingestion settings, the five-step processing pipeline that produced this dataset, and the editable sample metadata fields below it.](../../assets/screenshots/01-foundations/06-the-lungfish-project/inspector-fastq-detail.png)
 
-That pattern holds throughout the app. Whatever you select, the Inspector shows what is known about it and what you can do next. An empty Inspector means nothing is selected. Click an item in the sidebar or the viewport to fill it.
-
-Toggle the Inspector with `Cmd-Opt-I`. Hide it for a wider viewport when you study a coverage track or a sunburst. Show it when you want metadata or actions.
+The FASTQ Inspector repays a close look, because the same shape repeats for every other kind of selection. The top names the item and gives its read count. Summary statistics follow, then the ingestion settings recorded at import time, then the processing pipeline that produced this exact dataset with a tool name, a command line, and an elapsed time for each step. Editable sample metadata sits at the bottom. Whatever you select, the Inspector shows what is known about it and what you can do next, and an empty Inspector means nothing is selected.
 
 ## The Operations Panel
 
-The [Operations Panel](../../GLOSSARY.md#operations-panel) tracks the long-running work in LGE as it happens: downloads, mapping runs, variant calls, classification runs, exports. Open it from the menu bar at `Operations > Show Operations Panel`, or with `Cmd-Shift-P`.
+The Operations Panel tracks long-running work as it happens, covering downloads, mappings, variant calls, classifications, and exports. Each of those kinds has its own chapter later in the manual, so you need not recognise them yet. The panel opens from **Operations > Show Operations Panel** (Cmd-Shift-P) in a window of its own.
 
-Each operation gets a row showing its type, its name, a progress bar, and the elapsed time. Click the disclosure triangle to expand it. The expanded row reveals the CLI command LGE built, buttons to view or reveal the log file, and the running log output in a scrolling text area. Failed operations stay in the panel until you dismiss them, so you can read the log and decide whether to retry.
+Each operation gets a row showing its type, its name, a progress bar, and the elapsed time. Underneath the buttons, LGE runs established command-line tools such as minimap2 and Kraken2, so every operation has a command behind it. Click the disclosure triangle to expand a row and you get the command LGE built, buttons to view or reveal the log file, and the running log output in a scrolling area. Failed operations stay in the panel until you dismiss them with **Clear** on the row, so you can read the log and decide whether to run the work again.
 
 <!-- SHOT: operations-panel-row -->
-![An Operations Panel row mid-run for an EsViritu classification, expanded to show the CLI command, the View Log and Reveal in Finder buttons, the running log output, and a progress bar at 12 seconds elapsed.](../../assets/screenshots/01-foundations/06-the-lungfish-project/operations-panel-row.png)
 
-The panel covers the current session only. **Clear Completed** at the bottom removes finished rows once you no longer need them on screen. The durable audit trail lives elsewhere, in the [provenance](../../GLOSSARY.md#provenance) sidecars and logs that completed workflows write into the project folder. Those records outlast the panel row and survive a relaunch. The [Provenance and Reproducibility](08-provenance-and-reproducibility.md) chapter walks through reading and exporting them.
+The panel covers the current session only. **Clear Completed** at the bottom removes finished rows, and **Operations > Cancel All Operations** stops everything still running at once. The durable record lives elsewhere, in the provenance sidecars and logs that finished workflows write into the project, and those outlast both the panel row and a relaunch. The [Provenance and Reproducibility](08-provenance-and-reproducibility.md) chapter covers reading and exporting them.
 
 ### When things go wrong
 
-Right-click any row in the Operations Panel to act on it without leaving the panel. The context menu offers what that row supports, and the choices depend on the row's state.
+Right-click any row to act on it without leaving the panel. The menu is assembled from what that row supports, so a running row and a failed one do not offer the same items. A missing item means only that the row does not support that action, never that something has broken.
 
 <!-- SHOT: operations-panel-right-click-menu -->
-![The right-click context menu on a running Operations Panel row, showing Copy CLI Command, Copy Log, View Log, Reveal Log in Finder, and Cancel.](../../assets/screenshots/01-foundations/06-the-lungfish-project/operations-panel-right-click-menu.png)
 
-1. **Copy CLI Command** copies the exact command line LGE ran, ready to paste into a terminal and reproduce the run by hand. It is also the fastest way to capture the command for a bug report.
-2. **Copy Log** copies the operation's log text to the clipboard. **View Log** opens it inline. **Reveal Log in Finder** opens the project folder at the log file, so you can attach it to a bug report or open it in another tool.
-3. **Cancel** appears on running operations. Cancellation is cooperative: the tool is asked to stop and clean up, and the row reads "cancelled" once it does. You can also press `Cmd-Period` with the row selected.
-4. **Copy Failure Report** and **Open GitHub Issue** replace **Cancel** on failed rows. **Copy Failure Report** gathers the operation title, the CLI command, the error message, the error detail, and the log into one text block, ready to paste into a GitHub issue. **Open GitHub Issue** opens a pre-filled issue in your browser with the failure report attached, so you review and submit it yourself. Nothing is filed without your explicit action.
+**Run Again…** appears at the top when LGE still holds enough of the original request to replay it. It is absent on rows that came from something other than a replayable workflow package, an ordinary file import among them. **Copy CLI Command** copies the exact command line that ran, which is the fastest way to reproduce a run by hand or to capture it for a bug report. **Copy Log** puts the log text on the clipboard, **View Log** opens it inline, and **Reveal Log in Finder** opens the folder at the log file. At the bottom, a running row offers **Cancel** and a finished one offers **Clear**. Cancellation is cooperative, so the tool is asked to stop and clean up rather than being killed outright. The row can sit for a few seconds before it reads as cancelled, because LGE waits for the tool to exit and clears away the partial output it owns first. Treat the row reading cancelled as the signal that the cleanup is done.
 
-When something fails and the error message alone will not tell you why, work through it in order. Open the panel, expand the failed row to read the inline log, then right-click and choose **Open GitHub Issue**. Add anything else, such as screenshots or project context, in the browser before you submit. The [Troubleshooting](../appendices/troubleshooting.md) appendix lists the most common failure modes and their fixes.
+A failed row adds three more items. **Copy Failure Report** gathers the operation title, the command, the error message, the error detail, and the log into one block ready to paste. **Open GitHub Issue** opens a pre-filled issue in your browser with that report attached, which you review and submit yourself, so nothing is ever filed without your action. **Reveal Failure Report in Finder** points straight at the report file, and it appears on its own as soon as the failure is recorded, so it is already there when you open the menu. A failed row is not cancellable, so **Clear** takes the place of **Cancel** there.
+
+When something fails and the message alone does not explain it, work through it in order. Open the panel, expand the failed row and read the inline log, then right-click and choose **Open GitHub Issue**. Add anything else in the browser before you submit. The [Troubleshooting](../appendices/troubleshooting.md) appendix lists the common failure modes and their fixes.
 
 ## Finding this manual inside the app
 
-The user manual ships inside the application. From any project window, choose `Help > Lungfish Genome Explorer Help` to open it in your default browser. `Help > Report an Issue...` opens a pre-filled GitHub issue template that includes the version string, and it is the right surface when a failure is not tied to a specific operation. For a failure you can see in the Operations Panel, the right-click **Open GitHub Issue** path is faster, because it captures the command, the log, and the error for you.
+The manual ships inside the application. **Help > Lungfish Genome Explorer Help** opens it in the macOS Help Viewer, the system window that displays an application's built-in help, falling back to an in-app window when the Help Viewer is unavailable. Three shorter guides sit under it, Getting Started, VCF Variants Guide, and AI Assistant Guide, where VCF is the Variant Call Format, the standard text format for recording variants. Below those, Documentation and Release Notes open pages on the web.
 
-For the full list of keyboard shortcuts referenced by this chapter and the rest of the manual, see the [Keyboard Shortcuts](../appendices/keyboard-shortcuts.md) appendix.
+**Help > Report an Issue...** opens a pre-filled GitHub issue template carrying the version string, and it is the right menu item when a failure is not tied to one operation. For a failure you can see in the Operations Panel, the right-click **Open GitHub Issue** route is faster, because it captures the command, the log, and the error for you. The [Keyboard Shortcuts](../appendices/keyboard-shortcuts.md) appendix lists every shortcut this chapter names.
+
+## What good looks like
+
+Four checks tell you a project is set up the way you think it is. Confirm the window title carries the project name without "(Read Only)" after it. That suffix has two causes, and they are easy to tell apart. If the project was made in the app and somebody else is in it, LGE shows the **Project Is Open Read Only** message naming who holds the lock. If no such message appears, the folder was built outside the app and never given a project store. Confirm the sidebar shows the folders you expect, remembering that a folder only appears once something has landed in it. Confirm that the folder a file sits in matches where it came from, so a downloaded reference is under `Downloads/` and not `Imports/`. And confirm that a finished run left a row in the Operations Panel and a result under `Analyses/`.
+
+When one of those disagrees, suspect the project rather than the app. A project folder made outside LGE, a bundle copied without its provenance, or a lock left behind by a crashed run accounts for most of what looks like a missing feature.
+
+## On the command line
+
+The import commands here are optional, because the window does the same work. The lock, unlock, and migrate commands are not optional, because the window has no equivalent for them yet, which is why the Sharing section above sends you here. The app is the only thing that creates a project store, so the first step below is the one you cannot replace, and it stands in for **File > New Project**. Everything after it fills the project you already made.
+
+Three details in the block are worth naming. A backslash at the end of a line only continues the command onto the next line, so you can type each command as one long line if you prefer. The project path is written with `$HOME` inside quotation marks, because the quotes keep the spaces in the name together and `$HOME` is the form of your home folder that works inside them, where `~` would not. The two import commands take different flags for the same path, `--output-dir` for `import fasta` and `--project` for `import fastq`, which is how the tool is built rather than a mistake here. Run `lungfish-cli import fasta --help` to see which flag any subcommand wants.
+
+```bash
+# 1. In the app: File > New Project, name it, save it, then close it.
+# 2. Fill it from the command line.
+lungfish-cli import fasta ~/Downloads/chr20.fasta \
+  --name chr20 \
+  --output-dir "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish"
+
+lungfish-cli import fastq ~/Downloads/HG002_R1.fastq.gz ~/Downloads/HG002_R2.fastq.gz \
+  --project "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish"
+
+# Coordinate access when the project sits on shared storage.
+# --mode records what kind of lock it is. Exclusive is the one most readers need.
+lungfish-cli project lock "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish" --mode exclusive
+lungfish-cli project unlock "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish"
+
+# Check an older project before a newer LGE opens it.
+lungfish-cli project migrate "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish" --dry-run
+```
+
+The two extensions are easy to confuse. A project bundle ends in `.lungfish` and a reference bundle inside it ends in `.lungfishref`. The CLI rejects a `--project` path that does not end in `.lungfish`.
 
 ## Next
 
-Continue to [Plugin Packs](07-plugin-packs.md) to learn how LGE manages the bioinformatics tools (minimap2, samtools, iVar, and others) that the workflow chapters depend on.
+Continue to [Plugin Packs](07-plugin-packs.md) to learn how LGE installs and manages the analysis tools the workflow chapters depend on.
