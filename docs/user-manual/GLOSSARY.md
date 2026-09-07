@@ -162,6 +162,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Depth**{#depth}. Synonym for coverage in this manual. The number of reads stacked at one reference position. See also: coverage.
 
+**Derived bundle**{#derived-bundle}. A reference bundle built from a selection taken out of something already in the project, most often a set of contigs picked from an assembly, which holds the selected sequences with a fresh FASTA index and carries a Derived Subset metadata block naming the assembler, the source, and the sequences that were chosen. See also: reference bundle, assembly bundle, contig, provenance.
+
 **dbSNP**{#dbsnp}. The NCBI catalogue of human genetic variants that have already been observed and named, distributed as a large VCF per reference build and used by GATK as a known-sites resource so that expected human variation is not mistaken for sequencing error. Lungfish Genome Explorer neither ships nor downloads it, so you fetch it yourself from the Broad Institute's public GATK resource bundle. See also: known sites, BQSR, VCF.
 
 **Docker**{#docker}. The container software that nf-core pipelines run their tool steps inside, installed on a Mac as the separate Docker Desktop application rather than through the Lungfish Genome Explorer Plugin Manager, and the only execution profile the Viral Recon wizard will accept. See also: container, nf-core, Nextflow.
@@ -231,6 +233,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Genotype quality**{#genotype-quality}. The confidence a variant caller reports in the genotype it chose at one position, written as the per-sample `GQ` field on a Phred scale where 20 means a one in a hundred chance the chosen genotype is wrong and 99 is the usual ceiling, so it answers a different question from QUAL, which asks only whether any variant exists there. See also: genotype, FORMAT, Phred score.
 
 **Germline variant**{#germline}. A difference from the reference genome that a person inherited from their parents and therefore carries in every cell of their body, as opposed to a somatic variant that arose in one tissue during their lifetime, which is why a germline caller may assume every position carries the same fixed number of genome copies. See also: variant-caller, ploidy, genotype.
+
+**GFA (Graphical Fragment Assembly)**{#gfa}. A tab-separated text format for assembly graphs in which each `S` line carries one sequence segment and each `L` line records an overlap between two segments, so a GFA holds the branching structure an assembler resolved rather than only the sequences it emitted; hifiasm writes its assembly as GFA rather than FASTA, and Lungfish Genome Explorer converts the primary contig graph to FASTA before the assembly viewport can list it. See also: assembly graph, contig, unitig.
 
 **GFF (General Feature Format)**{#gff}. A tab-separated table format for genomic features (genes, CDS, mature peptides, regulatory elements). GFF3 is the current spec; Lungfish accepts GFF3 paired with a FASTA at bundle creation. See also: FASTA, reference bundle.
 
@@ -381,6 +385,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **NAO-MGS**{#nao-mgs}. A wastewater metagenomic surveillance pipeline from SecureBio that runs externally and whose `virus_hits_final.tsv(.gz)` output Lungfish imports (it does not run the pipeline) through `lungfish nao-mgs import` or the Import Center, presenting one run's viral taxa in a sortable table with a taxon detail pane and BLAST verification workflow. See also: BLAST.
 
 **Newick**{#newick}. A compact parenthesised text format for phylogenetic trees, with branch lengths after colons and optional support values at internal nodes; the lingua franca for moving trees between FigTree, iTOL, ete3, and Lungfish. See also: phylogram.
+
+**Nanopore sequencing**{#nanopore-sequencing}. The Oxford Nanopore method that reads a DNA strand by drawing it through a protein pore and measuring how the ionic current changes as each stretch of bases passes through, which puts no ceiling on read length and yields reads tens of thousands of bases long, at the cost of a per-base error rate far higher than a short-read instrument's; Flye and hifiasm both accept these reads, and Flye accepts nothing else. See also: basecaller, read length, circular consensus sequencing.
 
 **Negative control**{#negative-control}. A sample carrying no template on purpose, prepared and sequenced alongside the real specimens so that any organism appearing in it must have come from the reagents, the laboratory, or the sequencing run rather than from a specimen, which is what makes it the reference point for judging contamination across a batch. See also: TaxTriage, read classification, samplesheet.
 
@@ -641,6 +647,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **UMI (unique molecular identifier)**{#umi}. A short random barcode added to each original DNA molecule before amplification, so that PCR copies of one molecule can be recognised as copies rather than counted as independent observations. Where a protocol places a UMI at a fixed position at the read start, Trim Fixed Bases is the operation that removes it. See also: barcode, mark duplicates.
 
 **Unclassified reads**{#unclassified-reads}. The reads a barcoded Oxford Nanopore run produced whose barcode the basecaller could not read confidently, which MinKNOW collects in a folder named `unclassified` beside the numbered barcode folders and which the run-folder importer skips unless you ask for them. See also: barcode, MinKNOW, demultiplex.
+
+**Unitig**{#unitig}. A stretch of sequence that every read covering it agrees on and that the assembly graph joins to its neighbours in only one way, so it is the longest piece an assembler can emit without making a choice; contigs are then built by choosing paths that link unitigs together, which is why an assembler's unitig graph is more fragmented and more trustworthy than its contig set. See also: assembly graph, contig, GFA.
 
 ## V
 
