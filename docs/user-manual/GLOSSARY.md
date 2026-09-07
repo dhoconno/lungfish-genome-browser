@@ -272,11 +272,15 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 ## Q
 
+**Quality binning**{#quality-binning}. The lossy compression step that rounds each base's Phred score to one of a small set of values before the reads are stored, offered by Lungfish at import as Illumina 4-level, 8-level, or None; Illumina instruments from the NovaSeq onward already report binned scores in hardware, so binning such a run discards little that was not already lost. See also: Phred score, FASTQ.
+
 **Query coverage**{#query-coverage}. In a BLAST result, the fraction of the query sequence that participated in the alignment to the subject; a high percent identity over only a fraction of the read is much weaker evidence than a moderate identity over most of the read. See also: BLAST, percent identity.
 
 ## R
 
 **Read**{#read}. One fragment of DNA reported by a sequencing instrument, stored as a string of bases beside an equal-length string of per-base quality scores, and written as one four-line record in a FASTQ file. See also: FASTQ, read length, Phred score.
+
+**Read clumping**{#read-clumping}. The reordering of a read file so that reads sharing sequence content sit next to each other, which lets a general-purpose compressor find far more repetition and shrink the stored file; Lungfish applies it at import as the "Optimize storage" option, using BBTools clumpify or Trim Galore, and the reordering means the stored bundle no longer matches the source file's read order. See also: FASTQ.
 
 **Read length**{#read-length}. The number of bases in a sequencing read; Illumina reads are typically 75-300 bp (fixed per run), Oxford Nanopore reads range from 1 kb to 100 kb (variable per run with mean 5-15 kb), PacBio HiFi reads are 10-25 kb. See also: FASTQ.
 
@@ -305,6 +309,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## S
 
 **Sample metadata**{#sample-metadata}. Structured per-sample fields (collection date, source, and so on) imported from a CSV or TSV sheet and attached to samples in a project. See also: BioSample.
+
+**Sample sheet**{#sample-sheet}. A CSV listing one sequencing sample per row with the sample's name and the paths to its read files, used at import to pair reads and name bundles explicitly instead of matching mate suffixes in filenames; Lungfish requires the columns `sample`, `r1`, and `r2`, and carries any further columns through as per-sample metadata. See also: sample metadata, paired-end.
 
 **savONT**{#savont}. A clustering option for full-length ONT MHC amplicons, an alternative to pbAA. See also: clustering, pbAA.
 
