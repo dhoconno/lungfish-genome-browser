@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The assembly sheet opened from Tools > Assembly > SPAdes... with Imports/HG002-chrM selected, showing Inputs, the Assembler/Read Type controls, the Isolate profile, and the readiness footer.
+id: assembly-wizard-spades
+chapter: 07-assembly/02-running-spades
+caption: The assembly sheet opened from Tools > Assembly > SPAdes..., showing the read-only Inputs rows,
+  the Assembler and Read Type controls at the top of Primary Settings, the Isolate profile, and the Readiness
+  panel at the bottom.
+viewport_class: fastq
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - bundle: Imports/HG002-chrM
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Imports/HG002-chrM in the sidebar
+  # PROSE-ONLY: Choose Tools > Assembly > SPAdes...
+crop:
+  mode: region
+  region:
+  - 206
+  - 100
+  - 984
+  - 694
+post:
+  retina: true
+  format: png

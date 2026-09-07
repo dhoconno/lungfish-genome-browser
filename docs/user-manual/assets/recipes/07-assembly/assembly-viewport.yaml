@@ -1,0 +1,30 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The assembly result viewport for the finished HG002-chrM SPAdes run. DISCREPANCY: the app has no top summary strip carrying assembler/read type/contig count/N50/etc as the chapter describes; the top strip shows only wall time ("25.6s"), and those figures (1 contig, 16697 total bp, N50 16697 bp, L50 1, longest 16697, GC 44.4%) appear instead in the right-hand Inspector's "Assembly Context" block.
+id: assembly-viewport
+chapter: 07-assembly/02-running-spades
+caption: The assembly result viewport after the HG002 mitochondrial run, with the summary strip along
+  the top reporting one contig, 16697 total bp, and an N50 of 16697 bp, above the contig table.
+viewport_class: assembly
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - assembly: Analyses/HG002-chrM
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Analyses/HG002-chrM in the sidebar
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

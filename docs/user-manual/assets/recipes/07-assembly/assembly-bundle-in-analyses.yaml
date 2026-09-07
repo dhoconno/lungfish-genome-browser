@@ -1,0 +1,30 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The HG002-chrM SPAdes run under the project's Analyses folder in the sidebar, selected, with the assembly viewport open showing 1 contig at 16697 bp. Note: unlike the caption, the demo project's Analyses row is a leaf (no nested .lungfishref bundle to expand into) so the run folder and its result are the same selected row.
+id: assembly-bundle-in-analyses
+chapter: 07-assembly/01-when-to-assemble
+caption: An assembly run folder under the project's Analyses folder in the sidebar, with the .lungfishref
+  bundle inside it selected and the assembly viewport open behind.
+viewport_class: assembly
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - assembly: Analyses/HG002-chrM
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Analyses/HG002-chrM in the sidebar
+crop:
+  mode: window
+post:
+  retina: true
+  format: png
