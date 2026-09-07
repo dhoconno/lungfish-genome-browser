@@ -66,6 +66,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **BioSample**{#biosample}. An NCBI record describing one biological sample; Lungfish can export a BioSample submission TSV from a project's sample metadata. See also: sample metadata.
 
+**Bit score**{#bit-score}. The strength of a single sequence alignment expressed on a normalised scale that does not shift with the size of the database it was found in, so unlike an e-value it stays comparable between two searches run at different times or against different collections, and it rises with both the length and the quality of the match. See also: BLAST, e-value, percent identity.
+
 **BLAST (Basic Local Alignment Search Tool)**{#blast}. NCBI's nucleotide and protein sequence search service that ranks database entries by local-alignment score against a query, used in Lungfish to verify a classifier's hit by sending a representative read to NCBI's `nt` database. See also: e-value, percent identity, query coverage.
 
 **Bootstrap**{#bootstrap}. A way of measuring confidence in a phylogenetic grouping by rebuilding the tree many times from alignments resampled column by column and reporting, as a percentage, how often each grouping came back; IQ-TREE's ultrafast bootstrap is the fast approximation Lungfish Genome Explorer exposes. See also: support value, IQ-TREE, SH-aLRT.
@@ -346,6 +348,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **nf-core**{#nf-core}. A community that curates, versions, and tests openly published Nextflow pipelines to a common standard, so a pipeline named by release runs the same steps for everyone who runs that release, and Lungfish Genome Explorer supports one of them, nf-core/viralrecon, pinned at release 3.0.0. See also: Nextflow, container.
 
+**nt database**{#nt-database}. NCBI's general nucleotide collection, holding the sequence records deposited with the public archives across every organism rather than a curated selection, which makes it much broader than the database any read classifier installs locally and is why Lungfish Genome Explorer searches it rather than a smaller one when verifying a classification. Every BLAST verification uses it, and neither the popover nor the command line offers a way to search a different database. See also: BLAST, accession, RefSeq.
+
 **NVD (Novel Virus Diagnostics)**{#nvd}. An external Snakemake wastewater-surveillance pipeline that assembles reads into contigs and BLASTs each contig, whose `*_blast_concatenated.csv(.gz)` output Lungfish imports (it does not run the pipeline) through `lungfish nvd import` or the Import Center and presents as a contig-keyed browser of best and secondary BLAST hits. See also: contig, BLAST.
 
 ## O
@@ -450,7 +454,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **RPKMF**{#rpkmf}. Reads per kilobase of reference per million filtered reads, the abundance figure EsViritu reports for each detected virus, which divides out both the length of the reference genome and the size of the sequencing library so that a long virus and a short one, or a deep run and a shallow one, can be compared against each other. See also: EsViritu, coverage, read.
 
-**Representative reads**{#representative-read}. The coverage-stratified sample of reads (default 20, up to 50) that Lungfish automatically selects from a taxon's assigned reads and submits to NCBI BLAST during verification, chosen to span the taxon's coverage rather than picked one at a time by the user. See also: BLAST.
+**Representative reads**{#representative-read}. The sample of reads (default 20, up to 50 from the popover) that Lungfish automatically selects from a taxon's assigned reads and submits to NCBI BLAST during verification, drawn as some of the longest reads plus a random fill so the sample is neither one unrepresentative corner of the data nor picked one read at a time by the user, except in the NAO-MGS viewport, which instead spreads its picks across quarters of the reference genome. See also: BLAST, nt database.
 
 **Required Setup pack**{#required-setup-pack}. The one plugin pack Lungfish installs as a unit and cannot run without, shown in the Plugin Manager as Third-Party Tools, holding the seventeen everyday utilities the rest of the app assumes are present, among them samtools, bcftools, htslib, fastp, Deacon, seqkit, BBTools, Nextflow, and Snakemake. See also: plugin pack, managed environment.
 
@@ -461,6 +465,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Residual**{#residual}. The leftover disagreement between the mutation profile a fitted answer predicts and the profile actually measured in the data, reported by Freyja on the `resid` line of a demix result, where smaller means the lineage mixture explains the sample better and the figure is most useful compared across samples processed the same way. See also: demixing, Freyja.
 
 **Ribosomal RNA (rRNA)**{#ribosomal-rna}. The structural RNA of the ribosome, which is by far the most abundant RNA in a cell, so an RNA sequencing library that was not depleted of it returns mostly ribosomal reads and very little of whatever else was in the sample. See also: Deacon, decontamination.
+
+**RID (Request ID)**{#rid}. The identifier NCBI assigns to one BLAST submission the moment it accepts the job, such as `9WZYE9M0014`, which both Lungfish Genome Explorer and NCBI's own site use to collect the result later, so a run that times out locally is still recoverable from the browser link built around its RID. See also: BLAST, nt database.
 
 **Rooting**{#rooting}. Choosing which point on a phylogenetic tree stands for the oldest ancestor, which is what turns a statement about who groups with whom into a statement about which lineage came first; IQ-TREE produces unrooted trees, so rooting in Lungfish Genome Explorer is the separate **Re-root Here** step. See also: outgroup, topology, internal node.
 
