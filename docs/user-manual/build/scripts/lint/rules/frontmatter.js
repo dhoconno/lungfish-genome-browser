@@ -43,6 +43,10 @@ export default function frontmatter() {
       file.message(`audience must be one of: ${[...AUDIENCES].join(", ")}`, fm);
     }
 
+    if ("parameters_refs" in data && !Array.isArray(data.parameters_refs)) {
+      file.message("parameters_refs must be a list of operation ids", fm);
+    }
+
     const declaredShots = new Set((data.shots ?? []).map((s) => s.id));
     const usedShots = new Set();
     visit(tree, "html", (node) => {

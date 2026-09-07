@@ -132,3 +132,11 @@ test("ai-tells flags listed words, inflections, and sentence patterns, but not q
   assert.doesNotMatch(reasons, /overused word 'tap'/);
   assert.equal((reasons.match(/overused word 'navigat/gi) || []).length, 1);
 });
+
+test("settings-coverage flags unknown ids and undocumented settings", async () => {
+  const messages = await lint("bad-settings-coverage.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /unknown parameters_refs id 'test.missing'/);
+  assert.match(reasons, /setting 'Quality cutoff' of 'test.trim' is not documented/);
+  assert.doesNotMatch(reasons, /setting 'Minimum length'/);
+});

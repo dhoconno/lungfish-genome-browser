@@ -1,0 +1,28 @@
+# parameters.yaml, the operation settings registry for the Lungfish Genome
+# Explorer user manual. Owner: Code Cartographer. Filled by Phase 2 of the
+# 2026-09 fidelity campaign. Chapters cite operation ids in frontmatter
+# parameters_refs; the settings-coverage lint rule checks that a chapter's
+# "## Settings" section documents every setting listed here.
+#
+# Schema:
+#   operations:
+#     <operation_id>:
+#       title: <human name as shown in the app>
+#       entry_points: [<menu path>, "CLI: lungfish-cli ..."]
+#       gating: [<pack id>, docker, experimental]   # [] when none
+#       sources: [<Sources/ path>, ...]
+#       settings:
+#         - label: <control label exactly as the app shows it>
+#           control: checkbox | number | slider | popup | text | file | radio
+#           default: <value>
+#           allowed: <range, list, or "any">
+#           effect: <one or two plain sentences>
+#           when_to_change: <one sentence, or "rarely">
+#           cli_flag: <flag or null>
+#       cli_only:
+#         - flag: <flag>
+#           default: <value>
+#           effect: <one sentence>
+#       notes: <free text>
+version: 0
+operations: {}
