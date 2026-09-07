@@ -3789,7 +3789,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 63 | appendices/power-user-notes | Power User Notes | [] | none | existing | queued |
 | 64 | appendices/primer-schemes | Primer Schemes | [] | bundled schemes | existing | done |
 | 65 | appendices/shared-projects | Shared Projects and Bundle Migration | [] | demo project | existing | done |
-| 66 | appendices/tool-versions | Tool Versions | [] | tool lock | existing (generated) | queued |
+| 66 | appendices/tool-versions | Tool Versions | [] | tool lock | existing (generated) | done |
 | 67 | appendices/troubleshooting | Troubleshooting | [] | none | existing | queued |
 
 Removed: `05-variants/03-cross-caller-comparison` (no feature behind it; nav entry removed, help-ids retargeted to chapter 28). Removed by split: `02-sequences/04-msa-and-trees` (replaced by chapters 12 and 13; nav and help-ids updated).

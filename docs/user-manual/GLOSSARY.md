@@ -6,6 +6,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 ## A
 
+**Absolute path**{#absolute-path}. A file's full address written from the top of the disk down, beginning with a slash as in `/Users/you/Documents/reads.fastq`, so it names the same file whatever folder a command is run from, unlike a bare filename that only works in the folder holding it. See also: working directory, PATH, shell.
+
 **Accession**{#accession}. The permanent identifier a public sequence database assigns to one record, such as the RefSeqGene record `NG_000007.3`. The trailing number after the dot is a version that increments when a curator revises the deposited sequence, so a published coordinate should always name the version it was measured against. See also: INSDC, reference genome.
 
 **Adapter**{#adapter}. The short synthetic DNA sequence that library preparation attaches to each end of a fragment so the instrument can bind and read it, which appears at the end of a read whenever the fragment was shorter than the read length and the instrument read straight through it. See also: library prep, FASTQ, fastp.
@@ -38,6 +40,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Allele-specific annotation**{#allele-specific-annotation}. A per-row VCF statistic that GATK computes separately for each alternate allele rather than pooling them, written with an `AS_` prefix such as `AS_QD`, so a position carrying two different alternate alleles gets one quality figure for each instead of one blended figure for both. Lungfish Genome Explorer always requests these in a joint-genotyping run. See also: INFO, joint genotyping, GenotypeGVCFs.
 
+**Alternate read**{#alternate-read}. One read carrying a base at some position other than the base the reference genome holds there, so the count of alternate reads divided by the total depth at that position is the allele frequency a variant caller reports. See also: allele frequency, depth, REF, ALT.
+
 **Allele target**{#allele-target}. One reference sequence in the allele library an MHC genotyping run matches reads against, named by its FASTA record name and forming one row of the genotype matrix, so a read either matches an allele target exactly over the sequenced stretch or contributes nothing to it. See also: allele, genotype matrix, retained read.
 
 **Amplicon**{#amplicon}. A target region of a genome amplified by PCR, used as the unit of an amplicon-based sequencing protocol such as ARTIC or QIASeqDIRECT. A run produces many overlapping amplicons that together tile the region of interest.
@@ -45,6 +49,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Amplicon dropout**{#amplicon-dropout}. The failure of one amplicon in a tiled protocol to amplify, so no reads cover the stretch of genome it should have carried and a variant caller reports nothing there, which is indistinguishable from a genuinely unchanged region unless you read the per-amplicon coverage table. See also: amplicon, coverage, mosdepth.
 
 **Annotation track**{#annotation-track}. One named set of features stored together inside a reference bundle and drawn as a single layer in the annotation lane of the sequence viewport, carrying both a display name and a stable track ID, so a GenBank import creates one named Imported Annotations and a bundle can hold several tracks at once. See also: reference bundle, GFF, sequence viewport.
+
+**Argument**{#argument}. Any one of the words typed after a program's name at a command line, whether a flag, a value belonging to a flag, or a filename, and the whole run of them is that command's argument list. See also: command-line flag, positional argument, argv.
 
 **argv**{#argv}. The command you typed split into its separate words, recorded in a provenance sidecar as a list so the exact invocation can be read back without guessing where one argument ended and the next began. See also: provenance sidecar, command-line flag, exit status.
 
@@ -232,6 +238,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **dbSNP**{#dbsnp}. The NCBI catalogue of human genetic variants that have already been observed and named, distributed as a large VCF per reference build and used by GATK as a known-sites resource so that expected human variation is not mistaken for sequencing error. Lungfish Genome Explorer neither ships nor downloads it, so you fetch it yourself from the Broad Institute's public GATK resource bundle. See also: known sites, BQSR, VCF.
 
+**Dialog**{#dialog}. The settings window Lungfish Genome Explorer opens before a run, holding the controls for one operation and a Run button, which is what a menu item ending in an ellipsis opens. See also: Operations Panel, wizard.
+
 **Directed acyclic graph**{#directed-acyclic-graph}. A set of boxes joined by one-way arrows in which no path of arrows ever leads back to the box it started from, which is the shape a Workflow Builder drawing must have so that the runner can always work out an order in which every step's input is ready before that step runs. See also: node port, workflow bundle.
 
 **Docker**{#docker}. The container software that nf-core pipelines run their tool steps inside, installed on a Mac as the separate Docker Desktop application rather than through the Lungfish Genome Explorer Plugin Manager, and the only execution profile the Viral Recon wizard will accept. See also: container, nf-core, Nextflow.
@@ -259,6 +267,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Error correction**{#error-correction}. A stage some assemblers run before building their graph, in which reads are compared against each other and a base that only one read carries where its neighbours agree on another is rewritten, on the reasoning that a base seen once is more likely a sequencing mistake than a real difference; SPAdes runs it by default and the assembly sheet's Skip error correction toggle turns it off. See also: de Bruijn graph, de novo assembly, read.
 
 **EsViritu**{#esviritu}. A read classifier built around a curated collection of viral genomes, which reports not only how many reads matched each virus but how much of that virus's genome those reads covered, shipped in Lungfish Genome Explorer's `metagenomics` plugin pack and run from **Tools > Classification > EsViritu...**. See also: read classification, coverage breadth, plugin pack.
+
+**Executable**{#executable}. The program file a tool actually runs as, named at the command line and recorded in a provenance sidecar, which often differs from the tool's display name, as IQ-TREE's `iqtree3` and Clair3's `run_clair3.sh` do. See also: managed environment, provenance sidecar, PATH.
 
 **Exit status**{#exit-status}. The number a command hands back to the shell when it finishes, where zero means it succeeded and any other value means it stopped for a reason the command defines, which is what a script tests to decide whether to carry on. See also: command-line flag, subcommand.
 
@@ -348,6 +358,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Heterozygous**{#heterozygous}. Carrying two different alleles at one position, one on each copy of a chromosome, written `0/1` in a VCF genotype field. See also: homozygous, genotype.
 
+**HG002**{#hg002}. A human DNA sample from the Genome in a Bottle project whose true sequence is known to high confidence, distributed openly and used throughout this manual as the human example, so a result computed from it can be checked against a published answer. See also: reference genome, benchmark.
+
+**Home folder**{#home-folder}. The folder on a Mac named after your account, holding your Documents, Downloads, and Desktop, written as `~` at a command line, so a path beginning `~/.lungfish` names a hidden folder inside it. See also: PATH, conda, managed environment.
+
 **Homologous**{#homologous}. Descended from the same position in a shared ancestral sequence, which is what a column of a multiple sequence alignment claims about the residues stacked in it, and which is an inference from similarity rather than something the data states directly. See also: alignment column, MSA.
 
 **Homopolymer**{#homopolymer}. A run of the same base repeated, such as `AAAAAA`, which nanopore basecalling resolves poorly because the electrical signal barely changes as each identical base passes through the pore, making homopolymer length the single largest source of insertion and deletion errors in Oxford Nanopore reads. See also: basecaller, indel, Medaka.
@@ -432,6 +446,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Lineage barcode**{#lineage-barcode}. The table Freyja consults during demixing, recording which mutations define each named viral lineage, installed as a dated snapshot alongside the tool so that lineages named after that date cannot be reported until the snapshot is refreshed. See also: Freyja, demixing, lineage.
 
+**Linkage**{#linkage}. Whether two changes sit on the same physical DNA molecule and so travel together, which read-level data can only show when one read spans both, so a caller that reports two changes at nearby positions is usually saying nothing at all about whether they are linked. See also: phase, haplotype, phase set.
+
 **Local reassembly**{#local-reassembly}. The strategy a variant caller such as GATK HaplotypeCaller uses in stretches where the reads look unsettled, discarding the original alignment across that stretch, rebuilding the candidate sequences from the reads themselves, and rescoring every read against those candidates, which mainly repays its cost around indels because an aligner placing one read at a time often puts the same insertion in slightly different spots on different reads. See also: variant-caller, indel, alignment.
 
 **Locus**{#locus}. The place on a chromosome where one particular gene sits, so that the alternative sequences a population carries at that place are its alleles; MHC genotyping reports one group of calls per locus, and which loci appear depends on the allele library a run used. See also: allele, MHC, allele target.
@@ -455,6 +471,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Manifest**{#manifest}. The small structured text file at the top of a Lungfish Genome Explorer bundle that names what the bundle holds, so a primer scheme's `manifest.json` names the protocol, the reference accessions its coordinates were written against, and the primer and amplicon counts, and a program reads it instead of guessing from the folder's contents. See also: bundle, primer scheme, JSON.
 
 **Mapping preset**{#mapping-preset}. A named bundle of mapper settings tuned for one kind of input, chosen alongside the mapper itself, where minimap2 offers `sr` for short reads, `map-ont`, `map-hifi`, and `map-pb` for long reads, `asm5` for assembled contigs, and `splice` for spliced alignment, while BBMap offers a standard and a PacBio mode. See also: mapper, mapping.
+
+**Mapping quality**{#mapping-quality}. The aligner's confidence that it placed a read at the right position, which is a judgement about the whole read and is separate from the per-base Phred score describing how well each base was read. It is recorded per read in a BAM as MAPQ. See also: MAPQ, Phred score, mapper.
 
 **MAPQ (mapping quality)**{#mapq}. A per-read confidence score in each BAM row, encoding how unambiguously the mapper placed the read at the recorded position; 0 means no confidence (the read fits multiple places equally well), 60 is the maximum for most mappers and means the placement is well above the second-best alternative. See also: BAM, mapper.
 
@@ -903,6 +921,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Working directory**{#working-directory}. The folder a Terminal window is sitting in when a command is typed, which decides where relative paths point and where a command writes by default, and which the command `pwd` prints. See also: symlink, exit status.
 
 **Workflow Library**{#workflow-library}. The window opened with **Tools > Workflow Library...** that lists every specialized workflow and every linked workflow package as a card with an Enabled switch, and which is the only place a specialized workflow can be turned on before its Tools menu item stops reading `(not enabled)`. See also: workflow package, plugin pack.
+
+**Wrapper**{#wrapper}. A program that builds another program's command line and runs it for you, which is what Lungfish Genome Explorer does every time a dialog setting becomes a flag on samtools, iVar, or an assembler. See also: argument, command-line flag, provenance sidecar.
 
 ## X
 
