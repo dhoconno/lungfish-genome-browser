@@ -18,6 +18,14 @@ BibTeX or equivalent format that chapters can include, total and per-file
 size, and notes on internal consistency such as whether reads align to the
 included reference and whether variants were called from those reads.
 
+## Read file naming
+
+Paired FASTQ fixtures use `_R1` and `_R2` (underscore, not a dot) because
+those are the suffixes the app's Import Center and CLI importer pair reads
+on, alongside `_R1_001`/`_R2_001` and `_1`/`_2`. A dot-delimited mate suffix
+is not recognised and never pairs, so a reader who drops dot-named files on
+the Import Center gets two unpaired singles instead of one bundle.
+
 ## Example data tiers
 
 Chapters choose fixtures from this ordered list unless a specific reason

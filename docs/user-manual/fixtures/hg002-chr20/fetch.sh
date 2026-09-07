@@ -29,7 +29,7 @@ DOWNSAMPLE_FRACTION="0.65"
 ( cd cache && "$SAMTOOLS" view -b -h "$BAM" "$REGION" > slice.bam )
 "$SAMTOOLS" view -b -s "42${DOWNSAMPLE_FRACTION#0}" -o cache/slice.ds.bam cache/slice.bam
 "$SAMTOOLS" sort -n -o cache/slice.nsort.bam cache/slice.ds.bam
-"$SAMTOOLS" fastq -1 HG002.chr20.10.0-10.5Mb.R1.fastq.gz -2 HG002.chr20.10.0-10.5Mb.R2.fastq.gz -0 /dev/null -s /dev/null -n cache/slice.nsort.bam
+"$SAMTOOLS" fastq -1 HG002.chr20.10.0-10.5Mb_R1.fastq.gz -2 HG002.chr20.10.0-10.5Mb_R2.fastq.gz -0 /dev/null -s /dev/null -n cache/slice.nsort.bam
 # Benchmark calls, shifted into fixture coordinates.
 ( cd cache && "$BCFTOOLS" view -r "$REGION" "$VCF" -Ou ) | "$BCFTOOLS" annotate --rename-chrs <(echo "chr20 chr20_10.0-10.5Mb") -Ov \
  | awk -v o="$OFFSET" 'BEGIN{OFS="\t"} /^#/ {print; next} {$2=$2-o; print}' | "$BGZIP" -c > HG002.chr20.10.0-10.5Mb.benchmark.vcf.gz

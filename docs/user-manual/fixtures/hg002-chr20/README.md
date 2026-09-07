@@ -69,8 +69,8 @@ Cite:
 | --- | --- |
 | `GRCh38.chr20.10.0-10.5Mb.fasta` | 500 KB |
 | `GRCh38.chr20.10.0-10.5Mb.fasta.fai` | <1 KB |
-| `HG002.chr20.10.0-10.5Mb.R1.fastq.gz` | 8.3 MB |
-| `HG002.chr20.10.0-10.5Mb.R2.fastq.gz` | 8.9 MB |
+| `HG002.chr20.10.0-10.5Mb_R1.fastq.gz` | 8.3 MB |
+| `HG002.chr20.10.0-10.5Mb_R2.fastq.gz` | 8.9 MB |
 | `HG002.chr20.10.0-10.5Mb.benchmark.vcf.gz` | 40 KB |
 | `HG002.chr20.10.0-10.5Mb.benchmark.vcf.gz.tbi` | <1 KB |
 

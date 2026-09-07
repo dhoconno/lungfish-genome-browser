@@ -81,8 +81,8 @@ step "1 reads"
 SHEET="$SCRATCH/samplesheet.csv"
 {
   echo "sample,r1,r2"
-  echo "HG002,$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb.R1.fastq.gz,$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb.R2.fastq.gz"
-  echo "HG002-chrM,$FX/human-mito/HG002.chrM.R1.fastq.gz,$FX/human-mito/HG002.chrM.R2.fastq.gz"
+  echo "HG002,$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb_R1.fastq.gz,$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb_R2.fastq.gz"
+  echo "HG002-chrM,$FX/human-mito/HG002.chrM_R1.fastq.gz,$FX/human-mito/HG002.chrM_R2.fastq.gz"
 } > "$SHEET"
 
 done_if "$P/Imports/HG002.lungfishfastq" || "$CLI" import-fastq --samplesheet "$SHEET" \
@@ -109,7 +109,7 @@ echo "   bundle $CHR20"
 done_if "$P/Analyses/mapping-HG002" || "$CLI" map --paired --mapper minimap2 --preset sr \
   --reference "$FX/hg002-chr20/GRCh38.chr20.10.0-10.5Mb.fasta" \
   --sample-name HG002 -o "$P/Analyses/mapping-HG002" \
-  "$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb.R1.fastq.gz" "$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb.R2.fastq.gz"
+  "$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb_R1.fastq.gz" "$FX/hg002-chr20/HG002.chr20.10.0-10.5Mb_R2.fastq.gz"
 
 MANIFEST="$CHR20/manifest.json"
 track_named() {
@@ -171,7 +171,7 @@ if [ -d "$P/Assemblies/HG002-chrM" ] && [ ! -d "$P/Analyses/HG002-chrM" ]; then
 fi
 done_if "$P/Analyses/HG002-chrM" || "$CLI" assemble --assembler spades --read-type illumina-short-reads \
   --paired --name HG002-chrM -o "$P/Analyses/HG002-chrM" \
-  "$FX/human-mito/HG002.chrM.R1.fastq.gz" "$FX/human-mito/HG002.chrM.R2.fastq.gz"
+  "$FX/human-mito/HG002.chrM_R1.fastq.gz" "$FX/human-mito/HG002.chrM_R2.fastq.gz"
 step_end
 
 # ---------------------------------------------------------------------------

@@ -74,8 +74,8 @@ Cite:
 | --- | --- |
 | `NC_012920.1.fasta` | 17 KB |
 | `NC_012920.1.fasta.fai` | <1 KB |
-| `HG002.chrM.R1.fastq.gz` | 1.9 MB |
-| `HG002.chrM.R2.fastq.gz` | 2.1 MB |
+| `HG002.chrM_R1.fastq.gz` | 1.9 MB |
+| `HG002.chrM_R2.fastq.gz` | 2.1 MB |
 | `expected/spades/contigs.fasta` | 17 KB |
 
 Total committed ~4.1 MB, well under the 50 MB fixture-set cap.

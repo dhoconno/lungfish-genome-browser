@@ -28,6 +28,6 @@ DOWNSAMPLE_FRACTION="0.0077"
 ( cd cache && "$SAMTOOLS" view -b -h "$BAM" chrM > slice.bam )
 "$SAMTOOLS" view -b -s "42${DOWNSAMPLE_FRACTION#0}" -o cache/slice.ds.bam cache/slice.bam
 "$SAMTOOLS" sort -n -o cache/slice.nsort.bam cache/slice.ds.bam
-"$SAMTOOLS" fastq -1 HG002.chrM.R1.fastq.gz -2 HG002.chrM.R2.fastq.gz -0 /dev/null -s /dev/null -n cache/slice.nsort.bam
+"$SAMTOOLS" fastq -1 HG002.chrM_R1.fastq.gz -2 HG002.chrM_R2.fastq.gz -0 /dev/null -s /dev/null -n cache/slice.nsort.bam
 
 du -sh *.fasta *.fastq.gz
