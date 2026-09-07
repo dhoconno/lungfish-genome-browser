@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Assistant tab of the Inspector beside the chr20 reference bundle viewport, showing the welcome message, the Data sent and Clear buttons in the header, and a Suggested Questions section.
+id: ai-assistant-panel
+chapter: appendices/ai-assistant
+caption: The Assistant tab of the Inspector beside a dataset viewport, showing the welcome message, the
+  suggested-question buttons, and the Data sent and Clear buttons in its header.
+viewport_class: sequence
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select the HG002 chr20 10.0-10.5Mb reference bundle in the sidebar
+  # PROSE-ONLY: Enable AI-powered search in Settings > AI Services
+  # PROSE-ONLY: Choose View > AI Assistant
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

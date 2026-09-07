@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Import Center's Reference Sequences tab, cropped to the Primer Scheme card with its Import... button and file hint reading .bed (+ optional .fasta/.fa/.fna).
+id: primer-scheme-import-card
+chapter: appendices/primer-schemes
+caption: The Import Center on its Reference Sequences tab, with the Primer Scheme card and its file hint
+  reading .bed (+ optional .fasta/.fa/.fna).
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Choose File > Import Center...
+  # PROSE-ONLY: Click the Reference Sequences tab
+crop:
+  mode: region
+  region:
+  - 354
+  - 405
+  - 611
+  - 87
+post:
+  retina: true
+  format: png

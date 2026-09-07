@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Azure AI section of the AI Services settings tab, scrolled into view, with the Use Azure AI-hosted endpoint toggle off and the Endpoint and Deployment fields both empty showing their placeholder text.
+id: ai-assistant-azure-endpoint
+chapter: appendices/ai-assistant
+caption: The Azure AI section of the AI Services settings tab, with the Use Azure AI-hosted endpoint toggle
+  and the Endpoint and Deployment fields.
+viewport_class: none
+app_state:
+  fixture: none
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Choose Lungfish Genome Explorer Preview > Settings...
+  # PROSE-ONLY: Click the AI Services tab
+  # PROSE-ONLY: Scroll down to the Azure AI section
+  # PROSE-ONLY: Leave the Endpoint and Deployment fields empty
+crop:
+  mode: region
+  region:
+  - 0
+  - 475
+  - 820
+  - 170
+post:
+  retina: true
+  format: png

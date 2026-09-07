@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Import Primer Scheme sheet, showing the Files section with its BED (required) and FASTA (optional) rows each with a Choose... button, and the Identity section with its Name, Display name, Canonical reference accession, and (partially visible) Equivalent accessions fields.
+id: primer-scheme-import-sheet
+chapter: appendices/primer-schemes
+caption: The Import Primer Scheme sheet, showing the Files section with its BED and FASTA rows and the
+  Identity section with its four text fields.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Choose File > Import Center..., click Reference Sequences, click Import... on the Primer Scheme card
+  # PROSE-ONLY: A native file-open panel appeared first; cancel it to reach this sheet
+  # PROSE-ONLY: Cancel without importing
+crop:
+  mode: window
+post:
+  retina: true
+  format: png
