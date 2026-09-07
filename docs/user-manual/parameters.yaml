@@ -5361,8 +5361,8 @@ operations:
         cli_flag: --sequence
       - label: Batch Output
         control: radio
-        default: Combine into one run, and the row is locked with the reason "Alignment requires all sequences in one run"
-        allowed: Combine into one run
+        default: Combine all inputs, run once (1 result), and the row is locked with the reason "Alignment requires all sequences in one run"; the row appears only when two or more input files are chosen
+        allowed: Combine all inputs, run once (1 result)
         effect: States that every selected input file is pooled into a single alignment. An alignment of N sequences has no meaning file by file, so the per-file option is not offered.
         when_to_change: rarely
         cli_flag: null

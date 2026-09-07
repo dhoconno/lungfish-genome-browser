@@ -40,7 +40,8 @@ to end in `.lungfish` because the CLI rejects a `--project` that does not.
 | `Imports/` | `HG002` and `HG002-chrM` paired Illumina samples, plus `SRR36291587` |
 | `Reference Sequences/` | `HBB.lungfishref` and `chr20_10.0-10.5Mb.lungfishref` |
 | `Analyses/mapping-HG002/` | minimap2 short-read mapping of HG002 against chr20 |
-| `Analyses/Multiple Sequence Alignments/` | the primate mitochondrial MSA and its IQ-TREE tree |
+| `Analyses/Multiple Sequence Alignments/` | the primate mitochondrial MSA |
+| `Phylogenetic Trees/` | the IQ-TREE tree built from that MSA, in the folder the app uses for trees |
 | `Analyses/kraken2-SRR36291587/` | Kraken 2 classification of the SARS-CoV-2 reads |
 | `Analyses/nvd-demo/` | the NVD BLAST demo import |
 | `Analyses/HG002-chrM/` | SPAdes assembly of the mitochondrial reads |

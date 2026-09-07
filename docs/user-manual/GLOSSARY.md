@@ -168,7 +168,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Inspector**{#inspector}. The right-hand pane of a Lungfish project window that shows context-sensitive metadata and analysis actions for whatever is selected in the sidebar or main viewport. Toggle with `Cmd-Opt-I`. See also: sidebar, project.
 
-**Interleaved FASTQ**{#interleaved-fastq}. A single FASTQ file holding a paired-end run with the two mates of each fragment written as consecutive records, forward then reverse, rather than split across an R1 and an R2 file; Lungfish bundles store pairs as two files and offer Interleave and Deinterleave as explicit operations. See also: paired-end, FASTQ.
+**Interleaved FASTQ**{#interleaved-fastq}. A single FASTQ file holding a paired-end run with the two mates of each fragment written as consecutive records, forward then reverse, rather than split across an R1 and an R2 file. Lungfish stores a paired-end sample inside its bundle as one interleaved file, and offers Interleave and Deinterleave as explicit operations on files outside a bundle. See also: paired-end, FASTQ.
 
 **IQ-TREE**{#iqtree}. A maximum-likelihood phylogenetic inference program with a built-in ModelFinder step and ultrafast bootstrap support estimation, used by Lungfish to produce `.lungfishtree` bundles from MSA bundles. See also: MSA, phylogram, support value.
 

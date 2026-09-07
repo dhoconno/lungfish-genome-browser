@@ -194,7 +194,7 @@ Click **Run**. LGE writes a new annotation track holding one feature per ORF, ea
 
 ### Removing a track
 
-The window has no command for deleting a whole annotation track. Deleting a track is the one task in this chapter that needs the terminal, so read the On the command line section below rather than skipping it if you ever have to remove one. Two command-line subcommands do the job, and that section shows both.
+To delete a whole annotation track in the window, open the annotation table drawer at the bottom of the viewport, pick the track, and choose **Delete Track...** from its track menu, which asks you to confirm before anything is removed. The command line offers the same removal, plus deletion of single rows from a track, and the On the command line section below shows both subcommands.
 
 ### Transferring best-match CDS annotations
 
@@ -214,7 +214,7 @@ When one of those disagrees, suspect the file rather than the app. Two malformed
 
 ## On the command line
 
-This section is optional with one exception. The window does everything above except deleting an annotation track, which only the terminal can do. The path shown is the one you downloaded the fixture to, written here as if it sits in your Downloads folder.
+This section is optional. The window does everything above, and the terminal adds row-level deletion inside a track. The path shown is the one you downloaded the fixture to, written here as if it sits in your Downloads folder.
 
 Two counting conventions meet here, and mixing them shifts a coordinate by one. The window counts 1-based and inclusive, so the first base of a sequence is base 1 and the range 70545 to 72152 takes both endpoints. Most of the command line counts the same way, and `extract sequence` says so in its own help. The exception is `sequence annotate-orfs`, whose `--start` and `--end` are 0-based with the start included and the end excluded, so the first base is 0. The HBB gene starting at window position 70545 is therefore passed to that one command as `--start 70544`, which is the subtraction the block below performs.
 
@@ -241,7 +241,7 @@ lungfish-cli sequence annotate-orfs ~/Documents/hbb-example.lungfish/"Reference 
   --sequence NG_000007 --start 70544 --end 72152 \
   --frames +1,+2,+3 --table 1 --min-length 300 --track-name "HBB ORFs"
 
-# Remove a track again, which the window cannot do.
+# Remove a whole track again, the same job as Delete Track... in the drawer.
 lungfish-cli sequence delete-annotation-track ~/Documents/hbb-example.lungfish/"Reference Sequences"/HBB.lungfishref \
   --track-id imported_annotations
 ```

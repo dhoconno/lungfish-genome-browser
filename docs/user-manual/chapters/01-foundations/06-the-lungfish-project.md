@@ -105,6 +105,7 @@ The sidebar is the authoritative view of the project, so when it and Finder disa
 | `Primer Schemes/` | Primer-scheme bundles carrying the extension `.lungfishprimers`, which list the short DNA primers used to amplify a target region |
 | `Extractions/` | Reads and reference regions pulled out into new bundles by an extraction operation |
 | `Haplotype Definitions/` | Files listing which combinations of alleles travel together on one chromosome, used by the MHC genotyping chapters |
+| `Phylogenetic Trees/` | Tree bundles carrying the extension `.lungfishtree`, built from an alignment in the window or imported |
 | `Analyses/` | Every analysis result, each in its own subfolder named `<tool>-<timestamp>` |
 
 The angle brackets in `<tool>-<timestamp>` stand for values LGE fills in, so a real folder is named something like `kraken2-2026-09-04T14-12-33`. You never type that name yourself. Most results record their provenance beside the output, and the Provenance and Reproducibility chapter shows where each one keeps it.

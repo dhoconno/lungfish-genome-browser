@@ -136,7 +136,7 @@ Merging turns that overlap to advantage, because two reads of the same base are 
 
 A paired-end run can also be written as one file where R1 and R2 records alternate. Record 1 is a forward read, record 2 is its mate, record 3 is the next forward read, and so on down the file. This is [interleaved FASTQ](../../GLOSSARY.md#interleaved-fastq). You need it when a downstream assembler or mapper asks for a single input file rather than a pair of them, which is the only reason to make one.
 
-LGE bundles keep paired-end reads as two files, R1 and R2. Interleaving into a single alternating file is a separate operation you run when a downstream tool wants that shape, and Deinterleave reverses it. Merge Overlapping Pairs, Interleave, and Deinterleave are all reached from the Operations tab of the FASTQ viewport described later in this chapter, which lists the operation categories and opens a dialog for the one you choose.
+Inside an LGE bundle a paired-end sample is stored as one interleaved file, so the two files you import become a single file on disk with the mates alternating, and the bundle's record notes that its pairing mode is interleaved. You never see that file directly, and every operation still treats the sample as pairs. Interleave and Deinterleave are explicit operations for files outside a bundle, for when a tool elsewhere wants one shape or the other. Merge Overlapping Pairs, Interleave, and Deinterleave are all reached from the Operations tab of the FASTQ viewport described later in this chapter, which lists the operation categories and opens a dialog for the one you choose.
 
 ## Phred quality scores
 
@@ -218,7 +218,7 @@ The numbers bear it out. This read is 16,565 bases long, and across the fixture 
 
 This section describes what you will see once your reads are inside a project. Importing them has its own chapter later in the manual, so read what follows now and come back to click through it after you have imported a bundle.
 
-Click a FASTQ bundle in the sidebar and the main viewport switches to the FASTQ viewport. A bundle is LGE's container for one sample's reads, holding the R1 and R2 files together with a record of where they came from, and the sidebar shows it as one item rather than two files. The top pane of the viewport holds one summary bar and one sparkline strip computed over the whole bundle, not a row per file.
+Click a FASTQ bundle in the sidebar and the main viewport switches to the FASTQ viewport. A bundle is LGE's container for one sample's reads, holding the imported reads together with a record of where they came from, and the sidebar shows it as one item rather than two files. The top pane of the viewport holds one summary bar and one sparkline strip computed over the whole bundle, not a row per file.
 
 The summary bar carries nine cards, each computed by scanning the reads.
 

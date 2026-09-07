@@ -188,7 +188,7 @@ TREE=$(find "$P" -maxdepth 3 -name '*.lungfishtree' | head -1)
 if [ -z "$TREE" ] && [ -n "$MSA" ]; then
   MSADIR=$(dirname "$MSA")
   "$CLI" tree infer iqtree "$MSA" --project "$P" \
-    --output "$MSADIR/Primate mitochondria.lungfishtree" --name "Primate mitochondria"
+    --output "$P/Phylogenetic Trees/Primate mitochondria.lungfishtree" --name "Primate mitochondria"
 else
   echo "   tree exists or no MSA, skipping"
 fi

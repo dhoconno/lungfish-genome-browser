@@ -43,10 +43,13 @@ A project is a `.lungfish` folder. Inside it, imported reads sit under
 `Imports/`, downloaded data under `Downloads/`, reference bundles under
 `Reference Sequences/`, extractions under `Extractions/`, and every
 analysis result under `Analyses/<tool>-<timestamp>/`, with one exception.
-Multiple sequence alignments and the trees built from them land under
-`Analyses/Multiple Sequence Alignments/` as `.lungfishmsa` and
-`.lungfishtree` bundles (verified by a CLI run on 2026-09-06). There is no
-`Assemblies/` folder. Bundle extensions are written in code font:
+Multiple sequence alignments land under `Analyses/Multiple Sequence
+Alignments/` as `.lungfishmsa` bundles (verified by a CLI run on
+2026-09-06). Tree bundles are different. The app writes a `.lungfishtree`
+built in the window, and an imported tree, to a top-level `Phylogenetic
+Trees/` folder (`ViewerViewController.swift:2156`, `ImportMSATreeSubcommands.swift:147`),
+while the CLI's `tree infer --output` writes wherever you point it. There
+is no `Assemblies/` folder. Bundle extensions are written in code font:
 `.lungfishref`, `.lungfishfastq`, `.lungfishmsa`, `.lungfishtree`,
 `.lungfishgenotype`, `.lungfishprimers`.
 
@@ -121,3 +124,11 @@ the Variants tab uses for fast filtering
 (`BundleVariantTrackAttachmentService.swift:71-74`). There is no BCF and no
 CSI index, whatever the drift report's row 3 for chapter 5 said. The filter
 chips sit behind a **Presets** disclosure button above the Variants table.
+
+## Paired-end storage (settled by a live import on 2026-09-06)
+
+A paired-end import is stored inside its `.lungfishfastq` bundle as one
+interleaved `<sample>.fastq.gz` whose meta file records
+`pairingMode: interleaved` (`FASTQBatchImporter.swift:1032`). Chapters say a
+bundle holds the sample's reads, never "the R1 and R2 files", and describe
+Interleave and Deinterleave as operations on files outside a bundle.
