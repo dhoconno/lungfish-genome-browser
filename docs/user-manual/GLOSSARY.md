@@ -164,6 +164,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Cohort**{#cohort}. A set of samples genotyped and compared together, presented across the columns of the genotype comparison matrix. See also: genotype matrix.
 
+**Commit**{#commit}. One saved snapshot of a repository, identified by a forty-character string that names that snapshot and no other, which is why pinning a pipeline to a commit rather than to a release tag fixes exactly which code will run. See also: repository, pinned, reproducibility.
+
 **CombineGVCFs**{#combinegvcfs}. The GATK tool that merges several per-sample GVCFs into one combined GVCF held in a single file, which Lungfish Genome Explorer chooses over GenomicsDB for cohorts of 50 samples or fewer because a single file is simpler to move and inspect at that scale. See also: GVCF, GenomicsDB, joint genotyping, GenotypeGVCFs.
 
 **Conda**{#conda}. A package manager that handles compiled non-Python dependencies cleanly, used in Lungfish to install bioinformatics tools from the bioconda channel into per-tool environments under `~/.lungfish/conda`. See also: micromamba, plugin pack.
