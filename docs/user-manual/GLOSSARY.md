@@ -90,6 +90,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **CIGAR**{#cigar}. A compact string in each BAM row that describes, base by base, how the read aligns to the reference: `M` for aligned positions, `I` and `D` for insertions and deletions, `S` for soft-clipped ends, and `H` for hard-clipped ends. See also: BAM, soft-clip.
 
+**Chimera**{#chimera}. An artificial sequence formed when two real templates join during PCR, so the result looks like a single genuine molecule while belonging to no organism, which is why a metabarcoding run checks its unmatched sequences for chimeras before anyone reports them as a new species. See also: metabarcoding, vsearch, amplicon.
+
 **Circular consensus sequencing (CCS)**{#circular-consensus-sequencing}. The PacBio protocol that circularises a DNA fragment, reads it repeatedly, and reports the consensus of those passes as one read, which is why HiFi reads carry both long lengths and Q30+ quality strings; a HiFi read's quality is a consensus confidence, not a raw signal measurement. See also: read length, Phred score.
 
 **Clade**{#clade}. A group on a phylogenetic tree consisting of one internal node and every tip descended from it; the unit a phylogeneticist points to when claiming "these isolates share a recent common ancestor". See also: phylogram.
@@ -141,6 +143,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## D
 
 **Deacon**{#deacon}. A host-depletion program that matches a read's minimizers against a prebuilt index and drops the read when enough of them hit, used in Lungfish Genome Explorer for both human read removal and ribosomal RNA removal. See also: host depletion, minimizer, ribosomal RNA.
+
+**Deduplicated reference**{#deduplicated-reference}. A curated FASTA in which every record is one known marker sequence labelled with the species it belongs to and identical sequences have been collapsed to a single record, which is the reference form 12S amplicon matching requires so that one sequence shared by several species is recognised as shared rather than counted repeatedly. See also: 12S, metabarcoding, FASTA.
 
 **Demultiplex**{#demultiplex}. Separating a mixed sequencing run into per-sample read sets by their barcode. See also: barcode, barcode kit.
 
@@ -440,9 +444,13 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Read merging**{#read-merging}. Joining the two mates of a paired-end read into one longer sequence, possible only when the DNA fragment was shorter than the two reads combined so that the mates overlap in the middle, where the doubly measured bases also let the merger correct disagreements between the two reads. See also: paired-end, insert size, interleaved FASTQ.
 
+**Read orientation**{#read-orientation}. Which of the two DNA strands a read was sequenced from, since a fragment can be read from either end and the two forms carry the same information written backwards and complemented. Tools that compare a read to a reference by exact containment, such as 12S amplicon matching, see only the form they are given, so reads are turned to a common orientation with `lungfish-cli fastq orient` before matching. See also: reverse complement, strand, 12S.
+
 **Reading frame**{#reading-frame}. One of the three ways to divide a nucleotide sequence into codons on a given strand, selected when translating a sequence to protein. See also: genetic code, codon.
 
 **Reads per billion**{#reads-per-billion}. An abundance figure, abbreviated RPB and reported per contig by the NVD viewport, calculated as the reads mapping to that contig divided by the sample's total read count and multiplied by a billion, so that contigs from libraries sequenced to different depths can be compared on one scale. See also: NVD, contig, read.
+
+**Reads per million**{#reads-per-million}. An abundance figure, abbreviated RPM and reported per taxon by CZ-ID and by the taxon reports Lungfish Genome Explorer imports from it, calculated as the reads assigned to that taxon divided by the sample's total read count and multiplied by a million, so that taxa from libraries sequenced to different depths can be compared on one scale. See also: CZ-ID, reads per billion, taxon, read.
 
 **Regular expression**{#regular-expression}. A compact pattern language for describing text to search for rather than spelling out the exact text, where writing a plain word already means "contains this anywhere" and square brackets such as `[GA]` mean "any one of these characters here". See also: read identifier, sequence motif.
 
@@ -554,6 +562,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Taxon**{#taxon}. Any named group on the tree of life, at any level of the naming hierarchy, so *Homo sapiens*, *Streptococcus*, and *Coronaviridae* are each one taxon, and a classifier's answer for a single read is the name of one of them. See also: taxonomic rank, lowest common ancestor, read classification.
 
+**Taxon report**{#taxon-report}. The tab-separated table a hosted metagenomics service such as CZ-ID hands back at the end of a run, holding one row per taxon it detected alongside that taxon's read counts, reads per million, percent identity, alignment length, and e-value, which Lungfish Genome Explorer imports and converts into its own classification format. See also: CZ-ID, taxon, kreport, read classification.
+
 **Taxonomic rank**{#taxonomic-rank}. The level of the biological naming hierarchy a taxon belongs to, running from domain down through phylum, class, order, family, and genus to species, which is what a classifier's result table reports in its Rank column and what each ring of a sunburst chart stands for. See also: taxon, clade, read classification.
 
 **Taxonomy identifier**{#taxonomy-id}. The number NCBI's Taxonomy database assigns to one taxon, such as `28875` for Rotavirus A, which classifiers and surveillance pipelines report instead of a name because the number is stable while names are revised, so a result table often has to resolve the numbers into names before a reader can use it. See also: taxon, taxonomic rank, accession.
@@ -583,6 +593,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Variant track**{#variant-track}. One named set of variant calls stored inside a reference bundle, written as a bgzip-compressed VCF with a tabix index and a SQLite copy of the same rows that the Variants tab queries when you sort or filter. A bundle can hold several, and when it does they all load into the one table at once with the Source column naming which track each row came from. See also: reference bundle, table drawer, VCF.
 
 **VCF (Variant Call Format)**{#vcf}. A tab-separated file format that lists positions in a reference genome where a sample differs, with per-call confidence and metadata. See also: REF, ALT, genotype, allele frequency.
+
+**vsearch**{#vsearch}. An open-source toolkit for comparing and clustering nucleotide sequences, used by Lungfish Genome Explorer to screen a 12S run's unmatched sequence clusters for chimeras and to turn reads to a common orientation against a reference. See also: chimera, read orientation, 12S.
 
 **Virtual bundle**{#virtual-bundle}. A read bundle that stores a short manifest naming its parent bundle and the operation to apply rather than a second copy of the reads, keeping only a preview of about a thousand reads on disk, so that many subsets of one sample cost about as much storage as one. See also: materialization, bundle, subsampling.
 

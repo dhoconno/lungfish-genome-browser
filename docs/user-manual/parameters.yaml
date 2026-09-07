@@ -4429,7 +4429,7 @@ operations:
       - label: "Reads to submit:"
         control: slider
         default: "20"
-        allowed: 1 to 50, capped at the number of reads the taxon actually has
+        allowed: 1 to 50 in the popover slider, capped at the number of reads the taxon actually has, and 1 to 100 on the command line
         effect: Sets how many of the taxon's reads are sent to NCBI to be checked against the whole nucleotide database. More reads give a firmer answer and take longer.
         when_to_change: Lower it to get a quick sanity check, and raise it when the first answer comes back mixed and you want a clearer verdict.
         cli_flag: --reads
@@ -4447,9 +4447,12 @@ operations:
       There is nothing else to configure. The database is fixed at NCBI nt, the program at
       blastn, and the hit list at five hits per read, none of which the popover or the CLI
       exposes. The popover warns that the reads leave the app for NCBI. When a taxon has
-      fewer than two reads the slider disappears and the popover states the fixed count
+      only one read the slider disappears and the popover states the fixed count
       instead. Results arrive in a drawer under the table with one of four verdicts,
-      Supported, Mixed, Unsupported, or Inconclusive, plus a verification rate.
+      Supported, Mixed, Unsupported, or Inconclusive, plus supporting and contradicting
+      counts. The drawer shows six columns by default and hides five, which are
+      Accession, Coverage, Align Length, Tax ID, and Verdict, each reachable by
+      right-clicking the column header.
 
   classify.extract-reads-by-taxon:
     title: Extract Reads
