@@ -3778,7 +3778,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 52 | 08-workflows/03-running-external-workflows | Running External Workflows | [workflow.library-run] | hello-world packages | existing (add to nav) | done |
 | 53 | 09-genotyping/01-what-is-mhc-genotyping | What Is MHC Genotyping | [] | Williams project | existing (add to nav) | done |
 | 54 | 09-genotyping/02-running-genotyping | Running Genotyping | [genotype.miseq-amplicon, genotype.full-length-ont] | Williams project | existing (add to nav) | queued |
-| 55 | 09-genotyping/03-reading-the-genotype-comparison | Reading the Genotype Comparison | [] | Williams project | existing (add to nav) | queued |
+| 55 | 09-genotyping/03-reading-the-genotype-comparison | Reading the Genotype Comparison | [] | Williams project | existing (add to nav) | done |
 | 56 | 09-genotyping/04-haplotype-definitions-and-export | Exporting Genotypes | [genotype.export] | Williams project | existing (retitled, add to nav) | queued |
 | 57 | appendices/cli-reference | CLI Reference | [] | cli-help dumps | existing | queued |
 | 58 | appendices/06-running-in-ci | Running in CI | [] | none | existing | queued |

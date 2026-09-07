@@ -144,6 +144,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Contig (in a reference)**{#contig-reference}. One named sequence in a multi-record FASTA; in `.lungfishref` bundles the contig list comes from FASTA headers and matches the BAM, VCF, and GFF3 contig fields.
 
+**Continuous integration**{#continuous-integration}. A service that runs a fixed set of commands on a freshly created machine each time a change reaches a shared repository, reports whether every command succeeded, and then discards the machine, so that nothing installed during one job survives into the next unless it is deliberately cached. See also: offline pack, dependency set, provenance sidecar.
+
 **Coordinate**{#coordinate}. A 1-based position on a reference, named as `chrom:position` (for example, `MN908947.3:21618`). Lungfish presents 1-based inclusive coordinates to the user everywhere; underlying file formats may use 0-based half-open (BED) or 1-based inclusive (VCF, GFF3, SAM/BAM displayed). See also: chromosome.
 
 **Coverage**{#coverage}. The number of reads that align across a given reference position; used interchangeably with depth in this manual. See also: pileup.
@@ -174,6 +176,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Demixing**{#demixing}. Solving for the blend of known viral lineages whose combined mutation profile best explains the allele frequencies measured in one sample, which is how Freyja reports several lineages with a proportion each instead of picking a single name. See also: Freyja, lineage, lineage barcode, allele frequency.
 
+**Dependency set**{#dependency-set}. The exact list of tool versions and builds one Lungfish Genome Explorer release was built and tested against, named by a version string such as `2026.2` and recorded both in the tool lock manifest and in every provenance record, so a run can be checked against the toolset it was meant to use. See also: plugin pack, provenance sidecar, reproducibility.
+
 **Depth**{#depth}. Synonym for coverage in this manual. The number of reads stacked at one reference position. See also: coverage.
 
 **Derived bundle**{#derived-bundle}. A reference bundle built from a selection taken out of something already in the project, most often a set of contigs picked from an assembly, which holds the selected sequences with a fresh FASTA index and carries a Derived Subset metadata block naming the assembler, the source, and the sequences that were chosen. See also: reference bundle, assembly bundle, contig, provenance.
@@ -197,6 +201,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Edit distance**{#edit-distance}. The number of single-base substitutions, insertions, and deletions separating an aligned read from the reference stretch it sits on, written into the read's optional `NM` tag by the mapper, so a read with `NM` of 0 matches the reference perfectly and is what the zero-mismatch alignment filter keeps. See also: BAM, percent identity, alignment.
 
 **ENA (European Nucleotide Archive)**{#ena}. The European mirror of the SRA, hosted at EMBL-EBI; one of three INSDC partners (with NCBI SRA and DDBJ) that share deposited sequencing data. Lungfish downloads SRA runs from ENA first because ENA serves pre-converted FASTQs directly, and falls back to the NCBI SRA Toolkit when ENA is unavailable. See also: SRA.
+
+**Environment variable**{#environment-variable}. A named value the shell hands to every program it starts, used by Lungfish Genome Explorer to relocate managed storage with `LUNGFISH_STORAGE_ROOT` and `LUNGFISH_CONDA_ROOT`, which it reads together, and to supply an NCBI account key with `NCBI_API_KEY`. See also: continuous integration, conda.
 
 **Error correction**{#error-correction}. A stage some assemblers run before building their graph, in which reads are compared against each other and a base that only one read carries where its neighbours agree on another is rewritten, on the reasoning that a base seen once is more likely a sequencing mistake than a real difference; SPAdes runs it by default and the assembly sheet's Skip error correction toggle turns it off. See also: de Bruijn graph, de novo assembly, read.
 
@@ -433,6 +439,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **NVD (Novel Virus Diagnostics)**{#nvd}. An external Snakemake wastewater-surveillance pipeline that assembles reads into contigs and BLASTs each contig, whose `*_blast_concatenated.csv(.gz)` output Lungfish imports (it does not run the pipeline) through `lungfish nvd import` or the Import Center and presents as a contig-keyed browser of best and secondary BLAST hits. See also: contig, BLAST.
 
 ## O
+
+**Offline pack**{#offline-pack}. A directory holding a copy of one plugin pack's already-installed conda environments together with a manifest and its own provenance record, written by `lungfish conda offline-export` so the tools can be moved to a machine with no network access and installed there with `lungfish conda offline-install`. See also: plugin pack, conda, continuous integration.
 
 **Open reading frame**{#open-reading-frame}. A stretch of codons from a start to a stop with no internal stop, a candidate protein-coding region Lungfish can auto-detect. See also: reading frame, CDS.
 
