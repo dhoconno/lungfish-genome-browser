@@ -3,128 +3,186 @@ title: Provenance and Reproducibility
 chapter_id: 01-foundations/08-provenance-and-reproducibility
 audience: bench-scientist
 prereqs: [01-foundations/06-the-lungfish-project]
-estimated_reading_min: 5
-task: Read the run record for a Lungfish Genome Explorer result and export a workflow so a collaborator can re-run it.
+estimated_reading_min: 12
+task: Read the run record for a Lungfish Genome Explorer result and export it so a collaborator can re-run the same work.
 tags: [foundations, provenance, reproducibility, inspector, export]
 tools: []
+parameters_refs: [provenance.export]
 entry_points:
-  - "Inspector > Provenance tab"
-  - "File > Export > Provenance"
+  - Inspector > Provenance section
+  - File > Export > Provenance
+  - "CLI: lungfish-cli provenance export"
 shots:
-  - id: classifier-provenance-disclosure
-    file: ../../assets/screenshots/01-foundations/08-provenance-and-reproducibility/classifier-provenance-disclosure.png
-    caption: "An EsViritu classification result with the Inspector's Provenance tab open on the right. The tab shows Run Summary, Inputs, Outputs, Warnings, and Lineage for the run that produced the table on screen."
-  - id: file-export-provenance-menu
-    file: ../../assets/screenshots/01-foundations/08-provenance-and-reproducibility/file-export-provenance-menu.png
-    caption: "The File > Export menu with Provenance at the bottom. Choosing Provenance opens a submenu where you pick the export format (Shell Script, Python Script, Nextflow, Snakemake, Methods Section, or the full record as JSON)."
+  - id: inspector-provenance-section
+    caption: "The chr20 reference bundle selected in the demo project, with the Inspector's Provenance section open on the right showing Run Summary above the Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON blocks."
+  - id: provenance-lineage-step-expanded
+    caption: "The Provenance section's Lineage block with one bcftools step expanded, showing that step's own Command, Inputs, Outputs, Exit Status, and Wall Time."
+  - id: file-export-menu
+    caption: "The File > Export submenu open, showing the sequence, annotation, FASTQ, metadata, and image export items above the Provenance submenu."
+  - id: provenance-export-folder
+    caption: "The exported provenance folder open in Finder, with the primary artifact beside the provenance subdirectory of copied run records."
   - id: provenance-signing-settings
-    file: ../../assets/screenshots/01-foundations/08-provenance-and-reproducibility/provenance-signing-settings.png
-    caption: "Settings > General > Provenance Signing. The default is Off; clinical or audit labs that need tamper-evident records can switch the provider to Local or Cosign Plan."
+    caption: "Settings > General > Provenance Signing, showing the Off, Local, and Cosign Plan provider choices above the local signing key field, the public key path field, and the Save Signing Key and Clear Signing Key buttons."
 illustrations:
   - id: provenance-graph-cartoon
-    brief: "Schematic of a workflow chain: a downloaded reference FASTA (root), a downloaded FASTQ (root), a mapping step producing a BAM (depends on both), a primer-trim step producing a trimmed BAM, and a variant-calling step producing a VCF. Each step is a node; arrows show which step produced inputs for the next. Use Lungfish Creamsicle for nodes, Deep Ink for arrows, Peach to highlight the final result you would select to export."
-glossary_refs: [provenance, reproducibility, inspector]
+    brief: "Schematic of the demo project's chain: an imported chr20 reference FASTA and an imported pair of HG002 FASTQ files feed a minimap2 mapping that produces a BAM, which feeds a bcftools variant call that produces a VCF. Each stage is a node, arrows show which stage produced inputs for the next, and each arrow carries a small SHA-256 label. Use Lungfish Creamsicle for nodes, Deep Ink for arrows and labels, Peach to highlight the variant track at the end as the item you would select before exporting."
+glossary_refs: [provenance, provenance-sidecar, reproducibility, checksum, inspector, methods-export, run-record, project, bundle, conda, pileup]
 features_refs: []
-fixtures_refs: []
-brand_reviewed: false
-lead_approved: false
+fixtures_refs: [demo-project]
+brand_reviewed: true
+lead_approved: true
 ---
 
-Every time Lungfish Genome Explorer (LGE) produces a bundle, it remembers how the bundle came to be. For any workflow that creates, imports, or transforms data, a download, a mapping, a primer trim, a variant call, a classification, an assembly, LGE attaches a run record to the result. The record names the tools that ran, their versions, the parameters you chose, the inputs it read, and the outputs it produced.
+## What it is
 
-This chapter answers three practical questions. Where in the app do you find the run record for a result? How do you export a workflow so a collaborator can re-run it, or, when that collaborator also runs LGE, hand off the project itself? And what does LGE record on its own, versus what must you still add by hand? The methods-section export, in particular, is a very rough draft.
+Every time Lungfish Genome Explorer (LGE) makes a file, it writes down how that file came to be. The note it writes is called [provenance](../../GLOSSARY.md#provenance), the record of where a file came from or how it was produced. LGE stores that record as a [provenance sidecar](../../GLOSSARY.md#provenance-sidecar), a small file that rides alongside the result it describes and shares its name, the way a sidecar rides alongside a motorcycle. The sidecar is written in JSON, a plain-text format that both a program and a person can read.
 
-## What provenance is for
+A sidecar answers one question. Which tool, at which version, with which options, read which files and wrote which files? The chr20 reference [bundle](../../GLOSSARY.md#bundle) in the demo project has such a sidecar, and the Procedure below opens it for you inside LGE. The first field you meet is the command that made the bundle. This is a record of what already ran, not something to type.
 
-[Provenance](../../GLOSSARY.md#provenance) is the record of how a result was produced. [Reproducibility](../../GLOSSARY.md#reproducibility) is what you do with that record. Another researcher, or you six months from now, re-runs the same tool at the same version with the same parameters on the same inputs, and lands on the same answer. The two ideas are linked but not identical. Provenance is what LGE writes down. Reproducibility is what you, your collaborators, or a regulator do with what was written.
-
-Practically, the run record exists so you can:
-
-1. Audit an old result and see exactly which tool version and parameters produced it.
-2. Write a methods section that names every tool you used, without having to remember.
-3. Hand a collaborator a runnable copy of your workflow without composing it by hand.
-4. Investigate when a workflow fails and you need to know which step broke.
-
-LGE writes the record automatically for every supported workflow. You never have to ask for it, and you cannot skip it by accident.
-
-## Reading provenance in the Inspector
-
-Select a result in the project sidebar, whether a classification, a variant call, an assembly, or a download, and the [Inspector](../../GLOSSARY.md#inspector) on the right shows what LGE knows about it. One of its tabs, **Provenance**, holds the run record for that result.
-
-<!-- SHOT: classifier-provenance-disclosure -->
-![An EsViritu classification result with the Inspector's Provenance tab open on the right. The tab shows Run Summary, Inputs, Outputs, Warnings, and Lineage for the run that produced the table on screen.](../../assets/screenshots/01-foundations/08-provenance-and-reproducibility/classifier-provenance-disclosure.png)
-
-The tab breaks into sections you can scan top to bottom. **Run Summary** names the workflow, the tool, and its version, with the start time and how long the run took. **Inputs** lists every file the run read. **Outputs** lists every file it produced. **Warnings** surfaces any non-fatal notes the tool emitted. **Lineage** traces the chain of earlier steps that produced this run's inputs, so you can click backward through the workflow.
-
-If you open a result and the Provenance tab is empty, that is a bug. Please file an issue from `Help > Report an Issue...`.
-
-## Exporting a workflow
-
-When a collaborator at another institution asks for your workflow, or a reviewer asks how you made a figure, LGE can build a complete, runnable copy of every step, from the project's starting inputs to the result you picked. Select a result in the sidebar and choose `File > Export > Provenance`.
-
-![Schematic of a workflow chain: a downloaded reference FASTA and FASTQ feed a mapping step, which feeds a primer-trim step, which feeds a variant-calling step. The final result is highlighted as the leaf you would select to export.](../../assets/illustrations-imagegen/01-foundations/08-provenance-and-reproducibility/provenance-graph-cartoon.png)
-
-<!-- SHOT: file-export-provenance-menu -->
-![The File > Export menu with Provenance at the bottom. Choosing Provenance opens a submenu where you pick the export format.](../../assets/screenshots/01-foundations/08-provenance-and-reproducibility/file-export-provenance-menu.png)
-
-The Provenance submenu offers six formats, split into a runnable-script group and a human-readable group:
-
-| Format | What you get | When to use it |
-|---|---|---|
-| Shell Script | A `run.sh` bash script that re-runs every step in order | A collaborator who wants to re-run on their own Mac or a Linux server |
-| Python Script | A `reproduce.py` that drives the same tool calls programmatically | Embedding in a Jupyter notebook for batch re-runs |
-| Nextflow Pipeline | A Nextflow project ready to run on a cluster | Scaling out across many samples |
-| Snakemake Workflow | A Snakefile and config | Labs that already use Snakemake |
-| Methods Section | A Markdown paragraph naming every tool and version | A methods section for a paper or clinical report |
-| Full Provenance | The complete machine-readable record as JSON | Archiving the full record; ingesting into a compliance system |
-
-Each export is a folder. Inside sits the primary artifact you chose, the script, the Snakefile, the Markdown, or the JSON, alongside a `provenance/` directory carrying the per-step records the export was built from. Send the whole folder to your collaborator, compressed. The script will not run without the contents of `provenance/` and any reference files beside it.
-
-If your collaborator also runs LGE, you need not export at all. A project is just a folder on disk. Hand over the folder directly, or share it on lab storage, and they will see the same sidebar, the same Inspector tabs, and the same run records you do. For the conventions around handing a project to another LGE user, especially on shared lab storage where two people might open it at once, see [Shared Projects and Bundle Migration](../appendices/shared-projects.md) in the appendices.
-
-For a deeper look at the runnable-script and pipeline formats, see [Exporting as Nextflow or Snakemake](../08-workflows/02-exporting-as-nextflow-or-snakemake.md).
-
-## Verifying and citing from the command line
-
-Two more `provenance` subcommands run from the command line, against a bundle or an export's `provenance/` directory. Neither has a menu equivalent, so reach for them when you are scripting or auditing outside the app.
-
-`lungfish provenance verify` checks a signed provenance sidecar against its signature. Point it at a sidecar file, a bundle, or an output directory:
-
-```sh
-lungfish provenance verify ~/Projects/SARS-CoV-2.lungfish
+```json
+"reproducibleCommand": "lungfish-cli import fasta .../GRCh38.chr20.10.0-10.5Mb.fasta --output-dir '.../LGE Manual Demo.lungfish' --name 'chr20 10.0-10.5Mb'"
 ```
 
-By default it looks for the signature beside the sidecar at `<sidecar>.signature.json` and the public key at `<sidecar>.pub`; pass `--signature` or `--public-key` to point elsewhere. On success it prints `Signature valid` along with the signing provider, the provenance SHA-256, and the two artifact paths it checked. Verification only means something for a sidecar that was actually signed, so it pairs with the Provenance Signing setting described below: with signing Off, there is nothing to verify.
+The three dots in that path stand for a longer folder path the manual shortened to fit the page. They are not part of the real command.
 
-`lungfish provenance bibliography` reads a bundle's provenance and prints a citation for every tool it recognizes:
+Every file that command touched is listed with a [checksum](../../GLOSSARY.md#checksum), a short fingerprint computed from the file's exact bytes. LGE uses SHA-256, a standard fingerprinting method whose output is a 64-character string. Two people holding the same checksum are holding the same bytes, and any change to the file at all, a single edited base or a single edited header character, changes the whole string. You never compute or compare one of these by hand. LGE computes the checksum when it writes the file and compares it for you when it reads the file back, so what reaches you is a match or a mismatch rather than a string to check character by character.
 
-```sh
-lungfish provenance bibliography ~/Projects/SARS-CoV-2.lungfish
+[Reproducibility](../../GLOSSARY.md#reproducibility) is what the record is for. It means running the same tool at the same version with the same options on the same inputs and landing on the same answer. Provenance is what LGE writes down. Reproducibility is what you, a collaborator, or a reviewer does with what was written. The practical thing to do with this chapter is to look at one run record before you trust a result, and to export that record whenever the result leaves your machine.
+
+## Why you would do this
+
+Six months after a run, nobody remembers which version of bcftools called those variants. bcftools is the program that reads aligned sequencing reads and writes out the positions where a sample differs from the reference. The demo project holds an answer. Its variant track was produced by a chain of eleven steps, and the sidecar names bcftools at `1.24 (managed conda environment bcftools; executable bcftools; package bioconda::bcftools=1.24=h6bd33b9_2)`. [Conda](../../GLOSSARY.md#conda) is the package manager LGE uses to install its bioinformatics tools. In that last string, `bioconda` is the channel the package came from, `1.24` is the release version, and `h6bd33b9_2` is the build, the particular compilation of that release. Naming the build rather than just the release is the level of detail a reviewer asking how a figure was made actually needs.
+
+The record also helps in less formal moments. A run fails and you want to see which of eleven steps broke. A collaborator asks for your workflow and you would rather not retype it from memory. A paper needs a methods paragraph naming every tool. LGE writes a record for every workflow it runs, with no opt-out anywhere in the interface, so the material for all three is already on disk before you go looking for it.
+
+This chapter works against the demo project, using its chr20 reference bundle, the HG002 minimap2 mapping built on top of it, and the HG002 bcftools variant track built on top of that. HG002 is a widely shared human reference sample, the one whose DNA the sequencing field uses to check that a method works, and minimap2 is the program that places sequencing reads onto a reference genome. Those three results sit in a chain, so each one's record reaches back through the one before it. Human data suits this well, since the chr20 slice was imported, mapped, and called entirely inside one project and nothing in the chain came from outside it.
+
+## Before you start
+
+You need a project open. If you do not have one, choose **File > New Project** (Cmd-N), or click Create Project on the Welcome window, and pick a folder. This chapter uses the demo project. Build it by following the instructions in the manual's fixtures on GitHub at https://github.com/dhoconno/lungfish-genome-explorer/tree/main/docs/user-manual/fixtures/demo-project, which have you create the project in the app at `~/Desktop/lge-docs/LGE Manual Demo.lungfish` and then fill it in about two minutes. Creating the project is a matter of clicks in LGE. Filling it is one script you paste into the Terminal app, and those instructions give you the line to paste.
+
+Nothing in this chapter needs its own set of tools installed or any extra software, because it only reads and exports records that earlier runs already wrote. The tools those earlier runs needed were already installed on the machine that built the demo project. Reading a record takes a minute. Exporting one takes a few seconds, and the export folder for a variant track is small enough to mail.
+
+## Procedure
+
+1. Open the demo project and select the `chr20_10.0-10.5Mb` reference bundle under `Reference Sequences/` in the sidebar. The [Inspector](../../GLOSSARY.md#inspector) on the right fills with what LGE knows about the bundle.
+
+2. Scroll the Inspector to its **Provenance** section. This is a section of the Inspector rather than a tab of its own, so it sits below the other sections for the same selection.
+
+    <!-- SHOT: inspector-provenance-section -->
+
+3. Read **Run Summary** at the top. For this bundle it names the workflow `lungfish import fasta`, the tool and its version, when the run was created, an exit status of 0, the wall time, and counts of steps, inputs, and outputs. The final row gives the path of the sidecar file itself.
+
+4. Open the **Lineage** block and expand one step inside it. To see a longer chain, select the `HG002 bcftools` variant track in the Variants tab of the table drawer instead of the reference bundle. The table drawer is the panel that slides up from the bottom of a reference bundle viewport, and clicking a variant track in the sidebar opens it on the Variants tab. That track's chain runs eleven steps, from staging the alignment through `samtools`, four `bcftools` calls, `bgzip`, `tabix`, and the import back into the bundle. Those are internal bookkeeping steps LGE ran on your behalf, so read them as a list of what happened rather than as tools you need to learn.
+
+    <!-- SHOT: provenance-lineage-step-expanded -->
+
+5. Select the result you want to hand over, then choose **File > Export > Provenance** and pick a format from the submenu. All six formats work on any result that has a record. Choose **Methods Section...** to draft a paragraph, or **Shell Script...** to give a collaborator something they can run. Methods Section is the one to start with if you are unsure.
+
+    <!-- SHOT: file-export-menu -->
+
+    A save panel titled Export Provenance follows, reading "Choose a folder name for the exported reproducibility package." Its default name already carries the artifact and the format, so accept it or type your own. Click Save, then click Show in Finder on the Provenance Export Complete alert to open the folder that was written.
+
+    <!-- SHOT: provenance-export-folder -->
+
+## Settings
+
+**Provenance.** Chooses what the export renders from the recorded history of the selected artifact, offering Shell Script..., Python Script..., Nextflow Pipeline..., Snakemake Workflow..., Methods Section..., and Full Provenance (JSON).... Nextflow and Snakemake are pipeline systems a bioinformatics collaborator may already run, so those two targets suit a handover to someone with a computational setup of their own. There is no default, because you pick a target from the submenu rather than accept one, and the first four sit above a separator as the runnable group while the last two are the read-only group. Pick the target that matches what the reader needs, a runnable pipeline for a collaborator, a methods draft for a manuscript, or the raw JSON for an auditor. On the command line this is `--format`.
+
+**Save As.** Names the folder that receives the export. The default is the artifact name followed by `-provenance-` and the format, for example `chr20_10.0-10.5Mb-provenance-nextflow`, so successive exports of the same artifact do not collide. Change it when several exports of the same artifact and format need to be told apart, for example before and after a reanalysis. On the command line the single `--output` flag carries both this name and the location below, because it takes one full path.
+
+**Where.** Chooses where the export folder is created, and it opens on the save panel's last location. Putting the export outside the project keeps it separate from the data it describes, which is the default arrangement for that reason. Choose a location you can share, such as a repository checkout, when the export is going to a collaborator. On the command line this is the folder part of that same `--output` path.
+
+## Reading the results
+
+The Provenance section breaks into blocks you can open and close one at a time. They are Run Summary, Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON, and the Warnings block appears only when the run emitted one. A filter field labelled Filter provenance appears above them once a record is long enough, and narrows a long lineage to the steps whose text matches what you type. A Copy button in the section header puts the whole record on the clipboard.
+
+**Run Summary** carries the identity of the run. Steps is the number of tool invocations the record holds. On the demo project's chr20 import that number is small, and on its bcftools variant track it is eleven. Inputs and Outputs here are counts rather than lists, so a run reporting one input and ten outputs read one file and wrote ten. Signatures appears only when the sidecar was signed, which "Signing a record" below covers, and Sidecar gives the path of the record on disk.
+
+**Lineage** is the chain of steps in order, each one numbered and expandable. Open a step and it shows that step's own Command, its own Inputs and Outputs as file lists, its exit status, its wall time, and whatever the tool wrote to standard error. Standard error is the channel a command-line tool uses for its own progress notes and complaints, so text there is normal rather than a sign of failure. This is the level at which a failure becomes legible. In the demo project's bcftools chain, step 4 is the [pileup](../../GLOSSARY.md#pileup), which gathers the bases every read shows at each reference position, and step 5 is the call, which decides from that evidence where the sample differs.
+
+```
+bcftools mpileup -Ou -f .../reference.fa .../hg002-minimap2.bam
+bcftools call -mv -Ov -o .../bcftools.raw.vcf
 ```
 
-Each matched tool prints its name, a formatted citation, and a DOI or URL when one is known. Tools the catalog does not recognize are listed separately under a "Tools without known citations" heading, so you can see at a glance which ones you still have to cite by hand.
+**Files & Outputs** lists the files the whole run read and produced, with a role, a size, and a SHA-256 checksum under each path. The chr20 import's own record shows the source FASTA it read at `sha256 3ee1418353a681cbd415a278ecc0bd9579121eac2bc483448ab78ca679840101` and the compressed sequence it wrote at `sha256 e8d07729ea4729764967e236a2450ff1e356ee7947020dab68dc73dc85589a1e`. Those two strings are what let a collaborator confirm they hold your file rather than a lookalike, and LGE does the comparing. Read the first few characters if you want reassurance that two records refer to the same file, and let the app do any comparison you would act on.
 
-## What provenance does not promise
+**Invocation & Options** lists the option values the run resolved, each one marked as explicit, default, or resolved default. A thread count can appear here, which matters because a tool given a different number of threads can produce a different answer. The demo project's minimap2 mapping ran with `-t 14`, which the mapping step's Command records. That 14 describes the machine the run happened on rather than a recommended setting, so it is not a number to copy or tune.
 
-The run record names the tool, the version, the parameters, and the inputs. Three things it cannot promise:
+**Runtime** names the machine. The chr20 record carries an app version, an architecture of `arm64`, a dependency set of `2026.2`, an operating system of `macOS 26.6.2 (arm64)`, and the user who ran it. The dependency set is the versioned collection of bioinformatics tools LGE installed for itself, so `2026.2` names that whole collection rather than any one tool. **Raw JSON** shows the whole sidecar as text with a Copy button of its own, which is the block to reach for when you want a field the other blocks do not surface.
 
-1. **External sources stay the same.** If your workflow downloads a SARS-CoV-2 reference from NCBI, LGE records the accession and the date you fetched it, but cannot promise NCBI will serve those exact bytes next year. A re-run against a different fetch date can land on different results if the upstream record was revised.
-2. **Tool environments stay identical across machines.** LGE pins the plugin pack version, the bundle that carries the tool, which makes a re-run on the same Mac reliable. Re-run on a different machine, a different OS version, or a different CPU family and tool output can shift a little. Some tools are sensitive to thread counts or hardware, others are not, and LGE tells you which.
-3. **The methods export is a very rough draft.** You still write the paper, and you will likely add more: accession numbers and access dates for downloaded data, database DOIs for classification references, and citations for any tool the bibliography command does not recognize. You need not compose every tool citation by hand, though. `lungfish provenance bibliography`, described above, prints a formatted citation for each recognized tool as a starting point. Read the draft against your actual methods to be sure the parameters match what you intended. LGE writes down what ran, not what you meant to run.
+### What the export folder holds
 
-For clinical-audit workflows that need tamper-evident records, LGE offers a Provenance Signing option in `Settings > General`, set to Off by default. Off is the right setting for research work. The Local and Cosign Plan options exist for sites that must produce signed audit artifacts.
+Every export is a folder rather than a single file. Inside it sits the primary artifact for the format you chose.
+
+| Format | What it writes |
+|---|---|
+| Shell Script | `run.sh` |
+| Python Script | `reproduce.py` |
+| Nextflow Pipeline | `main.nf`, `nextflow.config`, and a `containers` folder |
+| Snakemake Workflow | `Snakefile` and `config.yaml` |
+| Methods Section | `methods.md` |
+| Full Provenance (JSON) | `provenance.json` |
+
+Beside the artifact sits a `provenance` subdirectory holding the copied run records the export was built from.
+
+Send the whole folder, compressed. A script pulled out on its own is unlikely to run, because it reads the records in `provenance` and any reference files that travel beside it.
+
+If your collaborator also runs LGE, you need not export at all. Hand over the `.lungfish` [project](../../GLOSSARY.md#project) bundle directly, or share it on lab storage. On shared storage there is no menu equivalent, so use the command line tool `lungfish-cli project lock` so two people cannot run advanced workflows against it at once, which [The Lungfish Genome Explorer Project](06-the-lungfish-project.md) covers along with unlocking and migrating an older bundle.
+
+## What good looks like
+
+Four checks tell you a record is worth trusting. Confirm the exit status in Run Summary is 0, since a non-zero status means the tool reported a failure whatever the output files look like. Confirm the tool version string names a package build rather than a bare number, the way the demo project's `bioconda::bcftools=1.24=h6bd33b9_2` does. Confirm the input checksums in Files & Outputs match the files you meant to use. And confirm that the step count matches the work you think ran. The demo project's bcftools variant track runs eleven steps, and a chain far shorter than the one you expect usually means a step was skipped.
+
+Most results have a record, and an empty Provenance section usually has an ordinary explanation. A file you simply copied into the project folder by hand has no run record to show, and LGE says so in the Provenance section's status line, which reads Missing provenance for an item that should have a record and No provenance required for one that should not. Trying to export from such a selection raises a No Provenance Available alert rather than an error. If instead you open a result LGE itself produced and its Provenance section is empty, that is a bug, and **Help > Report an Issue...** is the place to say so.
+
+Three things the record cannot promise are worth holding in mind. A public database can revise a record after you fetched it, so a download recorded with an accession and a date may not return the same bytes next year. A re-run on a different Mac, a different macOS version, or a different CPU family can shift a tool's output a little, usually as a handful of borderline variant calls appearing or disappearing out of thousands rather than as a wholesale change, and the thread count recorded in the run's commands is the value to match first when you are chasing a difference. And the [methods export](../../GLOSSARY.md#methods-export) is a rough first draft rather than a finished paragraph, so read it against what you actually intended and add the accession numbers, access dates, and database citations it has no way to know. LGE writes down what ran, not what you meant to run.
+
+### Signing a record
+
+Most readers leave signing off and can skip to the next section. For audit work that needs a tamper-evident record, `Settings > General` holds a Provenance Signing section. Its Provider control offers Off, Local, and Cosign Plan, where Cosign is an external signing service used in software supply-chain work, and the default is Off, which is the right setting for research. Below the provider sit a local signing key field, a public key path field, and Save Signing Key and Clear Signing Key buttons, with a status line under them and an error line when something is wrong. Signing only matters if you go on to check the signature, which the command line does.
 
 <!-- SHOT: provenance-signing-settings -->
-![Settings > General > Provenance Signing. The default is Off; clinical or audit labs that need tamper-evident records can switch the provider to Local or Cosign Plan.](../../assets/screenshots/01-foundations/08-provenance-and-reproducibility/provenance-signing-settings.png)
+
+## On the command line
+
+Everything the Procedure asked for is done by then, so this section is optional. It is here because two of the three `lungfish-cli provenance` subcommands have no menu equivalent. `export` is the one that does. `export` and `verify` each take a sidecar file, a bundle, or an output directory as their target, and `bibliography` takes a bundle or an output directory. In the paths below, `$HOME` stands for your home folder, the one holding Desktop and Documents, and it is written that way because the project path holds spaces and needs quotation marks, inside which `~` would not expand. A bare `~/Desktop/...` outside quotation marks means the same folder.
+
+```bash
+# Export the same reproducibility package the menu writes.
+lungfish-cli provenance export \
+  "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish/Reference Sequences/chr20_10.0-10.5Mb.lungfishref" \
+  --format shell \
+  --output ~/Desktop/chr20-provenance-shell
+
+# Draft a methods paragraph instead.
+lungfish-cli provenance export \
+  "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish/Reference Sequences/chr20_10.0-10.5Mb.lungfishref" \
+  --format methods \
+  --output ~/Desktop/chr20-provenance-methods
+
+# Check a signed sidecar against its signature.
+lungfish-cli provenance verify \
+  "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish/Reference Sequences/chr20_10.0-10.5Mb.lungfishref"
+
+# Print a citation list for every tool the catalog recognises.
+lungfish-cli provenance bibliography \
+  "$HOME/Desktop/lge-docs/LGE Manual Demo.lungfish/Reference Sequences/chr20_10.0-10.5Mb.lungfishref"
+```
+
+`--format` accepts `shell`, `python`, `nextflow`, `snakemake`, `methods`, and `json`, matching the six menu items one for one. `--output` names the directory that receives the export bundle.
+
+`provenance verify` checks a signed sidecar against its signature. It looks for the signature beside the sidecar at `<sidecar>.signature.json` and the public key at `<sidecar>.pub`, and `--signature` or `--public-key` point it elsewhere. On success it reports that the signature is valid. Verification means nothing for a sidecar that was never signed, so it pairs with the Provenance Signing setting above. With signing Off there is nothing to check.
+
+`provenance bibliography` reads a bundle's provenance and prints a citation list for the tools it recognises, which is the fastest way to start the reference list for a paper. Point it at a bundle rather than at the project folder, which holds no sidecar of its own. Read the list against your own tool list, since a tool the catalog does not know still has to be cited by hand.
 
 ## Next
 
-Foundations is complete. Continue to one of the workflow parts:
+Foundations is complete. Continue to one of the workflow parts.
 
-- [Sequences](../02-sequences/) for sequence import, viewing, and download workflows
-- [Reads (FASTQ)](../03-reads/) for read import, QC, trimming, and decontamination
-- [Alignments](../04-alignments/) for mapping, alignment review, and primer trimming
-- [Variants](../05-variants/) for variant calling and VCF interpretation
-- [Classification](../06-classification/) for taxonomic classification of reads
-
-The [Assembly](../07-assembly/) part covers de novo assembly workflows. For the advanced CLI commands that coordinate shared-storage workflows, see [Shared Projects and Bundle Migration](../appendices/shared-projects.md) in the appendices.
+- [Sequences](../02-sequences/01-importing-and-viewing.md) for sequence import, viewing, and download workflows
+- [Reads (FASTQ)](../03-reads/01-importing-fastq.md) for read import, QC, trimming, and decontamination
+- [Alignments](../04-alignments/01-mapping-reads-to-a-reference.md) for mapping, alignment review, and primer trimming
+- [Variants](../05-variants/01-calling-variants-from-amplicons.md) for variant calling and VCF interpretation
+- [Classification](../06-classification/01-what-is-classification.md) for taxonomic classification of reads
