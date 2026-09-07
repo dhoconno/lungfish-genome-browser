@@ -23,8 +23,8 @@ without a separate relabel step.
 
 All five accessions were checked against NCBI esummary
 (`db=nuccore`) on 2026-09-06 before fetching, per the campaign brief. Every
-accession resolved to the expected species at the expected length; **no
-substitutions were needed**:
+accession resolved to the expected species at the expected length.
+No substitutions were needed:
 
 ```
 NC_012920.1 Homo sapiens mitochondrion, complete genome 16569
@@ -35,7 +35,7 @@ NC_012670.1 Macaca fascicularis mitochondrion, complete genome 16575
 ```
 
 (One esummary call hit NCBI's public rate limit transiently and was
-retried a few seconds later; retrying is a routine part of the eutils
+retried a few seconds later. Retrying is a routine part of the eutils
 workflow, not an accession problem.)
 
 ## Sources
@@ -52,7 +52,7 @@ records, part of the NCBI Reference Sequence (RefSeq) collection.
 ## License and citation
 
 RefSeq records are produced by NCBI, a US government agency, and are in
-the public domain in the United States; check your local jurisdiction if
+the public domain in the United States. Check your local jurisdiction if
 redistributing outside the U.S.
 
 Cite the RefSeq resource:
@@ -101,7 +101,7 @@ Cite the RefSeq resource:
 | `expected/primate-mito.aligned.fasta` | 84 KB |
 | `expected/primate-mito.treefile` | <1 KB (210 bytes) |
 
-Total committed: ~166 KB, well under the 50 MB fixture-set cap; every file
+Total committed is ~166 KB, well under the 50 MB fixture-set cap. Every file
 is under the 10 MB per-file cap. `expected/tmp-project.lungfish/` (the
 scratch Lungfish project `regenerate.sh` builds the MSA and tree bundles
 in) is gitignored and reproducible.
@@ -109,25 +109,24 @@ in) is gitignored and reproducible.
 ## Alignment result
 
 `regenerate.sh` runs `lungfish-cli align mafft --strategy auto` over the
-five unaligned genomes. Observed on 2026-09-06: **5 rows, 17,247 aligned
-columns**. The aligned FASTA is copied from the bundle's
+five unaligned genomes. The result on 2026-09-06 was 5 rows and 17,247 aligned columns. The aligned FASTA is copied from the bundle's
 `alignment/primary.aligned.fasta` to `expected/primate-mito.aligned.fasta`.
 
 ## Tree result
 
 `regenerate.sh` then runs `lungfish-cli tree infer iqtree` (default model
 `MFP`, i.e. IQ-TREE's ModelFinder Plus) over that alignment bundle.
-Observed on 2026-09-06: a single unrooted tree with **5 tips** and 3
-internal nodes:
+The result on 2026-09-06 was a single unrooted tree with 5 tips and 3
+internal nodes.
 
 ```
 (Human_NC_012920.1:0.0601,Chimp_NC_001643.1:0.0589,(Gorilla_NC_011120.1:0.0740,(RhesusMacaque_NC_005943.1:0.0650,CynomolgusMacaque_NC_012670.1:0.0299):0.8982):0.0296);
 ```
 
-(branch lengths rounded to 4 places above; see
-`expected/primate-mito.treefile` for full precision). The topology groups
+(Branch lengths are rounded to 4 places above. See
+`expected/primate-mito.treefile` for full precision.) The topology groups
 Human and Chimp together and the two macaques together at the tips, which
-matches the well-established primate phylogeny; IQ-TREE writes an
+matches the well-established primate phylogeny. IQ-TREE writes an
 unrooted tree so the three-way split at the root (Human, Chimp, and the
 Gorilla+macaque clade) does not imply a rooting and is not itself a
 finding. The tree file is copied from the bundle's canonical
@@ -145,18 +144,18 @@ round-trip every input record with no drops, renames, or duplicates.
 Because MAFFT progressive alignment and IQ-TREE's numerical optimizer are
 not bit-for-bit deterministic across runs on this machine, re-running
 `regenerate.sh` reproduces the same alignment length (17,247 columns) and
-tree topology/tip set, but branch lengths can differ in the 6th-7th
-decimal place between runs; that is expected and not a fixture defect.
+tree topology/tip set. Branch lengths can differ in the 6th-7th
+decimal place between runs, but that is expected and not a fixture defect.
 
 ## `--project` gotcha
 
 The brief's sketch used a scratch directory named plain `tmp-project`, but
 `lungfish-cli`'s `--project` flag requires a directory whose path carries
-a literal `.lungfish` extension (`LungfishIO`'s
+a literal `.lungfish` extension. `LungfishIO`'s
 `ProjectTempDirectory.findProjectRoot` walks up the directory tree looking
-for that extension) -- a plain `tmp-project` directory is rejected with
+for that extension. A plain `tmp-project` directory is rejected with
 `Project context required but no .lungfish root found`. `regenerate.sh`
-therefore uses `expected/tmp-project.lungfish` instead; it is still
+therefore uses `expected/tmp-project.lungfish` instead. It is still
 gitignored and still scratch.
 
 ## Regenerating

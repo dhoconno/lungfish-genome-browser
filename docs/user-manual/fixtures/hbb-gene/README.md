@@ -26,12 +26,11 @@ of this fixture rather than fabricating a synthetic sequence.
 
 ## Sources
 
-- **Reference**: NCBI Nucleotide `NG_000007.3`, fetched via NCBI eutils
-  efetch with the full feature table resolved:
-  `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=NG_000007.3&rettype=gbwithparts&retmode=text`.
-  `rettype=gbwithparts` (rather than plain `gbwithparts`-less `gb`) is
-  what makes CDS/mRNA/exon feature locations resolve against real
-  sequence instead of leaving a `CONTIG` join() placeholder.
+This record comes from NCBI Nucleotide `NG_000007.3`, fetched via NCBI eutils
+efetch with the full feature table resolved. The `rettype=gbwithparts`
+parameter (rather than plain `gbwithparts`-less `gb`) is what makes
+CDS/mRNA/exon feature locations resolve against real sequence instead
+of leaving a `CONTIG` join() placeholder.
 
 The URL was checked live (`HTTP 200`) on 2026-09-06.
 
@@ -81,13 +80,16 @@ Cite:
 | --- | --- |
 | `NG_000007.3.gb` | 144 KB |
 
-Total committed: 144 KB, well under both the 10 MB per-file cap and the
+Total committed is 144 KB, well under both the 10 MB per-file cap and the
 50 MB fixture-set cap.
 
 ## Feature counts
 
-Counted directly from the GenBank flatfile with
-`grep -c "     <feature> " NG_000007.3.gb`:
+Counted directly from the GenBank flatfile. Run this command.
+
+`grep -c "     <feature> " NG_000007.3.gb`
+
+The counts are below.
 
 | Feature | Count |
 | --- | --- |
@@ -99,7 +101,7 @@ Counted directly from the GenBank flatfile with
 Eight genes because the record spans the whole beta-globin cluster
 (HBE1, HBG2, HBG1, BGLT3, HBBP1, HBD, HBB, plus the upstream
 pseudogene OR51AB1P), five of which (HBE1, HBG2, HBG1, HBD, HBB) carry
-an mRNA and a spliced three-exon CDS; BGLT3 is a long non-coding RNA
+an mRNA and a spliced three-exon CDS. BGLT3 is a long non-coding RNA
 and HBBP1 is a processed pseudogene, so neither has a CDS.
 
 ## Import check
