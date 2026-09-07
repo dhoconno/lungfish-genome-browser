@@ -104,6 +104,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Bundle**{#bundle}. A folder that the macOS Finder shows as a single icon with an extension and that Lungfish treats as one logical object, with a manifest, primary data files, optional indexes and annotations, and a `provenance/` subfolder. Lungfish bundle types include `.lungfishref` for references and assemblies and `.lungfishprimers` for primer schemes. See also: reference bundle, assembly bundle, primer scheme.
 
+**Bundle migration**{#bundle-migration}. The process of bringing a bundle written by an older Lungfish Genome Explorer up to the current manifest layout, performed by `lungfish-cli project migrate`, which scans a project, leaves current bundles untouched, fills a missing browser summary in a reference manifest after backing the original up, and reports without rewriting any schema for which no safe transformer exists. See also: bundle, manifest, schema version, provenance sidecar.
+
 ## C
 
 **cDNA**{#cdna}. A DNA copy made from a messenger RNA transcript, so it holds the joined coding stretches of a gene without the intervening non-coding stretches a genomic sequence carries, which makes a cDNA record of the same allele shorter than its genomic counterpart. See also: CDS, allele target.
@@ -114,6 +116,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Checkout**{#checkout}. The step at the start of a continuous integration job that copies a repository's tracked files onto the runner, written on GitHub Actions as `uses: actions/checkout@v4` and on CircleCI as the bare step `checkout`, without which the job has no files to work on. See also: repository, runner, continuous integration.
 
+**Call**{#call}. The identification a tool commits to after weighing the read evidence at one position or one locus, so an allele call names the allele the genotyping run believes the sample carries and a variant call names a position where the sample differs from the reference. A call is a best guess with evidence behind it rather than a measurement, which is why a genotype result offers a way to mark one reviewed or confirmed. See also: allele, genotype, variant-caller.
+
 **Capped database**{#capped-database}. A reference database deliberately shrunk to a target memory size by discarding most of its stored sequence fragments, so a machine too small to hold the full collection can still run the classifier against it. The cost falls on sensitivity, since a read the full collection would have named at species level is more often left unclassified or reported at a broader rank, and the loss is heaviest for whichever organism the sample is actually full of. See also: Kraken 2, minimizer, read classification.
 
 **Cache**{#cache}. A copy of a folder a continuous integration service keeps between jobs so the next job can restore it instead of downloading everything again, which is how a job that provisions bioinformatics tools avoids repeating a long install on every run. See also: continuous integration, offline pack, plugin pack.
@@ -121,6 +125,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **CIGAR**{#cigar}. A compact string in each BAM row that describes, base by base, how the read aligns to the reference: `M` for aligned positions, `I` and `D` for insertions and deletions, `S` for soft-clipped ends, and `H` for hard-clipped ends. See also: BAM, soft-clip.
 
 **Chimera**{#chimera}. An artificial sequence formed when two real templates join during PCR, so the result looks like a single genuine molecule while belonging to no organism, which is why a metabarcoding run checks its unmatched sequences for chimeras before anyone reports them as a new species. See also: metabarcoding, vsearch, amplicon.
+
+**Chord**{#chord}. A set of keys pressed together as one shortcut, such as Command and Shift and P, used interchangeably with combination in this manual. See also: key equivalent, modifier key.
 
 **Circular consensus sequencing (CCS)**{#circular-consensus-sequencing}. The PacBio protocol that circularises a DNA fragment, reads it repeatedly, and reports the consensus of those passes as one read, which is why HiFi reads carry both long lengths and Q30+ quality strings; a HiFi read's quality is a consensus confidence, not a raw signal measurement. See also: read length, Phred score.
 
@@ -133,6 +139,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Cladogram**{#cladogram}. A phylogenetic tree drawn with every tip at the same depth so that only the branching order is shown and branch lengths carry no meaning; one of the two layouts the Lungfish Genome Explorer tree viewport offers, useful when one very long branch would otherwise squash the rest. See also: phylogram, topology, clade.
 
 **Clair3**{#clair3}. A deep-learning variant caller for Oxford Nanopore reads, run in Lungfish as an alternative to Medaka for ONT variant calling; it reads the sorted BAM directly and takes a model path matched to the basecaller. See also: variant-caller, Medaka.
+
+**Classifier**{#classifier}. Software that decides which organism each read in a sequencing run came from, by comparing the read against a database of known genomes, so that a FASTQ of mixed reads becomes a list of the organisms present and how many reads support each. Kraken 2, EsViritu, TaxTriage, and NAO-MGS are the classifiers Lungfish Genome Explorer runs. See also: read classification, taxon, Kraken 2.
 
 **Clumpify**{#clumpify}. A program from the BBTools suite that reorders reads so that reads sharing sequence content sit next to each other, and that can collapse those matching reads into one, which is what backs the Remove Duplicates operation in Lungfish Genome Explorer. See also: PCR duplicate, optical duplicate, read clumping.
 
@@ -384,6 +392,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Left alignment**{#left-alignment}. The convention of writing an insertion or deletion at the leftmost position that describes the same change, so that one biological indel inside a repeated stretch, which could equally be written at several positions, always appears at the same coordinate whichever caller produced it. Lungfish Genome Explorer applies it with `lungfish-cli gatk leftalign`. See also: indel, normalization, VCF.
 
+**Lens**{#lens}. One of the alternative views a Lungfish Genome Explorer result window offers over the same underlying data, chosen from a control at the top of the window, so that the genotype viewport's Review lens presents one sample at a time for checking while its comparison lens shows every sample at once as a grid. See also: viewport, genotype.
+
 **Library prep**{#library-prep}. The bench procedure that turns extracted nucleic acid into a form a sequencing instrument can read, and the step that decides whether reads land at random positions (shotgun), at designed primer coordinates (amplicon), or on probe-selected regions (target enrichment). See also: amplicon, shotgun, target enrichment.
 
 **Library layout**{#library-layout}. The archive field recording whether a sequencing run read each fragment from one end or from both, reported as SINGLE or PAIRED, which is how an SRA search can be restricted to runs whose reads come in mate pairs. See also: paired-end, single-end, SRA.
@@ -429,6 +439,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Medaka**{#medaka}. Oxford Nanopore's own variant caller and consensus tool, which scores reads against a neural-network model named for the pore chemistry and basecaller version that produced them, run in Lungfish Genome Explorer from the Call Variants dialog against a FASTQ rebuilt from the chosen alignment rather than against the BAM. See also: Clair3, basecaller, variant-caller.
 
 **Metabarcoding**{#metabarcoding}. Identifying which species are present in a mixed sample by matching a short marker amplicon (such as 12S) against a reference of known sequences. See also: 12S.
+
+**Metadata**{#metadata}. The descriptive fields recorded about a data item rather than the sequence data itself, such as when a sample was collected, which instrument read it, and which reference it was mapped against, held in a bundle's manifest and shown in the Document Inspector. See also: bundle, sample metadata, manifest.
 
 **Metagenomics**{#metagenomics}. The study of all the nucleic acid present in a mixed sample at once, rather than of one cultured organism, which is the setting read classification was built for and the reason its tools ask for large reference databases and a great deal of memory. See also: read classification, metabarcoding, shotgun.
 
@@ -538,11 +550,15 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Picard**{#picard}. A collection of tools for manipulating high-throughput sequencing files that is bundled inside GATK4 rather than installed separately, so its commands such as `CreateSequenceDictionary`, `MarkDuplicates`, and `CollectVariantCallingMetrics` are invoked through the `gatk` binary. Picard commands spell their options in capitals with double dashes, which is why a GATK command line can mix `-R` and `--SEQUENCE_DICTIONARY` styles. See also: sequence dictionary, mark duplicates.
 
+**Pipeline**{#pipeline}. One analysis run as a chain of steps that hand their output to each other, so that starting a mapping run in Lungfish Genome Explorer produces a single Operations Panel row covering the index, the alignment, the sort, and the index of the result. See also: Operations Panel, workflow, provenance.
+
 **Pileup**{#pileup}. The column of bases observed at one reference position across every read that covers it, together with their qualities and strands; the unit of evidence a variant caller weighs at each position. See also: coverage, variant-caller.
 
 **Pinned**{#pinned}. Locked to one exact version rather than left to take whatever the latest release happens to be, which is what Lungfish Genome Explorer does for every managed tool, every plugin pack tool, every external pipeline, and every reference database except the NCBI taxonomy. See also: dependency set, tool lock manifest, reproducibility.
 
 **Pivot workbook**{#pivot-workbook}. An Excel workbook whose main sheet lays samples across the columns and allele targets down the rows, the transpose of the sample-by-locus matrix, which is the orientation most downstream genotyping spreadsheets expect and the shape the Filtered Pivot export writes. See also: XLSX, genotype matrix, long format.
+
+**Plate map**{#plate-map}. The grid of sample positions that came off one sequencing run, named for the physical multi-well plate the samples were prepared in, and the layout a genotype result window uses so that a row of the screen matches a row of the bench plate. Referred to as a plate throughout the genotyping chapters. See also: genotype, sample metadata.
 
 **Ploidy**{#ploidy}. The number of copies of each chromosome an organism carries, which is two for a human and one for a virus or a bacterium, and which decides what genotypes a caller is allowed to propose at a position. A caller assuming two copies will force a viral sample into `0/1` and `1/1` genotypes that mean nothing, which is why a haploid genome is usually called with an explicit ploidy setting. See also: genotype, heterozygous, variant-caller.
 
@@ -680,6 +696,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Scaffold**{#scaffold}. A run of contigs an assembler has placed in order and orientation relative to one another using paired-end reads that bridge the gaps between them, written as one sequence in which each unresolved gap appears as a run of `N` characters of the estimated length. Lungfish Genome Explorer builds an assembly bundle from the contigs rather than the scaffolds, so a scaffold file sits in the run folder but is not what the assembly viewport shows. See also: contig, paired-end, assembly bundle.
 
+**Schema version**{#schema-version}. The number recorded inside a structured Lungfish Genome Explorer file saying which layout it was written to, carried by a bundle manifest as its format version and by a project lock record as `schemaVersion`, so a newer program can tell whether it is reading a file it fully understands. See also: manifest, bundle migration, project lock.
+
 **seqkit**{#seqkit}. A general-purpose toolkit for FASTA and FASTQ manipulation, used in Lungfish Genome Explorer for the read-length filter and for several sequence statistics. See also: FASTQ, read length.
 
 **Secondary alignment**{#secondary-alignment}. An extra record reporting another place a read could plausibly have come from, marked by FLAG bit 256 and produced in quantity by repeated regions, which Lungfish Genome Explorer excludes from a mapping run's BAM by default because the duplicate rows inflate read counts. See also: FLAG, primary alignment, supplementary alignment.
@@ -721,6 +739,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Spike-in control**{#spike-in-control}. A known sequence added deliberately to a sequencing library so that its behaviour in the results reports on how the run itself performed, the commonest being the bacteriophage phiX genome that Illumina protocols add to improve the instrument's base calling. A handful of phiX reads turning up in a classification report is expected rather than a sign of contamination. See also: read classification, Kraken 2.
 
 **SRA (Sequence Read Archive)**{#sra}. The NCBI public archive of raw sequencing reads, identified by accession numbers that start with `SRR` for runs and `SRP` for projects. Lungfish downloads SRA reads via the ENA mirror first and falls back to the SRA Toolkit if ENA refuses. See also: ENA.
+
+**Stale lock**{#stale-lock}. A project lock whose owning process is no longer running on this machine, which Lungfish Genome Explorer treats as safe to replace, so `project lock` overwrites one without complaint and `project unlock` removes one belonging to the current user without needing `--force`. Because a command-line lock's owning process exits the moment the command finishes, a lock taken that way is stale almost immediately. See also: project lock, advisory lock, project.
 
 **Strand**{#strand}. Whether a read aligned to the reference as sequenced (forward) or as its reverse complement (reverse); recorded as a flag bit in every BAM row. See also: strand bias.
 

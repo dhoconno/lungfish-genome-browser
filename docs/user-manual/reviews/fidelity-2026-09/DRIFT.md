@@ -3785,7 +3785,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 59 | appendices/ai-assistant | AI Assistant | [] | demo project | existing (add to nav) | done |
 | 60 | appendices/bibliography | Bibliography | [] | none | existing | done |
 | 61 | appendices/file-formats | File Formats | [] | none | existing | queued |
-| 62 | appendices/keyboard-shortcuts | Keyboard Shortcuts | [] | none | existing | queued |
+| 62 | appendices/keyboard-shortcuts | Keyboard Shortcuts | [] | none | existing | done |
 | 63 | appendices/power-user-notes | Power User Notes | [] | none | existing | queued |
 | 64 | appendices/primer-schemes | Primer Schemes | [] | bundled schemes | existing | queued |
 | 65 | appendices/shared-projects | Shared Projects and Bundle Migration | [] | demo project | existing | queued |
