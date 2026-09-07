@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# Shared with 01-foundations; same capture, copied for this part.
+# App state: The HBB reference bundle open in the sequence viewport with the whole-record view showing the annotation lane with genes drawn above the base ruler, and the Inspector on HBB's Bundle tab.
+id: hbb-record-in-sequence-viewport
+chapter: 02-sequences/01-importing-and-viewing
+caption: The imported HBB gene record open in the sequence viewport, with its annotation features drawn
+  above the bases.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Click the HBB bundle under Reference Sequences in the sidebar
+  # PROSE-ONLY: Open the NG_000007 sequence record row into the sequence viewport
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

@@ -1,0 +1,36 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Advanced Search Filters panel expanded under the query field on the GenBank & Genomes pane, all filter fields empty.
+id: ncbi-advanced-filters
+chapter: 02-sequences/02-downloading-from-ncbi
+caption: The Advanced Search Filters panel expanded under the query field, showing the Organism, Location,
+  Gene, Author, and Journal fields alongside the Molecule Type, Sequence Length, Publication Date, and
+  Sequence Properties controls.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Same dialog as ncbi-search-dialog
+  # PROSE-ONLY: Clicked Show beside Advanced Search Filters
+crop:
+  mode: region
+  region:
+  - 245
+  - 140
+  - 890
+  - 620
+post:
+  retina: true
+  format: png

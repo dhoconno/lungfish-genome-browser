@@ -1,0 +1,38 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Extract Sequence sheet as it opens on the HBB record with the whole record visible, Action on Copy as FASTA, the Source group naming NG_000007:0-81706, and the Flanking Sequence fields at 0.
+id: extract-region-dialog
+chapter: 02-sequences/03-extracting-and-comparing
+caption: The Extract Sequence sheet opened by Extract Visible Region, with its Action picker, its Source
+  summary, the 5' Flank and 3' Flank fields with their preset buttons, the Options toggles, and the Extract
+  button.
+viewport_class: sequence
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - reference: Reference Sequences/HBB.lungfishref
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select HBB under Reference Sequences in the sidebar
+  # PROSE-ONLY: Choose Sequence > Extract Visible Region...
+  # PROSE-ONLY: Capture the sheet region, then click Cancel
+crop:
+  mode: region
+  region:
+  - 437
+  - 300
+  - 530
+  - 400
+post:
+  retina: true
+  format: png

@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The primate mitochondrial alignment open in the alignment viewport, name gutter listing all five sequences, Consensus pinned as the comparison row, column header ruler, and conservation overview strip above the rows.
+id: alignment-viewport-primate-mito
+chapter: 02-sequences/04-aligning-sequences
+caption: The primate mitochondrial alignment open in the alignment viewport, showing the resizable name
+  gutter, the pinned comparison row above the five sequences, the column header, and the conservation
+  overview strip.
+viewport_class: alignment
+app_state:
+  fixture: '{demo_project}'
+  open_files:
+  - primate_mito: Analyses/Multiple Sequence Alignments/Primate-mitochondria.lungfishmsa
+  window_size:
+  - 1468
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1468
+  - 900
+  # PROSE-ONLY: Double-clicked Primate-mitochondria under Analyses > Multiple Sequence Alignments
+crop:
+  mode: window
+post:
+  retina: true
+  format: png
