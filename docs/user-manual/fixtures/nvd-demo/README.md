@@ -15,16 +15,16 @@ results/
 
 `import nvd <results-dir>` requires the input directory to contain a
 `05_labkey_bundling/` subdirectory holding a `*_blast_concatenated.csv`
-(or `.csv.gz`) file: that is the only file the importer reads. No other
+(or `.csv.gz`) file. That is the only file the importer reads. No other
 NVD pipeline stage directories (`01_` through `04_`) are required for
 import, so none are included here.
 
 ## Source
 
 `docs/user-manual/fixtures/nvd-demo/results/05_labkey_bundling/demo_blast_concatenated.csv`
-is a copy of `Tests/Fixtures/nvd/test_blast_concatenated.csv`, renamed
+is a copy of `Tests/Fixtures/nvd/test_blast_concatenated.csv`. It is renamed
 to match the `*_blast_concatenated.csv` naming pattern the importer
-scans for. Contents: 10 BLAST hit rows across 3 samples (`SampleA`,
+scans for. It contains 10 BLAST hit rows across 3 samples (`SampleA`,
 `SampleB`, `SampleC`) and 4 contigs, all SARS-CoV-2 hits, used
 elsewhere in the test suite as a synthetic NVD parser fixture.
 
@@ -78,11 +78,11 @@ no-ops.
 | --- | --- |
 | `results/05_labkey_bundling/demo_blast_concatenated.csv` | 2.7 KB |
 
-Total committed: under 3 KB, well under the fixture-set cap.
+Total committed is under 3 KB, well under the fixture-set cap.
 
 ## Regenerating
 
-Re-copy from the source of truth if the shared test fixture changes:
+Re-copy from the source of truth if the shared test fixture changes.
 
 ```bash
 cp Tests/Fixtures/nvd/test_blast_concatenated.csv \
