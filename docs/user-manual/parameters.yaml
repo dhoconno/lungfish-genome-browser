@@ -6396,13 +6396,13 @@ operations:
         effect: Records a sample identifier in the plan and in provenance so the run is attributable. It is not passed to Freyja itself, because the pinned Freyja 2.0.3 has no --sample option and aborts when given one.
       - flag: --extra-args
         default: empty
-        effect: Appends further arguments to the freyja demix command line, for example a different lineage barcode file.
+        effect: Appends further arguments to the freyja demix command line, for example --eps to raise the reporting threshold or --barcodes to point at a newer lineage barcode file.
       - flag: --execute
         default: "false"
         effect: Runs Freyja through the wastewater-surveillance tool pack instead of only writing the plan.
       - flag: --dry-run
         default: "false"
-        effect: Writes and prints the command plan without running Freyja.
+        effect: Writes and prints the command plan without running Freyja. When given together with --execute it wins, so the plan and provenance are written and the tool does not run.
     notes: >-
       Freyja demix estimates which SARS-CoV-2 lineages are mixed together in one
       wastewater sample and in what proportions, so a single sewage sample

@@ -3761,7 +3761,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 35 | 06-classification/04-running-taxtriage | Running TaxTriage | [classify.taxtriage] | sarscov2-srr36291587 | existing | done |
 | 36 | 06-classification/05-running-nao-mgs | Importing NAO-MGS Results | [import.nao-mgs] | NAO-MGS sample (open item) | existing (retitled) | queued |
 | 37 | 06-classification/06-blast-verification | BLAST Verification | [classify.blast-verify] | sarscov2-srr36291587 | existing | queued |
-| 38 | 06-classification/07-running-freyja | Running Freyja | [workflow.freyja-demix] | sarscov2-srr36291587 | existing | queued |
+| 38 | 06-classification/07-running-freyja | Running Freyja | [workflow.freyja-demix] | sarscov2-srr36291587 | existing | done |
 | 39 | 06-classification/08-importing-cz-id-results | Importing CZ ID Results | [import.cz-id] | CZ ID export (open item) | existing | queued |
 | 40 | 06-classification/09-novel-virus-detection | Novel Virus Diagnostics | [import.nvd] | nvd-demo | existing | queued |
 | 41 | 06-classification/10-twelve-s-metabarcoding | 12S Amplicon Metabarcoding | [classify.twelve-s-match] | 12S run (open item) | existing | queued |
