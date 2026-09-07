@@ -1149,8 +1149,10 @@ operations:
         default: "false"
         effect: Writes the extracted FASTQ gzip-compressed.
     notes: >-
-      The motif is matched on the read as stored, so the reverse complement is
-      not searched unless you write it into the pattern.
+      Both surfaces run seqkit grep --by-seq, which searches the read and its
+      reverse complement by default, so a read matching on either strand is
+      written out (measured 2026-09-07 on the HG002 chr20 R1 file, 260 forward
+      plus 261 reverse-complement hits for 521 returned).
 
   fastq.select-reads-by-sequence:
     title: Select Reads by Sequence

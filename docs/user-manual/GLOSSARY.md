@@ -20,6 +20,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Alignment column**{#alignment-column}. One vertical slice through a multiple sequence alignment, holding one residue or one gap character from every row, taken to represent a single inferred homologous position across all the aligned sequences. See also: MSA, gap, homologous.
 
+**Alignment track**{#alignment-track}. One named BAM attached to a reference bundle and drawn as its own read stack and coverage curve in the alignment viewport, so a bundle can carry several alignments side by side, whether of different read sets or of one read set before and after trimming. See also: BAM, reference bundle, mapping.
+
 **Allele**{#allele}. One of the alternative sequences observed at a locus; in Lungfish MHC genotyping an allele is an individual MiSeq target identity, distinct from a named haplotype that spans several loci. See also: haplotype, MHC.
 
 **Allele frequency**{#allele-frequency}. The proportion of sequencing reads at a position that carry the alternate base. A clinical isolate usually shows allele frequencies near 0 or 1; a mixed-population sample (for example, wastewater) shows a full spectrum.
@@ -45,6 +47,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Barcode scout**{#barcode-scout}. A command-line step that scans a subset of a read set against a barcode kit and reports how many reads hit each barcode, writing a `scout-result.json` that marks each barcode accepted, rejected, or undecided, so a wrong kit is caught before a full demultiplex is run. See also: barcode kit, demultiplex.
 
 **BCF**{#bcf}. The compact binary form of VCF, holding the same rows and header but packed for machines. Lungfish Genome Explorer reads an imported BCF with a CSI index beside it, but stores the variant tracks it writes as a bgzip-compressed VCF with a tabix index under the bundle's `variants/` folder, alongside a SQLite sidecar that indexes the same rows. See also: VCF, CSI, tabix.
+
+**BED**{#bed}. A plain-text table listing regions of a genome, one region per line, giving a contig name, a start coordinate, an end coordinate, and usually a name for the region; a primer scheme stores its primer positions as a BED file inside its `.lungfishprimers` bundle. See also: primer scheme, contig.
 
 **Benchmark VCF**{#benchmark-vcf}. A variant call set produced independently of the reads under study and treated as an answer key, such as the Genome in a Bottle small-variant benchmark for HG002 that this manual compares its own calls against. See also: VCF, variant-caller.
 
@@ -210,6 +214,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **IQ-TREE**{#iqtree}. A maximum-likelihood phylogenetic inference program with a built-in ModelFinder step and ultrafast bootstrap support estimation, used by Lungfish to produce `.lungfishtree` bundles from MSA bundles. See also: MSA, phylogram, support value.
 
+**iVar**{#ivar}. A toolkit written for amplicon sequencing data that soft-clips primer bases out of an aligned BAM using a primer scheme's BED coordinates and can then call variants from the trimmed result, shipped inside Lungfish Genome Explorer's Variant Calling pack. See also: primer trim, primer scheme, soft-clip, variant-caller.
+
 ## J
 
 **Joint genotyping**{#joint-genotyping}. The GATK step that calls genotypes across a whole cohort at once by combining per-sample GVCFs and running `GenotypeGVCFs`, rather than genotyping each sample in isolation; run in Lungfish through `lungfish gatk joint-genotype`. See also: GVCF, GenomicsDB.
@@ -320,7 +326,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Primer**{#primer}. A short oligonucleotide, typically 18 to 30 bases, that binds a specific position on a target genome and primes DNA synthesis from that position; the building block of every amplicon protocol. See also: amplicon, primer scheme.
 
-**Primer scheme**{#primer-scheme}. The set of primer coordinate pairs that define an amplicon protocol, listing where each forward and reverse primer binds on the reference. In Lungfish, a primer scheme is packaged as a `.lungfishprimers` bundle that carries the BED coordinates, the primer sequences in FASTA, and provenance.
+**Primer scheme**{#primer-scheme}. The set of primer coordinate pairs that define an amplicon protocol, listing where each forward and reverse primer binds on the reference. In Lungfish, a primer scheme is packaged as a `.lungfishprimers` bundle that carries the BED coordinates, a manifest naming the protocol and the reference accessions it was designed against, an optional FASTA of the primer sequences, and provenance. See also: primer, BED, primer trim.
 
 **Primer trim**{#primer-trim}. The step that removes primer-derived bases from the ends of aligned reads in amplicon data, so those bases do not contaminate variant calls. In Lungfish the trim runs as a BAM-level operation using `ivar trim` against a selected primer scheme. See also: amplicon, primer scheme.
 

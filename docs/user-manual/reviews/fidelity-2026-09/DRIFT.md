@@ -1063,7 +1063,7 @@ Verdicts: 14 true, 3 false, 7 changed, 3 unverifiable.
 |---|---|
 | The Translate operation, the sixth member of Read Processing, which emits protein FASTA and runs frame 1 | `FASTQOperationDialogState.swift:1273`, 1191; `FASTQOperationToolPanes.swift:495-497` "Frame 1 translation is used for this operation." |
 | That the CLI `fastq translate` exposes `--frame` (1 to 6, default 1) and `--table` (default 1) while the dialog fixes frame 1 and offers neither | `fastq.txt` `==== fastq translate ====` versus `FASTQOperationDialogState.swift:672-677`, which passes `frameOffset: 0` |
-| The Output Strategy picker, offered for Reverse Complement and Translate but not for Merge, Repair, or Correct Sequencing Errors | `FASTQOperationDialogState.swift:2200-2210` |
+| The Output Strategy picker, offered on all six operations (STRUCK 2026-09-07 at the chapter 21 review. The cited lines are `supportsFASTA`. The picker is gated by `supportsConfigurableOutput` at `:2135-2141`, which admits all six.) | `FASTQOperationDialogState.swift:2135-2141` |
 | The advanced-settings note that merged amplicon reads are stored as counted exemplars with support in the FASTQ header | `FASTQOperationToolPanes.swift:851-853` |
 | CLI `--force` and `--compress` on merge, error-correct, repair, reverse-complement, and translate | `fastq.txt` OPTIONS blocks |
 | The readiness messages this category can show, for example "Enter a positive minimum overlap." and "Enter a positive k-mer size." | `FASTQOperationDialogState.swift:1378-1381`, 1479-1482 |
@@ -3742,7 +3742,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 16 | 03-reads/03-quality-control | Quality Control | [fastq.refresh-qc-summary] | hg002-chr20 | existing | done |
 | 17 | 03-reads/04-trimming-and-filtering | Trimming and Filtering | [fastq.fastp-trim, fastq.quality-trim, fastq.adapter-removal, fastq.primer-trimming, fastq.trim-fixed-bases, fastq.filter-by-read-length] | hg002-chr20 | existing | done |
 | 18 | 03-reads/05-decontamination | Decontamination | [fastq.remove-human-reads, fastq.remove-ribosomal-rna, fastq.remove-contaminants, fastq.low-complexity-filter, fastq.remove-duplicates] | hg002-chr20 | existing | done |
-| 19 | 03-reads/06-subsetting-and-extraction | Subsetting and Extraction | [fastq.subsample-by-proportion, fastq.subsample-by-count, fastq.extract-reads-by-id, fastq.extract-reads-by-motif, fastq.select-reads-by-sequence] | hg002-chr20 | existing | queued |
+| 19 | 03-reads/06-subsetting-and-extraction | Subsetting and Extraction | [fastq.subsample-by-proportion, fastq.subsample-by-count, fastq.extract-reads-by-id, fastq.extract-reads-by-motif, fastq.select-reads-by-sequence] | hg002-chr20 | existing | done |
 | 20 | 03-reads/07-ont-runs | ONT Runs | [import.ont-run, fastq.demultiplex-barcodes, fastq.ont-fluidigm-sample-split] | hg002-long-reads | existing | done |
 | 21 | 03-reads/08-read-processing | Read Processing | [fastq.merge-overlapping-pairs, fastq.repair-paired-end-files, fastq.reverse-complement, fastq.translate, fastq.orient-reads, fastq.correct-sequencing-errors] | hg002-chr20 | existing (add to nav) | queued |
 | 22 | 04-alignments/01-mapping-reads-to-a-reference | Mapping Reads to a Reference | [map.minimap2, map.bwa-mem2, map.bowtie2, map.bbmap, import.bam] | hg002-chr20 | existing | queued |
