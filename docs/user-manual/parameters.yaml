@@ -2288,3 +2288,991 @@ operations:
       is collapsed until you click Show. Lungfish Genome Explorer retrieves only
       records marked OPEN, so restricted sequences never appear in the results. There
       is no CLI equivalent for Pathoplexus.
+
+  map.minimap2:
+    title: Map Reads (minimap2)
+    entry_points:
+      - "Tools > Mapping > minimap2"
+      - "CLI: lungfish-cli map <fastq-files> --reference <reference> --mapper minimap2"
+    gating: [read-mapping]
+    sources:
+      - Sources/LungfishApp/Views/Mapping/MappingWizardSheet.swift
+      - Sources/LungfishWorkflow/Mapping/MappingTool.swift
+      - Sources/LungfishKit/MultiBundleRunModePicker.swift
+      - Sources/LungfishApp/Services/WorkflowLibrary.swift
+      - Sources/LungfishApp/App/ToolsMenuModel.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/map.txt
+    settings:
+      - label: Reference
+        control: popup
+        default: the first reference the app finds in the project
+        allowed: any reference sequence in the project, or a FASTA you choose with Browse...
+        effect: Names the genome the reads are lined up against. Every coordinate in the resulting alignment is a position in this sequence, so a different reference gives different coordinates.
+        when_to_change: Change it whenever the reads came from a different organism or a different strain than the one the picker happened to select first.
+        cli_flag: --reference
+      - label: Preset
+        control: radio
+        default: Short-read
+        allowed: Short-read, Assembly-to-assembly, Spliced CDS/cDNA, Oxford Nanopore, PacBio HiFi, PacBio CLR
+        effect: Tells minimap2 what kind of sequence it is being handed so it can pick scoring rules that match. Short reads and long noisy reads need very different error tolerances.
+        when_to_change: Match it to the machine that made your reads, since the dialog only guesses from the first read in the file and the guess can be wrong.
+        cli_flag: --preset
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle, Combine all inputs and run once
+        effect: Decides whether several selected read sets each get their own alignment or all get poured into one. Combining loses the ability to tell which read came from which sample.
+        when_to_change: Combine only when the selected files really are pieces of one library, for example two sequencing runs of the same tube.
+        cli_flag: null
+      - label: ID (--rg-id)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text without spaces
+        effect: Writes a read-group identifier into the alignment file so downstream tools can tell one batch of reads from another. It is a label, not a filter.
+        when_to_change: Set it when you plan to merge this alignment with others and need each batch to stay distinguishable.
+        cli_flag: --rg-id
+      - label: Sample (--rg-sm)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which biological sample the reads came from. Joint variant callers group reads by this field, so two files sharing a sample name are treated as one individual.
+        when_to_change: Set it to your real specimen identifier when the file name is not one.
+        cli_flag: --rg-sm
+      - label: Library (--rg-lb)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which sequencing library the reads came from. Duplicate marking uses it, since two copies of one fragment can only be duplicates if they came from the same library.
+        when_to_change: Set it when one sample was prepared as two separate libraries and you want duplicates judged within each.
+        cli_flag: --rg-lb
+      - label: Platform (--rg-pl)
+        control: text
+        default: filled in from the preset you chose
+        allowed: a platform name such as ILLUMINA, ONT, or PACBIO
+        effect: Records the sequencing technology. Some variant callers change their error model based on it.
+        when_to_change: Correct it when the preset guessed a platform that does not match your instrument.
+        cli_flag: --rg-pl
+      - label: Platform unit (--rg-pu)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records the exact flow cell and lane the reads came off. It is the finest-grained batch label in the read group.
+        when_to_change: Fill it when you are chasing a run-specific artifact and need to separate lanes.
+        cli_flag: --rg-pu
+      - label: "Threads:"
+        control: number
+        default: the number of processor cores in your Mac
+        allowed: 1 up to the number of cores
+        effect: Sets how many pieces of the mapping job run at the same time. More threads finish sooner but leave less of the machine for anything else.
+        when_to_change: Lower it when you want to keep working in other applications while a large run finishes.
+        cli_flag: --threads
+      - label: "Secondary alignments:"
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Keeps the extra places a read could also have come from, not just its best one. Repeated regions produce many of these.
+        when_to_change: Turn it on when you are studying repeats or gene families and need to see every plausible placement.
+        cli_flag: --secondary
+      - label: "Supplementary:"
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Keeps the leftover pieces of a read that spans a break, where one part lands in one place and the rest lands elsewhere. These are the signature of a structural rearrangement.
+        when_to_change: Turn it off only when a downstream tool chokes on split records.
+        cli_flag: --no-supplementary
+      - label: "Min mapping quality:"
+        control: number
+        default: "0"
+        allowed: 0 to 60
+        effect: Throws away any read the mapper was not confident it placed correctly. Mapping quality is a confidence score, and 0 means the mapper could not choose between two or more locations.
+        when_to_change: Raise it to about 20 when repeated sequence is putting reads in the wrong place and inflating false variants.
+        cli_flag: --min-mapq
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any minimap2 options, written the way you would type them at a command line
+        effect: Passes options straight through to minimap2 untouched. Nothing in the app checks that they make sense.
+        when_to_change: Use it only when a published protocol names a minimap2 flag the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --mapper
+        default: minimap2
+        effect: Chooses which of the four mappers runs, a choice the GUI makes for you through the menu item you click.
+      - flag: -o, --output-dir
+        default: a folder named mapping-<id> beside the input
+        effect: Writes the sorted BAM and its index into a directory you name.
+      - flag: --sample-name
+        default: taken from the input file name
+        effect: Names the sample for both the read groups and the output file names.
+      - flag: --paired
+        default: "false"
+        effect: Binds exactly two input files as the first and second reads of the same fragments.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+    notes: >-
+      The wizard is 560 by 560 points and its header reads "Map Reads (minimap2)".
+      Read Group and Advanced Settings are collapsed disclosure groups, so a reader
+      who never opens them gets every default above. When more than one read set is
+      selected and Run Mode is left on per bundle, the Read Group fields are replaced
+      by a notice reading "Each bundle gets its own read group, derived automatically
+      from its sample name." An Input Compatibility panel above Advanced Settings
+      reports the detected format, the detected read type, and the longest read seen,
+      and it disables Run when the preset and the reads do not match. Output is always
+      a coordinate-sorted, indexed BAM.
+
+  map.bwa-mem2:
+    title: Map Reads (BWA-MEM2)
+    entry_points:
+      - "Tools > Mapping > BWA-MEM2"
+      - "CLI: lungfish-cli map <fastq-files> --reference <reference> --mapper bwa-mem2"
+    gating: [read-mapping]
+    sources:
+      - Sources/LungfishApp/Views/Mapping/MappingWizardSheet.swift
+      - Sources/LungfishWorkflow/Mapping/MappingTool.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/map.txt
+    settings:
+      - label: Reference
+        control: popup
+        default: the first reference the app finds in the project
+        allowed: any reference sequence in the project, or a FASTA you choose with Browse...
+        effect: Names the genome the reads are lined up against. Every coordinate in the resulting alignment is a position in this sequence.
+        when_to_change: Change it whenever the reads came from a different organism or strain than the one the picker selected first.
+        cli_flag: --reference
+      - label: Mode
+        control: radio
+        default: Short-read
+        allowed: Short-read
+        effect: BWA-MEM2 offers only one mode, because it is built for Illumina-length reads and nothing else. The control shows a single choice.
+        when_to_change: rarely
+        cli_flag: --preset
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle, Combine all inputs and run once
+        effect: Decides whether several selected read sets each get their own alignment or all get poured into one. Combining loses per-sample attribution.
+        when_to_change: Combine only when the selected files really are pieces of one library.
+        cli_flag: null
+      - label: ID (--rg-id)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text without spaces
+        effect: Writes a read-group identifier into the alignment file so downstream tools can tell one batch of reads from another.
+        when_to_change: Set it when you plan to merge this alignment with others.
+        cli_flag: --rg-id
+      - label: Sample (--rg-sm)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which biological sample the reads came from. Joint variant callers group reads by this field.
+        when_to_change: Set it to your real specimen identifier when the file name is not one.
+        cli_flag: --rg-sm
+      - label: Library (--rg-lb)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which sequencing library the reads came from, which is what duplicate marking compares against.
+        when_to_change: Set it when one sample was prepared as two separate libraries.
+        cli_flag: --rg-lb
+      - label: Platform (--rg-pl)
+        control: text
+        default: ILLUMINA
+        allowed: a platform name such as ILLUMINA
+        effect: Records the sequencing technology, which some variant callers use to pick an error model.
+        when_to_change: rarely
+        cli_flag: --rg-pl
+      - label: Platform unit (--rg-pu)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records the exact flow cell and lane the reads came off.
+        when_to_change: Fill it when you are chasing a run-specific artifact and need to separate lanes.
+        cli_flag: --rg-pu
+      - label: "Threads:"
+        control: number
+        default: the number of processor cores in your Mac
+        allowed: 1 up to the number of cores
+        effect: Sets how many pieces of the mapping job run at the same time.
+        when_to_change: Lower it to keep the machine responsive during a long run.
+        cli_flag: --threads
+      - label: "Secondary alignments:"
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Keeps the extra places a read could also have come from, not just its best one.
+        when_to_change: Turn it on when you are studying repeats or gene families.
+        cli_flag: --secondary
+      - label: "Supplementary:"
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Keeps the leftover pieces of a read that spans a break, the signature of a structural rearrangement.
+        when_to_change: Turn it off only when a downstream tool chokes on split records.
+        cli_flag: --no-supplementary
+      - label: "Min mapping quality:"
+        control: number
+        default: "0"
+        allowed: 0 to 60
+        effect: Throws away any read the mapper was not confident it placed correctly.
+        when_to_change: Raise it to about 20 when repeated sequence is inflating false variants.
+        cli_flag: --min-mapq
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any BWA-MEM2 options, written the way you would type them at a command line
+        effect: Passes options straight through to BWA-MEM2 untouched, with no checking.
+        when_to_change: Use it only when a published protocol names a flag the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --mapper
+        default: minimap2
+        effect: Must be set to bwa-mem2 to select this mapper from the command line.
+      - flag: -o, --output-dir
+        default: a folder named mapping-<id> beside the input
+        effect: Writes the sorted BAM and its index into a directory you name.
+      - flag: --paired
+        default: "false"
+        effect: Binds exactly two input files as the first and second reads of the same fragments.
+      - flag: --sample-name
+        default: taken from the input file name
+        effect: Names the sample for both the read groups and the output file names.
+    notes: >-
+      The wizard is the same sheet as minimap2's with the header "Map Reads
+      (BWA-MEM2)". Because only one mode is valid, the Mode picker renders as a
+      one-item segmented control rather than a menu. The Extra arguments field's
+      placeholder text is "-M -Y".
+
+  map.bowtie2:
+    title: Map Reads (Bowtie2)
+    entry_points:
+      - "Tools > Mapping > Bowtie2"
+      - "CLI: lungfish-cli map <fastq-files> --reference <reference> --mapper bowtie2"
+    gating: [read-mapping]
+    sources:
+      - Sources/LungfishApp/Views/Mapping/MappingWizardSheet.swift
+      - Sources/LungfishWorkflow/Mapping/MappingTool.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/map.txt
+    settings:
+      - label: Reference
+        control: popup
+        default: the first reference the app finds in the project
+        allowed: any reference sequence in the project, or a FASTA you choose with Browse...
+        effect: Names the genome the reads are lined up against. Every coordinate in the resulting alignment is a position in this sequence.
+        when_to_change: Change it whenever the reads came from a different organism or strain than the one the picker selected first.
+        cli_flag: --reference
+      - label: Mode
+        control: radio
+        default: Short-read
+        allowed: Short-read
+        effect: Bowtie2 offers only one mode in Lungfish Genome Explorer, because it is built for Illumina-length reads.
+        when_to_change: rarely
+        cli_flag: --preset
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle, Combine all inputs and run once
+        effect: Decides whether several selected read sets each get their own alignment or all get poured into one.
+        when_to_change: Combine only when the selected files really are pieces of one library.
+        cli_flag: null
+      - label: ID (--rg-id)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text without spaces
+        effect: Writes a read-group identifier into the alignment file so downstream tools can tell one batch of reads from another.
+        when_to_change: Set it when you plan to merge this alignment with others.
+        cli_flag: --rg-id
+      - label: Sample (--rg-sm)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which biological sample the reads came from. Joint variant callers group reads by this field.
+        when_to_change: Set it to your real specimen identifier when the file name is not one.
+        cli_flag: --rg-sm
+      - label: Library (--rg-lb)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which sequencing library the reads came from, which is what duplicate marking compares against.
+        when_to_change: Set it when one sample was prepared as two separate libraries.
+        cli_flag: --rg-lb
+      - label: Platform (--rg-pl)
+        control: text
+        default: ILLUMINA
+        allowed: a platform name such as ILLUMINA
+        effect: Records the sequencing technology, which some variant callers use to pick an error model.
+        when_to_change: rarely
+        cli_flag: --rg-pl
+      - label: Platform unit (--rg-pu)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records the exact flow cell and lane the reads came off.
+        when_to_change: Fill it when you are chasing a run-specific artifact and need to separate lanes.
+        cli_flag: --rg-pu
+      - label: "Threads:"
+        control: number
+        default: the number of processor cores in your Mac
+        allowed: 1 up to the number of cores
+        effect: Sets how many pieces of the mapping job run at the same time.
+        when_to_change: Lower it to keep the machine responsive during a long run.
+        cli_flag: --threads
+      - label: "Secondary alignments:"
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Keeps the extra places a read could also have come from, not just its best one.
+        when_to_change: Turn it on when you are studying repeats or gene families.
+        cli_flag: --secondary
+      - label: "Supplementary:"
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Keeps the leftover pieces of a read that spans a break, the signature of a structural rearrangement.
+        when_to_change: Turn it off only when a downstream tool chokes on split records.
+        cli_flag: --no-supplementary
+      - label: "Min mapping quality:"
+        control: number
+        default: "0"
+        allowed: 0 to 60
+        effect: Throws away any read the mapper was not confident it placed correctly.
+        when_to_change: Raise it to about 20 when repeated sequence is inflating false variants.
+        cli_flag: --min-mapq
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any Bowtie2 options, written the way you would type them at a command line
+        effect: Passes options straight through to Bowtie2 untouched, with no checking.
+        when_to_change: Use it only when a published protocol names a flag the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --mapper
+        default: minimap2
+        effect: Must be set to bowtie2 to select this mapper from the command line.
+      - flag: -o, --output-dir
+        default: a folder named mapping-<id> beside the input
+        effect: Writes the sorted BAM and its index into a directory you name.
+      - flag: --paired
+        default: "false"
+        effect: Binds exactly two input files as the first and second reads of the same fragments.
+      - flag: --sample-name
+        default: taken from the input file name
+        effect: Names the sample for both the read groups and the output file names.
+    notes: >-
+      The wizard is the same sheet as minimap2's with the header "Map Reads
+      (Bowtie2)". The Extra arguments field's placeholder text is
+      "--very-sensitive -N 1".
+
+  map.bbmap:
+    title: Map Reads (BBMap)
+    entry_points:
+      - "Tools > Mapping > BBMap"
+      - "CLI: lungfish-cli map <fastq-files> --reference <reference> --mapper bbmap"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Mapping/MappingWizardSheet.swift
+      - Sources/LungfishWorkflow/Mapping/MappingTool.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/map.txt
+    settings:
+      - label: Reference
+        control: popup
+        default: the first reference the app finds in the project
+        allowed: any reference sequence in the project, or a FASTA you choose with Browse...
+        effect: Names the genome the reads are lined up against. Every coordinate in the resulting alignment is a position in this sequence.
+        when_to_change: Change it whenever the reads came from a different organism or strain than the one the picker selected first.
+        cli_flag: --reference
+      - label: Mode
+        control: radio
+        default: Standard
+        allowed: Standard, PacBio
+        effect: Chooses between BBMap's settings for short to moderate reads and its settings for long PacBio-class reads. The two differ in how much sequence error they tolerate.
+        when_to_change: Switch to PacBio when the reads came off a PacBio instrument and are thousands of bases long.
+        cli_flag: --preset
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle, Combine all inputs and run once
+        effect: Decides whether several selected read sets each get their own alignment or all get poured into one.
+        when_to_change: Combine only when the selected files really are pieces of one library.
+        cli_flag: null
+      - label: ID (--rg-id)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text without spaces
+        effect: Writes a read-group identifier into the alignment file so downstream tools can tell one batch of reads from another.
+        when_to_change: Set it when you plan to merge this alignment with others.
+        cli_flag: --rg-id
+      - label: Sample (--rg-sm)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which biological sample the reads came from. Joint variant callers group reads by this field.
+        when_to_change: Set it to your real specimen identifier when the file name is not one.
+        cli_flag: --rg-sm
+      - label: Library (--rg-lb)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records which sequencing library the reads came from, which is what duplicate marking compares against.
+        when_to_change: Set it when one sample was prepared as two separate libraries.
+        cli_flag: --rg-lb
+      - label: Platform (--rg-pl)
+        control: text
+        default: filled in from the mode you chose
+        allowed: a platform name such as ILLUMINA or PACBIO
+        effect: Records the sequencing technology, which some variant callers use to pick an error model.
+        when_to_change: Correct it when the mode guessed a platform that does not match your instrument.
+        cli_flag: --rg-pl
+      - label: Platform unit (--rg-pu)
+        control: text
+        default: the sample name taken from the input file
+        allowed: any text
+        effect: Records the exact flow cell and lane the reads came off.
+        when_to_change: Fill it when you are chasing a run-specific artifact and need to separate lanes.
+        cli_flag: --rg-pu
+      - label: "Threads:"
+        control: number
+        default: the number of processor cores in your Mac
+        allowed: 1 up to the number of cores
+        effect: Sets how many pieces of the mapping job run at the same time.
+        when_to_change: Lower it to keep the machine responsive during a long run.
+        cli_flag: --threads
+      - label: "Secondary alignments:"
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Keeps the extra places a read could also have come from, not just its best one.
+        when_to_change: Turn it on when you are studying repeats or gene families.
+        cli_flag: --secondary
+      - label: "Supplementary:"
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Keeps the leftover pieces of a read that spans a break, the signature of a structural rearrangement.
+        when_to_change: Turn it off only when a downstream tool chokes on split records.
+        cli_flag: --no-supplementary
+      - label: "Min mapping quality:"
+        control: number
+        default: "0"
+        allowed: 0 to 60
+        effect: Throws away any read the mapper was not confident it placed correctly.
+        when_to_change: Raise it to about 20 when repeated sequence is inflating false variants.
+        cli_flag: --min-mapq
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any BBMap options, written the way you would type them at a command line
+        effect: Passes options straight through to BBMap untouched, with no checking.
+        when_to_change: Use it only when a published protocol names a flag the dialog does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --mapper
+        default: minimap2
+        effect: Must be set to bbmap to select this mapper from the command line.
+      - flag: -o, --output-dir
+        default: a folder named mapping-<id> beside the input
+        effect: Writes the sorted BAM and its index into a directory you name.
+      - flag: --paired
+        default: "false"
+        effect: Binds exactly two input files as the first and second reads of the same fragments.
+      - flag: --sample-name
+        default: taken from the input file name
+        effect: Names the sample for both the read groups and the output file names.
+    notes: >-
+      BBMap is not part of the read-mapping plugin pack. It comes from the required
+      BBTools environment and is available as soon as the managed toolchain is
+      provisioned, which is why its gating list is empty. The two BBMap modes are the
+      only presets whose command-line preset values are bbmap-standard and
+      bbmap-pacbio rather than a minimap2 preset name. The Extra arguments field's
+      placeholder text is "minid=0.97 local=t".
+
+  bam.mark-duplicates:
+    title: Mark Duplicates in Bundle Tracks
+    entry_points:
+      - "Inspector > Analysis > Filtering > Mark Duplicates in Bundle Tracks"
+      - "Inspector > Analysis > Export > Create Deduplicated Bundle"
+      - "CLI: lungfish-cli markdup <path>"
+      - "CLI: lungfish-cli bam markdup <path>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Inspector/Sections/ReadStyleSection.swift
+      - Sources/LungfishApp/Views/Inspector/InspectorViewController+TrimDuplicateWorkflows.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/markdup.txt
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/bam.txt
+    settings: []
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Runs duplicate marking again even when the alignment already carries duplicate flags, which the command otherwise treats as work already done.
+      - flag: --sort-threads
+        default: "4"
+        effect: Sets how many threads the sorting stages inside the duplicate-marking pipeline use, separately from the global thread count.
+      - flag: --deduplicated-bundle
+        default: none
+        effect: Writes a second reference bundle beside the first with the flagged duplicate reads actually removed, leaving the input alignment untouched. The top-level markdup command has this flag and the bam markdup subcommand does not.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text or JSON.
+    notes: >-
+      Neither button opens a dialog, so this operation has no settings of its own.
+      Mark Duplicates in Bundle Tracks marks every alignment track in the bundle
+      rather than only the selected one, and it marks in place: it flags duplicates
+      without deleting them, so a depth figure computed over all reads does not fall
+      until something excludes the flagged reads. Create Deduplicated Bundle, on the
+      Export tab, is the button that writes a separate copy with duplicates gone. Both
+      buttons are disabled while another duplicate-marking run is in flight, and the
+      bundle-level operation lock refuses a run while another operation holds the
+      bundle.
+
+  bam.primer-trim:
+    title: Primer-trim BAM
+    entry_points:
+      - "Inspector > Analysis > Primer Trim > Primer-trim BAM..."
+      - "CLI: lungfish-cli bam primer-trim --bundle <bundle> --alignment-track <track> --scheme <scheme> --name <name>"
+    gating: [variant-calling]
+    sources:
+      - Sources/LungfishApp/Views/BAM/BAMPrimerTrimDialog.swift
+      - Sources/LungfishApp/Views/BAM/BAMPrimerTrimToolPanes.swift
+      - Sources/LungfishApp/Views/BAM/BAMPrimerTrimDialogState.swift
+      - Sources/LungfishApp/Views/Inspector/InspectorViewController+TrimDuplicateWorkflows.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/bam.txt
+    settings:
+      - label: Primer Scheme
+        control: popup
+        default: no scheme chosen
+        allowed: any of the eight built-in schemes, any scheme in the project's Primer Schemes folder, or one you pick with Browse...
+        effect: Names the primer set the sequencing library was built with, so the app knows where on the genome each primer sits. Trimming with the wrong scheme removes the wrong bases.
+        when_to_change: Always set it to the scheme your wet-lab protocol used, since there is no correct default.
+        cli_flag: --scheme
+      - label: Alignment Track
+        control: popup
+        default: the first eligible alignment track in the bundle
+        allowed: any alignment track in the bundle that can be primer-trimmed
+        effect: Chooses which alignment the primers are trimmed out of. The chosen track is left untouched and a new one is written.
+        when_to_change: Check and change it whenever the bundle holds more than one alignment, since the default is just the first in the list.
+        cli_flag: --alignment-track
+      - label: Output Track Name
+        control: text
+        default: the source track name followed by a bullet, the words Primer-trimmed, and the scheme name in parentheses
+        allowed: any text that does not match an existing track name
+        effect: Names the new alignment that trimming produces. A name already in use is refused rather than overwritten.
+        when_to_change: Change it when you want a shorter label in the sidebar.
+        cli_flag: --name
+      - label: Minimum read length after trim
+        control: text
+        default: "30"
+        allowed: a whole number of bases
+        effect: Discards any read left shorter than this once its primer bases have been clipped away. Very short reads map almost anywhere and add noise.
+        when_to_change: Lower it when your amplicons are short enough that trimming leaves little behind.
+        cli_flag: --ivar-min-length
+      - label: Minimum quality
+        control: text
+        default: "20"
+        allowed: a Phred quality score, typically 0 to 40
+        effect: Sets the quality floor for the sliding-window trim that runs alongside primer removal. A Phred score of 20 means the machine expects one wrong base in a hundred.
+        when_to_change: Raise it when the run's quality was high and you want only confident bases in the pileup.
+        cli_flag: --ivar-min-quality
+      - label: Sliding window width
+        control: text
+        default: "4"
+        allowed: a whole number of bases
+        effect: Sets how many bases the quality trimmer averages over as it walks in from each end. A wider window smooths over single bad bases.
+        when_to_change: rarely
+        cli_flag: --ivar-sliding-window
+      - label: Primer offset
+        control: text
+        default: "0"
+        allowed: a whole number of bases
+        effect: Shifts the primer coordinates by this many bases before trimming, which compensates for a scheme whose coordinates are off by a fixed amount.
+        when_to_change: Use it only when you know the scheme's coordinates do not line up with the reference you mapped against.
+        cli_flag: --ivar-primer-offset
+    cli_only:
+      - flag: --target-reference
+        default: the primer scheme's own canonical accession
+        effect: Overrides which contig name in the alignment the primer scheme is matched against, for a BAM whose contig is named differently from the scheme's reference.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text or JSON.
+    notes: >-
+      The dialog stacks four panes: Primer Scheme, Target, Advanced Options, and
+      Readiness. Advanced Options is a disclosure group that starts collapsed, so the
+      four iVar numbers above are the ones a reader gets without touching anything.
+      Eight primer schemes ship built in, all for SARS-CoV-2: ARTIC V3, V4, V4.1, and
+      V5.3.2, Midnight 1200 bp V1, NEB VarSkip Short v1, NEB VarSkip Long v1, and
+      QIAseq Direct SARS-CoV-2 with Booster A. Trimming soft-clips the primer bases
+      rather than deleting them, and reads with no matching primer are kept, which the
+      Target pane states in the dialog. The result lands in the bundle's
+      alignments/primer-trimmed directory. The Readiness pane names whatever is missing
+      when Run is disabled, and failure surfaces as an alert titled "Primer Trim
+      Failed".
+
+  bam.extract-consensus:
+    title: Extract Consensus
+    entry_points:
+      - "Inspector > Analysis > Consensus > Extract Consensus..."
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Inspector/Sections/ReadStyleSection.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController+Mapping.swift
+      - Sources/LungfishIO/Bundles/AlignmentDataProvider.swift
+    settings:
+      - label: Show consensus track in viewer
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Draws the consensus sequence as its own row above the reads in the viewport. Turning it off hides the row but does not change what extraction produces.
+        when_to_change: Turn it off when the viewport is crowded and you only want the reads.
+        cli_flag: null
+      - label: Consensus Mode
+        control: radio
+        default: Bayesian
+        allowed: Bayesian, Simple
+        effect: Chooses how the consensus base at each position is decided. Bayesian weighs each read's base quality, while Simple takes whichever base appears most often.
+        when_to_change: Switch to Simple when you want a plain majority call that is easy to explain and reproduce by hand.
+        cli_flag: null
+      - label: Consensus scope
+        control: radio
+        default: Whole contig
+        allowed: Whole contig, Selected region
+        effect: Decides whether the extracted sequence covers the entire reference or only the stretch you highlighted in the viewport.
+        when_to_change: Switch to Selected region when you want the consensus of one gene or one amplicon rather than the whole genome.
+        cli_flag: null
+      - label: Use IUPAC ambiguity codes
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Writes a single letter standing for two or more possible bases where the reads disagree, instead of picking one winner. R means A or G, Y means C or T, and so on.
+        when_to_change: Turn it on when you are reporting a mixed population and want the mixture visible in the sequence itself.
+        cli_flag: null
+      - label: Hide high-gap sites
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Masks columns where most of the reads that span the position carry a gap rather than a base. Those columns are usually alignment artifacts.
+        when_to_change: Turn it on when a noisy long-read alignment is filling the consensus with spurious insertions.
+        cli_flag: null
+      - label: Consensus minimum depth
+        control: slider
+        default: "8"
+        allowed: 1 to 50
+        effect: Sets how many reads must cover a position before the app is willing to call a base there. Positions with fewer reads become N.
+        when_to_change: Raise it when you need a publication-grade sequence and would rather have an N than a guess.
+        cli_flag: null
+      - label: Gap threshold
+        control: slider
+        default: 90 percent
+        allowed: 50 to 99 percent
+        effect: Sets what share of the spanning reads must carry a gap before the column is masked. It only appears when Hide high-gap sites is on.
+        when_to_change: Lower it when obvious artifact columns are surviving at the default.
+        cli_flag: null
+      - label: Masking minimum depth
+        control: slider
+        default: "8"
+        allowed: 1 to 50
+        effect: Sets how many reads must span a position before gap masking is allowed to act on it, so a thin pile is not masked on the evidence of two reads. It only appears when Hide high-gap sites is on.
+        when_to_change: rarely
+        cli_flag: null
+      - label: Consensus minimum MAPQ
+        control: slider
+        default: "0"
+        allowed: 0 to 60
+        effect: Ignores reads the mapper was not confident it placed, when deciding the consensus base. A value of 0 uses every read.
+        when_to_change: Raise it when repeated sequence is dragging misplaced reads into the consensus.
+        cli_flag: null
+      - label: Consensus minimum base quality
+        control: slider
+        default: "0"
+        allowed: 0 to 60
+        effect: Ignores individual bases the sequencer called with low confidence. A value of 0 uses every base.
+        when_to_change: Raise it to about 20 when the run's tail-end quality is poor.
+        cli_flag: null
+    cli_only: []
+    notes: >-
+      The Consensus tab's own note reads "Adjust consensus evidence settings here.
+      Consensus controls are intentionally separate from View so display settings stay
+      lighter." The settings above serve double duty, steering both the consensus row
+      drawn in the viewport and the sequence that Extract Consensus... writes out. The
+      Extract Consensus... button appears only when the current alignment supports
+      extraction, and it uses whatever scope is selected above. When every position
+      would come out as N the app asks for confirmation before writing the file. There
+      is no CLI equivalent for this operation, and the recorded command in the
+      operation history is written as "Lungfish.app alignment consensus".
+
+  bam.filter:
+    title: Create Filtered Alignment
+    entry_points:
+      - "Inspector > Analysis > Filtering > Create Filtered Alignment"
+      - "CLI: lungfish-cli bam filter --alignment-track <track> --output-track-name <name>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Inspector/Sections/ReadStyleSection.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/bam.txt
+    settings:
+      - label: Starting Alignment
+        control: popup
+        default: the first alignment track in the bundle
+        allowed: any alignment track in the bundle
+        effect: Chooses which alignment the filtered copy is built from. The chosen track is left exactly as it was.
+        when_to_change: Change it whenever the bundle holds more than one alignment and the default is not the one you meant.
+        cli_flag: --alignment-track
+      - label: Keep mapped reads only
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Drops reads the mapper could not place anywhere on the reference. Those reads carry no coordinate and contribute nothing to a pileup.
+        when_to_change: Turn it off when you want to keep unmapped reads for a later attempt at a different reference.
+        cli_flag: --mapped-only
+      - label: Keep one primary alignment per read
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Keeps only the mapper's best placement for each read and discards the alternates and the split-read fragments.
+        when_to_change: Turn it off when you are studying repeats or rearrangements and need the alternate placements.
+        cli_flag: --primary-only
+      - label: Minimum alignment confidence
+        control: number
+        default: "0"
+        allowed: 0 to 255
+        effect: Drops reads whose mapping quality falls below this. The panel spells the rule out, "Uses SAM MAPQ. Set to 0 to keep every alignment confidence level."
+        when_to_change: Raise it to about 20 when you want only reads the mapper placed with confidence.
+        cli_flag: --min-mapq
+      - label: Duplicate handling
+        control: popup
+        default: Keep all reads
+        allowed: Keep all reads, Hide duplicate-marked reads, Remove duplicate reads
+        effect: Decides what happens to PCR duplicates, the extra copies of one original fragment that amplification produced. Hide drops reads already carrying a duplicate flag, and Remove marks duplicates first and then drops them.
+        when_to_change: Choose Remove when the alignment has never been duplicate-marked and you want the effective depth.
+        cli_flag: --exclude-marked-duplicates
+      - label: Keep reads with zero mismatches to reference
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Keeps only reads that match the reference perfectly, base for base. Every read carrying even one difference is discarded.
+        when_to_change: Turn it on for a strict identity check, and never when you are looking for variants.
+        cli_flag: --exact-match
+      - label: Minimum identity to reference (%)
+        control: text
+        default: empty, which keeps every read
+        allowed: a percentage, or blank
+        effect: Keeps only reads matching the reference at least this closely. It is the looser cousin of the zero-mismatch setting and is disabled while that setting is on.
+        when_to_change: Set it around 95 when you want to shed clearly foreign reads without demanding perfection.
+        cli_flag: --min-percent-identity
+      - label: Name for New Alignment
+        control: text
+        default: empty
+        allowed: any text
+        effect: Names the filtered alignment that the run produces. The run refuses to start without a name.
+        when_to_change: Always, since there is no default and the field starts blank.
+        cli_flag: --output-track-name
+    cli_only:
+      - flag: --bundle
+        default: none
+        effect: Names the reference bundle directory the source alignment lives in.
+      - flag: --mapping-result
+        default: none
+        effect: Points at a mapping analysis directory instead of a bundle, so a fresh mapping run can be filtered before it is adopted.
+      - flag: --output-track-id
+        default: a generated portable identifier
+        effect: Fixes the new track's identifier so a script can refer to it later by name.
+      - flag: --remove-duplicates
+        default: "false"
+        effect: Marks duplicates first and then excludes them, the command-line spelling of the Remove duplicate reads choice.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text or JSON.
+    notes: >-
+      The panel's own headnote reads "Creates new outputs in this bundle. The original
+      alignment stays unchanged", and a second line points at where the result lands,
+      "After creating a filtered alignment, find it under Bundle > Alignment Tracks and
+      compare it separately under View > Alignment." The Duplicate handling picker maps
+      to two separate command-line flags rather than one, because Keep all reads passes
+      neither. The identity field is greyed out while zero-mismatch filtering is on and
+      its placeholder changes to say so.
+
+  bam.extract-reads-in-region:
+    title: Extract Reads in Selected Region
+    entry_points:
+      - "Right-click a selection in the alignment track > Extract Reads in Selected Region..."
+      - "Right-click a selected read > Extract Reads... (original reads)"
+      - "CLI: lungfish-cli extract reads --by-region --bam <bam> --region <region> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Viewer/SequenceViewerView+Interaction.swift
+      - Sources/LungfishKit/ReadSelectionActionMenuBuilder.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController+Mapping.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/extract.txt
+    settings:
+      - label: (the selected region)
+        control: text
+        default: no selection, and the menu item stays hidden until you make one
+        allowed: any stretch you drag out in the alignment track
+        effect: Sets which piece of the genome the reads are pulled from. Every read overlapping the highlighted stretch is written out.
+        when_to_change: Always, since the menu item does not appear until a region is selected.
+        cli_flag: --region
+      - label: (the save destination)
+        control: file
+        default: a file named selected-region in the project's Extractions folder
+        allowed: any folder you can write to
+        effect: Chooses where the extracted reads are written. The app asks with a standard save panel after you pick the menu item.
+        when_to_change: Change it when you want the extraction filed somewhere other than the default project location.
+        cli_flag: --output
+    cli_only:
+      - flag: --by-region
+        default: "false"
+        effect: Selects the region strategy, one of four the extract reads command offers alongside read ID, database, and classifier selection.
+      - flag: --bam
+        default: none
+        effect: Names the sorted, indexed alignment file the reads are pulled from.
+      - flag: --exclude-unmapped
+        default: "false"
+        effect: Applies a stricter filter that also drops unmapped reads, rather than only duplicates.
+      - flag: --bundle
+        default: "false"
+        effect: Wraps the extracted reads in a .lungfishfastq bundle instead of leaving a loose file.
+      - flag: --bundle-name
+        default: none
+        effect: Gives that bundle a display name, and implies the bundle flag.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as plain text, JSON, or a tab-separated table.
+    notes: >-
+      The extraction has no dialog of its own. Selecting a region and choosing the menu
+      item runs it straight away, asking only where to save. Right-clicking a read
+      instead of a region gives two items, "Copy as FASTA (aligned orientation)", which
+      copies the read exactly as it was aligned with its soft clips, and "Extract
+      Reads... (original reads)", which pulls the read as originally sequenced out of
+      the source FASTQ. Extractions belong in the project's Extractions folder, never
+      in Imports. Failure surfaces as an alert titled "Extract Selected Region Failed".
+
+  bam.read-display:
+    title: Alignment display settings
+    entry_points:
+      - "Inspector > View (with an alignment track selected)"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Inspector/Sections/ReadStyleSection.swift
+      - Sources/LungfishKit/CoverageScaleMode.swift
+      - Sources/LungfishApp/Views/Viewer/ReadViewportPolicy.swift
+      - Sources/LungfishApp/Views/Viewer/ReadBudgetState.swift
+    settings:
+      - label: Visible Alignment
+        control: popup
+        default: All Alignments
+        allowed: All Alignments, or any single alignment track in the bundle
+        effect: Chooses whether the viewport stacks every alignment track at once or shows one at a time. Comparing a trimmed alignment against its source is easier one at a time.
+        when_to_change: Switch to a single track when several alignments are overlapping and you cannot tell them apart.
+        cli_flag: null
+      - label: Show reads
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Draws the stacked reads underneath the coverage curve. Turning it off leaves the coverage curve and the reference visible.
+        when_to_change: Turn it off when you only care about depth across a long stretch.
+        cli_flag: null
+      - label: Minimum alignment confidence
+        control: slider
+        default: "0"
+        allowed: 0 to 60
+        effect: Hides reads whose mapping quality falls below this, in the viewport only. It does not change the file on disk.
+        when_to_change: Raise it to see how much of a suspicious pile survives once ambiguous placements are hidden.
+        cli_flag: null
+      - label: Coverage scale
+        control: radio
+        default: Linear
+        allowed: Linear, Log10, Square root
+        effect: Changes how depth is turned into bar height. On a linear scale one very deep peak flattens everything else, and compressing the axis lifts shallow regions back into view.
+        when_to_change: Switch to Log10 when you are hunting for a dropout next to a deep amplicon peak.
+        cli_flag: null
+      - label: Include duplicate-marked reads
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Shows reads already flagged as PCR duplicates, and counts them in the depth the viewport draws.
+        when_to_change: Turn it on when you want to see how much of a deep pile is duplicate copies of one fragment.
+        cli_flag: null
+      - label: Include secondary alignments
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Shows the alternate places a read could also have come from, on top of its best placement.
+        when_to_change: Turn it on when a region is repeated and you want to see where else its reads fit.
+        cli_flag: null
+      - label: Include supplementary alignments
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Shows the leftover pieces of reads that span a break, where one part lands here and the rest lands elsewhere.
+        when_to_change: Turn it on when you suspect a structural rearrangement at the position you are looking at.
+        cli_flag: null
+      - label: Limit visible rows
+        control: checkbox
+        default: "false"
+        allowed: on or off
+        effect: Caps how many rows of stacked reads are drawn. The help text notes that leaving it off "keeps all mapped reads in the active view and enables stable vertical scrolling".
+        when_to_change: Turn it on when a very deep pile makes scrolling sluggish.
+        cli_flag: null
+      - label: Read display budget
+        control: slider
+        default: "50000"
+        allowed: 5,000 to 500,000 in steps of 5,000
+        effect: Sets how many individual reads the viewport will draw for one window before it switches to an even sample and posts a banner saying so. Depth, coverage, and the consensus always use every read.
+        when_to_change: Lower it on an older machine when very deep windows feel slow to redraw.
+        cli_flag: null
+      - label: Use compact row height
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Draws each read row shorter so more of the pile fits on screen at once.
+        when_to_change: Turn it off when the rows are too thin to click accurately.
+        cli_flag: null
+      - label: Show matching bases as dots
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Draws a base that agrees with the reference as a dot and a disagreeing base as a coloured letter, so differences stand out. Turn it off and every base is drawn as a letter.
+        when_to_change: Turn it off when you want to read the actual sequence of a read rather than only its differences.
+        cli_flag: null
+      - label: Show soft-clipped sequence
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Draws the parts of a read the mapper set aside as not matching, lightened at the read's ends. Primer trimming turns primer bases into exactly this kind of clipped sequence.
+        when_to_change: Turn it off when clipped ends are cluttering a crowded pileup.
+        cli_flag: null
+      - label: Show insertion and deletion markers
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Marks the places where a read carries extra bases the reference does not have, or is missing bases the reference does have.
+        when_to_change: rarely
+        cli_flag: null
+      - label: Color reads by strand
+        control: checkbox
+        default: "true"
+        allowed: on or off
+        effect: Tints reads by which of the two DNA strands they came from, forward in blue and reverse in pink. Turning it off makes every read neutral grey.
+        when_to_change: Turn it off when the tints distract from the base colours you are actually reading.
+        cli_flag: null
+      - label: Forward strand color
+        control: popup
+        default: a pale blue
+        allowed: any colour
+        effect: Sets the tint used for reads on the forward strand.
+        when_to_change: Change it when the default pair is hard for you to tell apart.
+        cli_flag: null
+      - label: Reverse strand color
+        control: popup
+        default: a pale pink
+        allowed: any colour
+        effect: Sets the tint used for reads on the reverse strand.
+        when_to_change: Change it when the default pair is hard for you to tell apart.
+        cli_flag: null
+    cli_only: []
+    notes: >-
+      These are viewer settings and change nothing on disk. When a window holds more
+      reads than the display budget, a banner reads "Showing 50,000 of 620,000 reads in
+      view, depth, coverage and consensus use all reads" with a Load all button beside
+      it, and Load all lifts the budget to a two-million-read ceiling. The sample is a
+      fixed even stride rather than a random draw, so the same reads appear on every
+      redraw. Above roughly 2 bp per pixel the viewport stops drawing individual reads
+      and shows only the coverage curve. A read-group panel appears below these
+      controls when the alignment carries more than one read group.
