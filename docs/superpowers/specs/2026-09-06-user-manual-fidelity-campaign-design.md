@@ -147,11 +147,14 @@ Fixture tiers in `docs/user-manual/fixtures/README.md` flip to:
    `32566_MS267_Williams1.lungfish` (30 samples, IPD-MHC Mamu 2021-07-09
    reference bundle, seven genotype result bundles, 475 MB). It exceeds the
    fixture caps, so it is a documented external demo asset, not a
-   committed fixture. Known limitation, stated by the user: it is rhesus
-   MiSeq data and does not exercise the MCM (Mauritian cynomolgus macaque)
-   haplotyping features. Those chapters describe the haplotyping controls
-   against this dataset where they apply and say plainly what an MCM
-   dataset would add.
+   committed fixture. User decision 2026-09-06: the genotyping chapters use
+   it as a genotyping-only example. Haplotype analysis (the MCM, Mauritian
+   cynomolgus macaque, haplotyping features) is not worked in this campaign.
+   Each genotyping chapter that would otherwise cover haplotyping carries
+   one short, clearly labeled placeholder section stating that the feature
+   exists, that a worked example with an MCM dataset will be added later,
+   and nothing more. This placeholder is the one sanctioned exception to
+   the "promise only what exists" rule, because the feature does exist.
 3. **Primate comparative.** Mitochondrial genomes of human, chimpanzee,
    gorilla, rhesus, and cynomolgus macaque from NCBI, for multiple
    sequence alignment and tree chapters.
@@ -343,5 +346,5 @@ where stale.
 3. The Williams project's sample names and barcode sheet may carry animal
    identifiers. Confirm they may appear in published screenshots, or name
    the samples to use.
-4. If an MCM haplotyping dataset becomes available, the genotyping
-   chapters can be extended to showcase that feature.
+4. Resolved 2026-09-06: haplotyping is out of scope for this campaign.
+   The genotyping chapters carry a labeled placeholder section for it.
