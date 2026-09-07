@@ -3112,10 +3112,10 @@ operations:
         cli_flag: --region
       - label: (the save destination)
         control: file
-        default: a file named selected-region in the project's Extractions folder
-        allowed: any folder you can write to
-        effect: Chooses where the extracted reads are written. The app asks with a standard save panel after you pick the menu item.
-        when_to_change: Change it when you want the extraction filed somewhere other than the default project location.
+        default: a bundle under alignment-read-extractions/ inside the mapping run's folder under Analyses/, or under the project root when the track has no run folder, named for the selection plus a UUID
+        allowed: not offered in the window for a track inside a project, and a save panel appears only when no project root can be found
+        effect: Chooses where the extracted reads are written. Inside a project the destination is fixed (AlignmentScientificActionCoordinator.defaultDestination), and it is not the Extractions/ folder the other extraction operations use.
+        when_to_change: Only on the command line, where --output names the file or bundle directly.
         cli_flag: --output
     cli_only:
       - flag: --by-region

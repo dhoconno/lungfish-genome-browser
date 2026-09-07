@@ -43,7 +43,13 @@ A project is a `.lungfish` folder. Inside it, imported reads sit under
 `Imports/`, downloaded reference records under `Downloads/` (reads fetched
 from SRA or ENA are fetched from the Database Browser, **Tools > Search Online Databases > Search SRA...**, and land under `Imports/` as
 `.lungfishfastq` bundles, settled by a live download on 2026-09-06), reference bundles under
-`Reference Sequences/`, extractions under `Extractions/`, and analysis
+`Reference Sequences/`, extractions under `Extractions/` (with one
+exception settled 2026-09-07 at the chapter 23 review: Extract Reads in
+Selected Region from the alignment track writes its bundle to an
+`alignment-read-extractions/` folder inside the mapping run's own folder
+under `Analyses/`, or under the project root when the track has no run
+folder, with no save panel, per
+`AlignmentScientificActionCoordinator.defaultDestination`), and analysis
 results under `Analyses/`. Two shapes live there. A run by a named tool
 (a classifier, a mapper, an assembler, ONT genotyping, Viral Recon) gets
 its own subfolder `Analyses/<tool>-<timestamp>/`
