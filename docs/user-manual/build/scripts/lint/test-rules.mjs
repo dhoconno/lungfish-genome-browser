@@ -119,3 +119,15 @@ test("sentence-colon flags joiner colons and allows lead-in colons", async () =>
   const reasons = messages.map((m) => m.reason).join("\n");
   assert.equal((reasons.match(/colon inside a sentence/g) || []).length, 2);
 });
+
+test("ai-tells flags listed words, inflections, and sentence patterns, but not quoted labels or code", async () => {
+  const messages = await lint("bad-ai-tells.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /overused word 'delve'/i);
+  assert.match(reasons, /overused word 'seamlessly'/i);
+  assert.match(reasons, /overused word 'navigating'/i);
+  assert.match(reasons, /pattern "It's not X, it's Y"/);
+  assert.match(reasons, /pattern "No X\. No Y\. Just Z"/);
+  assert.doesNotMatch(reasons, /overused word 'Navigate'/);
+  assert.doesNotMatch(reasons, /overused word 'tap'/);
+});

@@ -1,0 +1,169 @@
+# Source: contentbeta.com list of words overused by AI, retrieved 2026-09-06.
+# One entry per line. Matched whole-word, case-insensitive, common suffixes tolerated.
+# Lines starting with # are comments.
+arena
+arsenal
+bombard
+bloated
+boosts
+brain dump
+break the bank
+breeze
+buzz
+cadence
+captivate
+catapult
+chaos into clarity
+comes to the rescue
+compelling
+cornerstone
+convey
+craft
+crafting
+critical
+crucial
+cutting edge
+deep dive
+delve
+despair
+digital age
+digital world
+dive
+diverge
+diving
+drowning
+elephant in the room
+elevate
+embark
+employ
+engage
+engaging
+enhance
+entrusting
+ever wondered
+eye roll
+fast-paced
+fast paced world
+fantastic
+falls flat
+fluff
+formidable
+foster
+game changer
+gaslights
+grabs people's attention
+hard truth
+harness
+here's the deal
+here's the truth
+hiccups
+hits different
+hits home
+hits a wall
+honest text
+hone
+imaginative
+in a world
+in conclusion
+in the era of
+in today's era
+in today's modern age
+in today's world
+in the world of
+incorporating
+is all about
+it is like
+juggling
+kicker
+lands well
+let's dive in
+magic
+marvelous
+messaging is landing
+mind blowing
+miss the mark
+moves the needle
+navigate
+nail
+nailing down
+necessitating
+nimble
+nugget
+nutshell
+paramount
+perfect storm
+picture this
+powerful tool
+punchline
+quiet acceptance
+raves
+real deal
+resonate
+resonates
+revolutionize
+roll your eyes
+scrappy
+scroll stopper
+sea of
+secret sauce
+secret weapon
+saves the day
+sifting
+skyrocket
+sneak peek
+stall
+stay tuned
+stellar
+supercharge
+surge
+scream into the void
+tailor
+tailored
+tackle
+tap
+tightrope
+trailblazer
+turbocharge
+uncover
+unleash
+unveil
+welcome to the world
+whip
+# Widely cited additions the page lists under other headings or that the
+# user named directly (README review, 2026-09-06).
+seamless
+seamlessly
+robust
+leverage
+streamline
+delve into
+tapestry
+testament
+landscape
+journey
+game-changing
+groundbreaking
+ever-evolving
+# Step 2 reconcile with the live page (2026-09-06): the B-section entries
+# between "boosts" and "brain dump" were missing on first capture. Added
+# below verbatim except two exclusions:
+# exclusions: "void" omitted (legal usage, e.g. "null and void", is common
+# and unavoidable in this manual); "capture" omitted (the manual's own
+# screenshot vocabulary, e.g. "capture a screenshot").
+content is landing
+determining
+didn't land
+gold
+# "bear" omitted from the reconcile add: the only hit in this manual is
+# "load-bearing" (an engineering idiom for "essential", unrelated to the
+# source page's sense of the word), so it would be a false positive here.
+# Step 8 baseline exclusions (2026-09-06): each of these is an unavoidable
+# term of art in this manual, confirmed against the baseline hits below.
+# "wedge": the literal name of a sunburst-chart slice in the classification
+# viewport (docs/user-manual/chapters/06-classification/*.md).
+# "unlock"/"unlocking": the literal CLI subcommand `lungfish project unlock`
+# (docs/user-manual/chapters/appendices/{cli-reference,shared-projects}.md).
+# "realm": the ICTV taxonomic rank above Kingdom (Riboviria is a realm),
+# not AI-tell filler (docs/user-manual/chapters/06-classification/02-running-kraken2.md).
+# "comprehensive": only occurs in the product name "Twist Comprehensive
+# Viral Research Panel" (docs/user-manual/chapters/01-foundations/03-amplicon-vs-shotgun.md).

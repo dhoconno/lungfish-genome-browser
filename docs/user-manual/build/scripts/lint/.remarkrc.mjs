@@ -10,6 +10,7 @@ import emDash from "./rules/em-dash.js";
 import bulletCap from "./rules/bullet-cap.js";
 import semicolon from "./rules/semicolon.js";
 import sentenceColon from "./rules/sentence-colon.js";
+import aiTells from "./rules/ai-tells.js";
 
 export default {
   plugins: [
@@ -25,5 +26,6 @@ export default {
     bulletCap,
     semicolon,
     sentenceColon,
+    aiTells,
   ],
 };
