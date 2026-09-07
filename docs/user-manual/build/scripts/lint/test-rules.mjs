@@ -113,3 +113,9 @@ test("semicolon flags semicolons in prose but not in code", async () => {
   assert.match(reasons, /semicolon in prose/);
   assert.equal((reasons.match(/semicolon in prose/g) || []).length, 2);
 });
+
+test("sentence-colon flags joiner colons and allows lead-in colons", async () => {
+  const messages = await lint("bad-sentence-colon.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.equal((reasons.match(/colon inside a sentence/g) || []).length, 2);
+});

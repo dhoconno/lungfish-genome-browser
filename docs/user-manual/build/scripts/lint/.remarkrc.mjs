@@ -9,6 +9,7 @@ import dataViz from "./rules/data-viz.js";
 import emDash from "./rules/em-dash.js";
 import bulletCap from "./rules/bullet-cap.js";
 import semicolon from "./rules/semicolon.js";
+import sentenceColon from "./rules/sentence-colon.js";
 
 export default {
   plugins: [
@@ -23,5 +24,6 @@ export default {
     emDash,
     bulletCap,
     semicolon,
+    sentenceColon,
   ],
 };
