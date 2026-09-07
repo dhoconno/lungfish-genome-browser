@@ -3781,7 +3781,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 55 | 09-genotyping/03-reading-the-genotype-comparison | Reading the Genotype Comparison | [] | Williams project | existing (add to nav) | done |
 | 56 | 09-genotyping/04-haplotype-definitions-and-export | Exporting Genotypes | [genotype.export] | Williams project | existing (retitled, add to nav) | done |
 | 57 | appendices/cli-reference | CLI Reference | [] | cli-help dumps | existing | queued |
-| 58 | appendices/06-running-in-ci | Running in CI | [] | none | existing | queued |
+| 58 | appendices/06-running-in-ci | Running in CI | [] | none | existing | done |
 | 59 | appendices/ai-assistant | AI Assistant | [] | demo project | existing (add to nav) | done |
 | 60 | appendices/bibliography | Bibliography | [] | none | existing | queued |
 | 61 | appendices/file-formats | File Formats | [] | none | existing | queued |

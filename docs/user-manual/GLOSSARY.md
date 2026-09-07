@@ -110,7 +110,11 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Checksum**{#checksum}. A short fingerprint computed from a file's exact bytes, recorded by Lungfish as SHA-256 in every provenance record so two people can confirm they hold the identical file. See also: provenance, reproducibility.
 
+**Checkout**{#checkout}. The step at the start of a continuous integration job that copies a repository's tracked files onto the runner, written on GitHub Actions as `uses: actions/checkout@v4` and on CircleCI as the bare step `checkout`, without which the job has no files to work on. See also: repository, runner, continuous integration.
+
 **Capped database**{#capped-database}. A reference database deliberately shrunk to a target memory size by discarding most of its stored sequence fragments, so a machine too small to hold the full collection can still run the classifier against it. The cost falls on sensitivity, since a read the full collection would have named at species level is more often left unclassified or reported at a broader rank, and the loss is heaviest for whichever organism the sample is actually full of. See also: Kraken 2, minimizer, read classification.
+
+**Cache**{#cache}. A copy of a folder a continuous integration service keeps between jobs so the next job can restore it instead of downloading everything again, which is how a job that provisions bioinformatics tools avoids repeating a long install on every run. See also: continuous integration, offline pack, plugin pack.
 
 **CIGAR**{#cigar}. A compact string in each BAM row that describes, base by base, how the read aligns to the reference: `M` for aligned positions, `I` and `D` for insertions and deletions, `S` for soft-clipped ends, and `H` for hard-clipped ends. See also: BAM, soft-clip.
 
@@ -266,6 +270,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Gap**{#gap}. The `-` character an aligner writes into one row of a multiple sequence alignment at a column where that sequence has no residue, standing for an insertion in the other sequences or a deletion in this one, and letting rows of unequal length share a rectangular grid. See also: alignment column, MSA.
 
+**Glob**{#glob}. A file-name pattern in which `*` stands for any run of characters, so a step that searches for `*.lungfish-provenance.json` matches every file whose name ends that way, used by continuous integration steps that collect artifacts. See also: continuous integration, provenance sidecar.
+
 **GC content**{#gc-content}. The percentage of bases in a sequence or a read set that are G or C rather than A or T, reported by Lungfish as one of the nine FASTQ summary cards, and a property of the source organism rather than of the sequencing run, so a figure far from the expected value usually means another species is present. See also: read, quality control.
 
 **GenBank (sequence format)**{#genbank}. NCBI's annotated flat-file sequence format, carrying the bases together with feature annotations and curator notes in one record, recognized by the extensions `.gb`, `.gbk`, `.genbank`, and `.gbff`. Lungfish Genome Explorer converts an imported GenBank record into a FASTA plus a GFF3 annotation track, keeping the original record in a database inside the bundle. See also: FASTA, GFF, EMBL, reference bundle.
@@ -406,6 +412,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Managed environment**{#managed-environment}. The private folder conda builds for one tool under `~/.lungfish/conda`, holding that tool and the libraries it depends on, so two tools needing different versions of the same library never collide, with the Plugin Manager's Installed tab listing one row per managed environment. See also: conda, plugin pack.
 
+**Manifest**{#manifest}. The small structured text file at the top of a Lungfish Genome Explorer bundle that names what the bundle holds, so a primer scheme's `manifest.json` names the protocol, the reference accessions its coordinates were written against, and the primer and amplicon counts, and a program reads it instead of guessing from the folder's contents. See also: bundle, primer scheme, JSON.
+
 **Mapping preset**{#mapping-preset}. A named bundle of mapper settings tuned for one kind of input, chosen alongside the mapper itself, where minimap2 offers `sr` for short reads, `map-ont`, `map-hifi`, and `map-pb` for long reads, `asm5` for assembled contigs, and `splice` for spliced alignment, while BBMap offers a standard and a PacBio mode. See also: mapper, mapping.
 
 **MAPQ (mapping quality)**{#mapq}. A per-read confidence score in each BAM row, encoding how unambiguously the mapper placed the read at the recorded position; 0 means no confidence (the read fits multiple places equally well), 60 is the maximum for most mappers and means the placement is well above the second-best alternative. See also: BAM, mapper.
@@ -508,6 +516,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Pathoplexus**{#pathoplexus}. An open pathogen-genome database Lungfish can search and import reference sequences from.
 
+**PATH**{#path}. The list of folders a shell searches, in order, when you type a program's name without a folder, so a program installed outside those folders can only be run by typing its full path. Lungfish Genome Explorer releases add nothing to it, which is why `lungfish-cli` must be called by its full path in a script. See also: shell, command-line flag, continuous integration.
+
 **pbAA**{#pbaa}. A read-clustering tool that derives high-accuracy amplicon consensus sequences, one of the clustering options for full-length ONT MHC genotyping. See also: clustering, savONT.
 
 **p-distance**{#p-distance}. The simplest genetic distance between two aligned sequences: the proportion of positions at which they differ, with no model correction. One of the distance models Lungfish's `msa distance` can compute. See also: MSA.
@@ -526,6 +536,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Pileup**{#pileup}. The column of bases observed at one reference position across every read that covers it, together with their qualities and strands; the unit of evidence a variant caller weighs at each position. See also: coverage, variant-caller.
 
+**Pinned**{#pinned}. Locked to one exact version rather than left to take whatever the latest release happens to be, which is what Lungfish Genome Explorer does for every managed tool, every plugin pack tool, every external pipeline, and every reference database except the NCBI taxonomy. See also: dependency set, tool lock manifest, reproducibility.
+
 **Pivot workbook**{#pivot-workbook}. An Excel workbook whose main sheet lays samples across the columns and allele targets down the rows, the transpose of the sample-by-locus matrix, which is the orientation most downstream genotyping spreadsheets expect and the shape the Filtered Pivot export writes. See also: XLSX, genotype matrix, long format.
 
 **Ploidy**{#ploidy}. The number of copies of each chromosome an organism carries, which is two for a human and one for a virus or a bacterium, and which decides what genotypes a caller is allowed to propose at a position. A caller assuming two copies will force a viral sample into `0/1` and `1/1` genotypes that mean nothing, which is why a haploid genome is usually called with an explicit ploidy setting. See also: genotype, heterozygous, variant-caller.
@@ -538,7 +550,11 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Primary alignment**{#primary-alignment}. The one record a mapper designates as a read's real placement, so counting primary alignments counts reads rather than records and gives a total that matches the input FASTQ even when the mapper also emitted secondary or supplementary rows for the same reads. See also: secondary alignment, supplementary alignment, flagstat.
 
+**Preprint**{#preprint}. An article posted to a public server such as bioRxiv before it has been through peer review, which is a legitimate citation for a tool whose paper never reached a journal, though some journals restrict how a preprint may be cited. See also: citation, DOI.
+
 **Primer**{#primer}. A short oligonucleotide, typically 18 to 30 bases, that binds a specific position on a target genome and primes DNA synthesis from that position; the building block of every amplicon protocol. See also: amplicon, primer scheme.
+
+**Primer pool**{#primer-pool}. The numbered PCR reaction one primer belongs to, recorded in column 5 of a primer scheme's BED file, which a tiling design alternates between 1 and 2 so that overlapping neighbouring amplicons are amplified in separate tubes and cannot compete for the same template. See also: primer scheme, tiling, amplicon.
 
 **Primer scheme**{#primer-scheme}. The set of primer coordinate pairs that define an amplicon protocol, listing where each forward and reverse primer binds on the reference. In Lungfish, a primer scheme is packaged as a `.lungfishprimers` bundle that carries the BED coordinates, a manifest naming the protocol and the reference accessions it was designed against, an optional FASTA of the primer sequences, and provenance. See also: primer, BED, primer trim.
 
@@ -555,6 +571,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Provenance sidecar**{#provenance-sidecar}. The JSON file Lungfish writes alongside every output (or into a bundle's `provenance/` subdirectory), recording the workflow name, resolved command, input and output checksums, runtime identity, and per-step exit status for one operation. See also: provenance, methods export.
 
 **Provider fallback**{#provider-fallback}. The rule by which Lungfish Genome Explorer tries the next configured AI provider when the one before it cannot answer, working through your chosen default first and then Anthropic, OpenAI, and Google Gemini with the default removed. A provider with an empty key field is skipped before any request is made, and a question that fails partway may already have reached one company before the next receives it. See also: AI assistant, API key.
+
+**Push**{#push}. Sending saved changes from your own copy of a repository up to the shared copy everyone works from, which is the event a continuous integration service watches for when it decides to start a job. See also: repository, continuous integration, runner.
 
 ## Q
 
@@ -596,6 +614,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Recalibration table**{#recalibration-table}. The plain-text report GATK's `BaseRecalibrator` writes describing how far each reported base quality score sits from the error rate actually observed, broken down by read group, original score, sequence context, and cycle position, which the following `ApplyBQSR` step then reads to rewrite the quality scores in the BAM. Its first block lists every argument the run used, making it the quickest way to confirm which known-sites files were read. See also: BQSR, known sites, Phred score.
 
+**Reference manager**{#reference-manager}. A program such as Zotero, EndNote, or Paperpile that stores references and formats them into a journal's required style, which takes a software citation typed in by hand because the bibliography command prints plain text rather than an importable file. See also: citation, DOI.
+
 **Reference bundle**{#reference-bundle}. A `.lungfishref` bundle stored under a project's `Reference Sequences/` folder, containing a primary FASTA, an index, optional annotations such as GFF3 or GTF, any tracks attached to that reference (alignments, variants, classifications), and a manifest. See also: bundle, assembly bundle.
 
 **Reference genome**{#reference-genome}. A specific, community-agreed sequence used as the comparison point for samples; for SARS-CoV-2 the standard reference is `MN908947.3` (the Wuhan-Hu-1 isolate). Variants are described relative to a chosen reference, so reference choice affects which variants are reported and at what positions. See also: reference bundle.
@@ -616,6 +636,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Reproducibility**{#reproducibility}. The property that a workflow re-run with the same inputs, the same plugin pack version, and the same Lungfish build produces output that matches the original by checksum (bit-identical) or by content (logically equivalent); the provenance sidecar carries every field needed to verify this. See also: provenance sidecar.
 
+**Repository**{#repository}. The folder of files a version-control system tracks, holding the project's code together with the history of every change made to it, and the unit a continuous integration service checks out onto a runner. See also: push, checkout, continuous integration.
+
 **Retained read**{#retained-read}. In an MHC genotyping run, a read whose alignment spanned an allele target from its first base to its last with no substitutions, indels aside, and which therefore counts towards that allele target's support; reads failing any part of that test are discarded rather than counted weakly, so the retained fraction of a run is far smaller than a mapping workflow would report. See also: allele target, genotype matrix, bbmerge.
 
 **Reverse complement**{#reverse-complement}. The sequence read from the opposite DNA strand, obtained by reading the bases backwards and swapping each for its pairing partner (A for T, C for G), so reading frames -1, -2, and -3 are the three frames counted along it and Lungfish runs the transformation from **Sequence > Reverse Complement...**. See also: strand, reading frame.
@@ -634,9 +656,13 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Run record**{#run-record}. The provenance a single Lungfish operation left behind, read in the Inspector's Provenance section as seven blocks (Run Summary, Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON) and stored on disk as one provenance sidecar. See also: provenance sidecar, workflow lineage.
 
+**Runner**{#runner}. The machine a continuous integration service creates to run one job, rented from the service rather than owned by you, chosen by a label such as `macos-26` on GitHub Actions or by an image name on other services, and discarded when the job finishes. See also: continuous integration, checkout, cache.
+
 ## S
 
 **SAM (Sequence Alignment Map)**{#sam}. The plain-text alignment format holding one row per aligned read, of which BAM is the compressed binary equivalent. Lungfish Genome Explorer reads and writes SAM, but its mapping pipeline never leaves one behind, sorting and indexing every alignment into a BAM and deleting the intermediate text file. See also: BAM, CRAM, BAI.
+
+**Shell**{#shell}. The program that reads what you type at a terminal prompt and runs it, holding the `PATH` it searches for programs and the environment variables it hands to each one it starts. See also: PATH, environment variable, exit status.
 
 **Sample metadata**{#sample-metadata}. Structured per-sample fields (collection date, source, and so on) imported from a CSV or TSV sheet and attached to samples in a project. See also: BioSample.
 
@@ -708,6 +734,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Substitution model**{#substitution-model}. The set of assumed rates at which one base or residue changes into another, which a maximum-likelihood method needs before it can score a tree; IQ-TREE's default `MFP` setting is an instruction to test many models and use the best-fitting one rather than a model itself. See also: maximum likelihood, IQ-TREE.
 
+**Switch**{#switch}. A command-line flag that carries no value after it, so it is either typed or left out and never takes a word of its own, as `--compress` and `--force` do on the Lungfish Genome Explorer commands that accept them. See also: command-line flag, subcommand.
+
 **Supplementary alignment**{#supplementary-alignment}. A secondary record for a read that maps in pieces (split-read or chimeric alignment), with the full read mapped at the primary position and supplementary records covering the other pieces; flag bit 2048 marks supplementary alignments. See also: BAM, FLAG.
 
 **Support value**{#support-value}. A number annotated at an internal node of a phylogenetic tree giving the percentage of bootstrap or replicate trees that recovered that exact split; values above 95 indicate a well-supported clade and values below 70 should not be relied on. See also: IQ-TREE, phylogram.
@@ -735,6 +763,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Tiling**{#tiling}. An amplicon design in which many primer pairs produce overlapping amplicons laid end to end, so that together they cover a whole region of interest rather than one locus. See also: amplicon, primer scheme.
 
 **Tip**{#tip}. The end point of a branch on a phylogenetic tree, standing for one of the sequences that went in, so five aligned sequences give five tips and a missing tip means an input was dropped. See also: internal node, clade, topology.
+
+**Tool lock manifest**{#tool-lock-manifest}. The file inside Lungfish Genome Explorer that records the exact version, license, and source of every tool one release installs, which is where the version numbers in the Tool Bibliography and Tool Versions appendices both come from and which governs when the two disagree. See also: dependency set, pinned, plugin pack.
 
 **Topology**{#topology}. The branching pattern of a phylogenetic tree, meaning which tips group with which and in what order, considered apart from the branch lengths; it is the tree's main claim and the part a support value measures confidence in. See also: tip, internal node, support value, branch length.
 
@@ -787,3 +817,5 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## X
 
 **XLSX**{#xlsx}. The Excel workbook format, a zipped folder of XML sheets that every spreadsheet application reads, and the format of both workbooks a genotype export writes, the sample-by-locus matrix workbook and the samples-across pivot workbook. See also: pivot workbook, CSV, genotype result bundle.
+
+**YAML**{#yaml}. A plain text format that records settings as indented `key: value` lines, where the indentation shows which setting belongs inside which, used by every continuous integration service for the file that describes a job. See also: continuous integration, JSON.
