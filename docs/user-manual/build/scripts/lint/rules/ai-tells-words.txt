@@ -151,7 +151,7 @@ ever-evolving
 # and unavoidable in this manual); "capture" omitted (the manual's own
 # screenshot vocabulary, e.g. "capture a screenshot").
 content is landing
-determining
+determine
 didn't land
 gold
 # "bear" omitted from the reconcile add: the only hit in this manual is

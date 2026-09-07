@@ -130,4 +130,5 @@ test("ai-tells flags listed words, inflections, and sentence patterns, but not q
   assert.match(reasons, /pattern "No X\. No Y\. Just Z"/);
   assert.doesNotMatch(reasons, /overused word 'Navigate'/);
   assert.doesNotMatch(reasons, /overused word 'tap'/);
+  assert.equal((reasons.match(/overused word 'navigat/gi) || []).length, 1);
 });

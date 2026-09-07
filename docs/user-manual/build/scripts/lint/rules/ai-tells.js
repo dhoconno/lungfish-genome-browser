@@ -51,7 +51,8 @@ const PATTERNS = [
   { name: `"The result? Y."`, re: /\bthe (result|outcome|fix|answer)\? /i },
 ];
 
-const QUOTED = /"[^"\n]{1,80}"/g;
+// Exempts quoted labels in either straight ("...") or curly ("..." / U+201C…U+201D) quotes.
+const QUOTED = /["“][^"“”\n]{1,80}["”]/g;
 
 export default function aiTells() {
   return (tree, file) => {

@@ -19,3 +19,5 @@ Let us delve into reads. The app works seamlessly. You start by navigating to th
 It's not about speed, it's about accuracy. No theory. No fluff. Just execution.
 
 Click "Navigate" in the toolbar. Run `tap` to test.
+
+Click “Navigate” again.
