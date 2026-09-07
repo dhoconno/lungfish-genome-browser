@@ -196,6 +196,21 @@ HG002 chromosome 20 HaplotypeCaller VCF holds 844 SNVs and 182 indels of
 1,026 rows, and a bcftools tally that reads 843 and 184 is explained in one
 sentence rather than adopted.
 
+## Assembly rulings (settled by the chapter 46 and 47 reviews)
+
+MEGAHIT 1.2.9 fails most runs on Apple Silicon in this release with both
+shipped workarounds active (five reruns, four failures at different k
+values). Every chapter that offers MEGAHIT carries the same caution in one
+paragraph: it fails most runs, the failure is a nonzero exit in the
+Operations panel with no contigs written, a run that completes is correct,
+and rerunning is the only workaround. No chapter says the two-thread cap
+fixes it. SPAdes on the human-mito fixture is quoted at the fixture's
+committed 13.7 seconds, with the 110.7 second run under load named once
+to show runtime is not a check. Align with MAFFT is absent from the
+assembly contig context menu rather than greyed out. A contig extraction's
+derived bundle lands in `Reference Sequences/` as `<assembly>-subset`,
+a second exception to the Extractions rule.
+
 The command-line section of every procedure chapter opens with chapter 33's
 fixed paragraph. "This section is optional. If you do your work in the LGE
 window, everything above is complete without it, and nothing here unlocks a

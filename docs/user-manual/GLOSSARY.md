@@ -582,6 +582,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Smart-filter token**{#smart-filter-token}. One of the named filter chips revealed by the Presets button above the Variants tab, such as PASS, SNV, or DP >= 10, that applies a common variant filter with a single click and appears only when the loaded track carries the field it needs. See also: filter profile, FILTER.
 
+**Snakemake**{#snakemake}. A workflow language and runner in which an analysis is written as a set of rules, each naming its input files, its output files, and the command that turns one into the other, so the runner works out the order for itself, pinned by Lungfish Genome Explorer at version 9.25.2 and emitted as a `Snakefile` by the Snakemake Workflow provenance export. See also: Nextflow, provenance sidecar, container.
+
 **SNV (single-nucleotide variant)**{#snv}. A variant in which one reference base is read as one different base, written in a VCF as a REF and an ALT that are each a single character, and the commonest kind of difference between any two genomes. See also: indel, REF and ALT, VCF.
 
 **Soft-clip**{#soft-clip}. A flag in a BAM record (the `S` letter in a CIGAR string) marking bases at the start or end of a read that are present in the record but excluded from pileup, coverage, and variant calling; primer trimming works by soft-clipping primer-derived bases rather than deleting them. In 12S amplicon matching the word names the same shape of thing without a BAM, the read's own bases hanging past each end of the matched reference stretch, which the Min Soft Clip setting counts to reject reads that only graze the target instead of containing it. See also: primer trim, CIGAR, 12S.
