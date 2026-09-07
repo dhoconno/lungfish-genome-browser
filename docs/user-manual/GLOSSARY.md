@@ -238,9 +238,11 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **GenotypeGVCFs**{#genotypegvcfs}. The GATK tool that turns combined per-sample GVCF evidence into finished genotype calls, deciding at each position which alleles each sample carries and how confident that call is, and the second and final step of every joint-genotyping run Lungfish Genome Explorer builds. See also: GVCF, joint genotyping, CombineGVCFs, GenomicsDB.
 
-**Genotype matrix**{#genotype-matrix}. The Lungfish dashboard that presents genotype calls as allele-target rows by sample columns, with a haplotype tape, cohort summary, and per-sample evidence; it is not one of the five genomic viewport classes. See also: haplotype, cohort.
+**Genotype matrix**{#genotype-matrix}. The Lungfish Genome Explorer result window that presents genotype calls as allele-target rows by sample columns, alongside a cohort summary and per-sample evidence, and it is not one of the five genomic viewport classes. See also: allele target, cohort, retained read.
 
 **Genotype quality**{#genotype-quality}. The confidence a variant caller reports in the genotype it chose at one position, written as the per-sample `GQ` field on a Phred scale where 20 means a one in a hundred chance the chosen genotype is wrong and 99 is the usual ceiling, so it answers a different question from QUAL, which asks only whether any variant exists there. See also: genotype, FORMAT, Phred score.
+
+**Genotype result bundle**{#genotype-result-bundle}. The folder an MHC genotyping run writes, carrying the `.lungfishgenotype` extension and holding the per-sample and per-allele read counts as CSV tables, an Excel workbook of the same figures, the run statistics, a sorted and indexed BAM of just the retained reads, and a provenance record of exactly how it was made. See also: retained read, genotype matrix, provenance.
 
 **Germline variant**{#germline}. A difference from the reference genome that a person inherited from their parents and therefore carries in every cell of their body, as opposed to a somatic variant that arose in one tissue during their lifetime, which is why a germline caller may assume every position carries the same fixed number of genome copies. See also: variant-caller, ploidy, genotype.
 
@@ -381,6 +383,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Minimizer**{#minimizer}. The smallest k-mer within a sliding window of a sequence, picked as a compact fingerprint so a tool can match reads quickly without comparing every base; Kraken2 classifies on minimizers and Deacon counts minimizer hits to flag host reads. See also: Kraken2, Deacon.
 
 **MinKNOW**{#minknow}. The control software that runs an Oxford Nanopore sequencer, calls bases as the run proceeds, and writes the reads out as numbered FASTQ chunks under a `fastq_pass` folder, placing each barcode's reads in its own subfolder when the library was barcoded. See also: basecaller, barcode, unclassified reads.
+
+**MiSeq**{#miseq}. A benchtop Illumina sequencing instrument that reads each DNA fragment from both ends at up to about 250 bases per end, the usual platform for a short-amplicon MHC genotyping panel, and the reason such a run merges its read pairs before mapping so that amplicons longer than one read can still be spanned end to end. See also: paired-end, read merging, amplicon.
 
 **mosdepth**{#mosdepth}. A fast coverage-depth calculator that reports how many reads sit over each position of a genome, run inside the nf-core/viralrecon pipeline to produce both a whole-genome depth table and a per-amplicon one, the second of which is what reveals amplicon dropout. See also: coverage, depth, amplicon dropout.
 
@@ -597,6 +601,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Singleton read**{#singleton-read}. A read from a paired-end run whose mate is no longer present in the file, usually because an upstream filtering step discarded one member of the pair, and which a repair operation sets aside as unpaired rather than discarding. See also: paired-end, interleaved FASTQ.
 
 **Sliding-window trimming**{#sliding-window-trimming}. A quality-trimming method that averages the quality scores of a small run of neighbouring bases and cuts the read where that average first falls below a threshold, so a single miscalled base does not truncate an otherwise good read. See also: fastp, Phred score.
+
+**Smart cohort**{#smart-cohort}. A named, saved filter over the samples of a genotype result, stored inside the result bundle so it can be reapplied later, seeded with four defaults on a run that carried haplotype analysis and with none on a genotype-only run. See also: cohort, genotype matrix.
 
 **Smart-filter token**{#smart-filter-token}. One of the named filter chips revealed by the Presets button above the Variants tab, such as PASS, SNV, or DP >= 10, that applies a common variant filter with a single click and appears only when the loaded track carries the field it needs. See also: filter profile, FILTER.
 
