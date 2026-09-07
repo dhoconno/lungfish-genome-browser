@@ -185,7 +185,7 @@ Every extraction carries its coordinates in its own header line, which is what l
 >NG_000007:70544-72152 [NG_000007:70544-72152] [1608 bp]
 ```
 
-![An annotated breakdown of an extraction FASTA header showing its region name, coordinate token, and length token](../../assets/illustrations-imagegen/02-sequences/03-extracting-and-comparing/extraction-header-anatomy.png)
+<!-- ILLUSTRATION: extraction-header-anatomy -->
 
 Three parts sit on that line. The leading token names the region. The bracketed coordinate token repeats it in `chrom:start-end` form. The bracketed length token reports how many bases came out, here 1608, which matches 72152 minus 70545 plus 1.
 

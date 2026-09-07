@@ -61,7 +61,7 @@ This chapter uses the HG002 long reads. Download the folder `ont-run` from the m
 
 https://github.com/dhoconno/lungfish-genome-explorer/tree/main/docs/user-manual/fixtures/hg002-long-reads
 
-and remember where you saved it. GitHub offers no way to download a folder, so you download the one file it holds and rebuild the folders around it by hand. On the GitHub page, click into each folder in turn, then click the filename and the Download raw file button. Then make three nested folders on your disk, an outer `ont-run`, a `fastq_pass` inside it, and a `barcode01` inside that, and put the downloaded file in the innermost one so that the path reads
+and remember where you saved it. GitHub offers no download for a single folder, so open the repository's front page at https://github.com/dhoconno/lungfish-genome-explorer, click the green **Code** button, choose **Download ZIP**, double-click the downloaded file to unpack it, and find the folder inside it under `docs/user-manual/fixtures/`. The `ont-run` folder sits inside `hg002-long-reads`, already carrying the nested folders the importer needs, so the path reads
 
 ```
 ont-run/fastq_pass/barcode01/HG002_chrM_pass_barcode01_0.fastq.gz

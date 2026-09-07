@@ -165,7 +165,7 @@ The `logs/` folder holds `stdout.log` and `stderr.log`. The Nextflow example's `
 
 `replayIdentity` inside the manifest is the section of that JSON file that makes Run Again possible. It records a SHA-256 checksum and byte size for every file in the package, so a repeat run can confirm it is running the same pipeline rather than an edited copy. SHA-256 is simply the kind of checksum LGE uses everywhere, and there is no choice to make about it. For the Nextflow example that is four files, `README.md`, `environment.yml`, `main.nf`, and `manifest.json`, alongside a copy of the package manifest itself.
 
-The `provenance/` folder holds the provenance record for the bundle. LGE signs that record when a signer is configured and leaves it unsigned otherwise, and signing is off by default and covered elsewhere in this manual. Separately, and this is the part that matters most, each path you named with `--expected-output` receives its own `.lungfish-provenance.json` sidecar written beside it once the run succeeds. That sidecar carries the full `argv` LGE invoked, the `exitStatus`, start and end times, and a `files` list giving every input and output a role and a SHA-256 checksum.
+The `provenance/` folder holds the provenance record for the bundle. LGE signs that record when a signer is configured and leaves it unsigned otherwise, and signing is off by default and covered elsewhere in this manual. Separately, and this is the part that matters most, each path you named with `--expected-output` receives its own `.lungfish-provenance.json` sidecar once the run succeeds, written beside the output when it is a plain file and inside it at the bundle root when the output is a bundle, as both examples here are. That sidecar carries the full `argv` LGE invoked, the `exitStatus`, start and end times, and a `files` list giving every input and output a role and a SHA-256 checksum.
 
 ## What good looks like
 
@@ -173,7 +173,7 @@ A run can finish without producing the files you wanted, so four checks separate
 
 The exit status is the first and the quickest. In the window, the Operations panel row's status column should read **Completed**. On the command line, `manifest.json` should carry `"executionStatus": "completed"` and `"exitCode": 0`, and the command itself should have exited zero. Partial files can look usable when they are not, so a nonzero exit with output files present is worse than no output at all.
 
-The declared outputs should exist and carry sidecars. Look for the paths you named with `--expected-output` and confirm each has a `.lungfish-provenance.json` beside it. An output that exists without a sidecar means the run did not reach the provenance step. An output that is missing entirely, with the run reporting success, means the workflow never wrote what you declared, since naming an output does not create it.
+The declared outputs should exist and carry sidecars. Look for the paths you named with `--expected-output` and confirm each has a `.lungfish-provenance.json`, at the bundle root for a bundle output and beside the file otherwise. An output that exists without a sidecar means the run did not reach the provenance step. An output that is missing entirely, with the run reporting success, means the workflow never wrote what you declared, since naming an output does not create it.
 
 The logs should end the way a successful engine ends them. A Nextflow run's `stdout.log` ending in `failed=0` is the signal, and any process reported as failed is the thing to read next in `stderr.log`.
 

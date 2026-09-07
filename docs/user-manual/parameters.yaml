@@ -4020,43 +4020,103 @@ operations:
     cli_only:
       - flag: --execute
         default: "false"
-        effect: Runs the tool through the managed gatk-core environment and writes a provenance record naming the files it produced. Every subcommand accepts it, and without it the command is only constructed.
+        effect: Runs the composed command through the managed gatk-core environment and writes a provenance record naming the files it produced. Every subcommand accepts it, and without it the command is only printed.
       - flag: --dry-run
         default: "false"
-        effect: Prints the command preview and stops. Every subcommand accepts it.
+        effect: Prints the composed command and runs nothing, overriding --execute whenever both are given. Every subcommand accepts it, and on its own it changes nothing because not executing is already the default.
       - flag: --extra-args
         default: none
-        effect: Adds your own arguments to the constructed command. Every subcommand accepts it.
+        effect: Appends your own arguments to the end of the composed command. Every subcommand accepts it. On joint-genotype the arguments land only on the GenotypeGVCFs step, never on the combine or import step.
+      - flag: --reference
+        default: none
+        effect: Names the reference FASTA the subcommand is run against, with its .fai index and .dict dictionary beside it. Required for haplotype-caller, joint-genotype, leftalign, and bqsr.
+      - flag: --output
+        default: none
+        effect: Names the file the subcommand writes. Required by every subcommand that produces one.
       - flag: haplotype-caller
         default: none
-        effect: Builds a HaplotypeCaller command that calls germline variants from one BAM, with --emit-ref-confidence, --ploidy, --intervals, --pcr-indel-model, --stand-call-conf, --max-alternate-alleles, and --pair-hmm-threads.
+        effect: Builds a HaplotypeCaller command that calls germline variants from one BAM, with --bam, --emit-ref-confidence, --ploidy, --intervals, --pcr-indel-model, --stand-call-conf, --max-alternate-alleles, and --pair-hmm-threads.
       - flag: joint-genotype
         default: none
-        effect: Builds the commands that combine several per-sample GVCFs into one cohort VCF, with --gvcf repeated per sample, --intermediate, and --combine-strategy set to auto, combine-gvcfs, or genomicsdb.
+        effect: Builds the commands that combine several per-sample GVCFs into one cohort VCF. Takes --gvcf repeated once per sample, --intermediate, --intervals, and --combine-strategy.
+      - flag: --gvcf
+        default: none
+        effect: Names one input GVCF for joint-genotype, repeated once per sample rather than given a list. Passing none is accepted when it should be refused, so the command exits 0 and prints a CombineGVCFs line carrying no input file.
+      - flag: --intermediate
+        default: none
+        effect: Names the combined store the first joint-genotype step writes and the second reads. Required either way, a path ending .g.vcf.gz when CombineGVCFs runs and a plain folder name when GenomicsDBImport runs.
+      - flag: --combine-strategy
+        default: auto
+        effect: Chooses which GATK tool gathers the GVCFs, accepting auto, combine-gvcfs, or genomicsdb. Under auto a cohort of 50 samples or fewer uses CombineGVCFs and a larger one uses GenomicsDB. An unrecognised value is parsed leniently, falling back to auto with no warning, so a typo such as genomics-db quietly runs the automatic choice.
       - flag: filter
         default: none
-        effect: Builds a VariantFiltration command that flags calls failing a preset, with --preset set to best-practices-snp, best-practices-indel, or best-practices-both.
+        effect: Builds a VariantFiltration command that labels the FILTER column of every row failing one of its tests, leaving the row in place.
+      - flag: --preset
+        default: best-practices-both
+        effect: Chooses which published list of hard filter tests the filter applies, accepting best-practices-snp, best-practices-indel, best-practices-both, and custom. The custom value is unfinished rather than a working option. It applies no filter expressions at all, so the command copies the file and marks nothing, and there is no companion flag for supplying your own tests.
       - flag: select
         default: none
-        effect: Builds a SelectVariants command that pulls out one sample, one variant type, or one set of intervals, with --sample, --type, and --intervals.
+        effect: Builds a SelectVariants command that writes out the subset of rows you describe and discards the rest. Takes --sample, --type, and --intervals.
+      - flag: --sample
+        default: empty
+        effect: Restricts the output to the named sample's column, dropping every other sample from the file. Empty keeps all samples.
+      - flag: --type
+        default: empty
+        effect: Restricts the output to one class of variant, accepting SNP, INDEL, and MIXED. The value is parsed leniently, so an unrecognised class is not rejected and no restriction is applied. Empty keeps every class.
+      - flag: --intervals
+        default: empty
+        effect: Restricts the subcommand to the stretches of the reference named in an interval list, a BED file, a Picard-style interval list, or a bare contig name. Accepted by haplotype-caller, joint-genotype, select, and leftalign with the same meaning.
       - flag: variants-to-table
         default: none
-        effect: Builds a VariantsToTable command that flattens a VCF into a spreadsheet-friendly TSV, with --fields defaulting to CHROM,POS,REF,ALT,QUAL,AF,DP.
+        effect: Builds a VariantsToTable command that flattens a VCF into a spreadsheet-friendly TSV.
+      - flag: --fields
+        default: CHROM,POS,REF,ALT,QUAL,AF,DP
+        effect: Lists which VCF fields become columns of the table, as one comma-separated string. Spaces after commas are ignored.
       - flag: bqsr
         default: none
-        effect: Builds the BaseRecalibrator and ApplyBQSR commands that correct systematic base-quality errors, with --known-sites repeated for dbSNP and Mills, --recal-table, and --create-output-bam-index.
+        effect: Builds the BaseRecalibrator and ApplyBQSR commands that correct systematic base-quality errors, with --bam, --known-sites, --recal-table, --output, and --create-output-bam-index.
+      - flag: --known-sites
+        default: none
+        effect: Names a VCF of positions where human variation is already expected, repeated once per catalogue such as dbSNP and Mills. Its header must declare the same contig lengths as the reference or GATK stops.
+      - flag: --recal-table
+        default: none
+        effect: Names the recalibration table BaseRecalibrator writes and ApplyBQSR reads.
+      - flag: --create-output-bam-index
+        default: "true"
+        effect: Writes a .bai index beside the recalibrated BAM.
       - flag: markdup
         default: none
-        effect: Builds a Picard MarkDuplicates command, with --bam repeated per lane, --metrics, --create-index, --remove-duplicates, and --validation-stringency.
+        effect: Builds a Picard MarkDuplicates command, with --bam repeated per lane, --metrics, --create-index, --remove-duplicates, and --validation-stringency. No chapter of this manual covers it.
       - flag: validate-sam
         default: none
-        effect: Builds a Picard ValidateSamFile command that checks a BAM for format problems, with --mode set to SUMMARY or VERBOSE, --validate-index, and --ignore-warnings.
+        effect: Builds a Picard ValidateSamFile command that checks a BAM for format problems, with --mode set to SUMMARY or VERBOSE, --validate-index, and --ignore-warnings. No chapter of this manual covers it.
       - flag: leftalign
         default: none
-        effect: Builds a LeftAlignAndTrimVariants command that writes insertions and deletions in a canonical position, with --split-multi-allelics, --max-indel-length, and --max-leading-bases.
+        effect: Builds a LeftAlignAndTrimVariants command that rewrites each indel at the leftmost position it can occupy. Requires --reference, and takes --split-multi-allelics, --max-indel-length, and --max-leading-bases.
+      - flag: --split-multi-allelics
+        default: "false"
+        effect: Splits a row carrying more than one alternate allele into one row per allele. LGE writes this argument into the GATK command with an explicit true or false every time, so it appears in the preview even when the flag is left off.
+      - flag: --max-indel-length
+        default: "200"
+        effect: Sets the longest indel leftalign will attempt to realign, in bases. An indel above the limit is passed through in whatever position the caller wrote it, and nothing in the output says so.
+      - flag: --max-leading-bases
+        default: "1000"
+        effect: Sets how far to the left leftalign will shift an indel while looking for its canonical position, in bases.
       - flag: collect-metrics
         default: none
-        effect: Builds a Picard CollectVariantCallingMetrics command that summarises a call set against dbSNP, with --output-prefix, --dbsnp, --sequence-dictionary, and --gvcf-input.
+        effect: Builds a Picard CollectVariantCallingMetrics command that summarises a call set against a known-variants VCF, with --output-prefix, --dbsnp, --sequence-dictionary, and --gvcf-input.
+      - flag: --output-prefix
+        default: none
+        effect: Names the path stem the two metrics files are built from. Required, and Picard appends .variant_calling_summary_metrics and .variant_calling_detail_metrics to it.
+      - flag: --dbsnp
+        default: none
+        effect: Names the VCF of already-known variants every call is checked against. Required, and it must describe the same contigs as the calls or the step fails.
+      - flag: --sequence-dictionary
+        default: empty
+        effect: Names the .dict file describing the reference's contigs and their lengths. Optional, and Picard otherwise falls back on the dictionary embedded in the VCF headers.
+      - flag: --gvcf-input
+        default: "false"
+        effect: Tells Picard the input is a GVCF rather than an ordinary VCF, since the counting logic differs.
     notes: >-
       This whole toolchain is command line only. The GUI reaches just one of its ten
       subcommands, HaplotypeCaller, through the Call Variants dialog, and with far fewer
@@ -4064,7 +4124,12 @@ operations:
       reproducible GATK command lines by default" and that --execute is what actually
       runs anything. The gatk-core pack is marked experimental and pins GATK 4.6.2.0.
       Every subcommand takes --reference or --vcf as its main input and --output as its
-      destination, and the same three shared flags above.
+      destination, and the same three shared flags above. Two values are parsed
+      leniently rather than rejected, --combine-strategy on joint-genotype and --type on
+      select, and --preset custom is an unfinished option that applies no filter at all.
+      Three GATK options on joint-genotype are fixed and have no flag, the calling
+      confidence threshold of 30.0, -G AS_StandardAnnotation, and each step's working
+      directory.
 
   variants.phase:
     title: Phase-aware GATK plus WhatsHap plan

@@ -198,7 +198,7 @@ Right-clicking a contig row also reaches everything else you can do with one. **
 
 The action bar along the bottom holds three more actions beside BLAST Verify. **Export** writes the displayed rows out as a tab-separated file through a save panel, including whatever metadata columns are showing. The exported table carries twelve of the fourteen columns, leaving out Unique Reads and Aln Length, so a comparison of Length against Aln Length has to be made in the window rather than in the exported file. **Extract FASTQ** reaches the same extraction dialog as the right-click item. The information button at the right end, drawn as a lowercase letter i inside a circle, opens the provenance popover, which names the source directory, the importing command, and the input checksum.
 
-Use **Import Metadata…** in the [Inspector](../../GLOSSARY.md#inspector), which you open with **View > Show Inspector** (Cmd-Option-I), to attach a CSV or TSV sheet of sample metadata to the result. Each column in the sheet becomes a column you can show in the outline through the header menu. A sample with no value for a column shows a grey dash rather than dropping the column.
+Use **Import Metadata…** in the [Inspector](../../GLOSSARY.md#inspector), which you open with **View > Show Inspector** (Cmd-Opt-I), to attach a CSV or TSV sheet of sample metadata to the result. Each column in the sheet becomes a column you can show in the outline through the header menu. A sample with no value for a column shows a grey dash rather than dropping the column.
 
 ## What good looks like
 

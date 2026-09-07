@@ -72,13 +72,15 @@ That toggle is required, not optional. The **Tools > Workflow Builder (Experimen
 
 The chain calls three tools. [fastp](../../GLOSSARY.md#fastp) trims adapters and low-quality bases, [Deacon](../../GLOSSARY.md#deacon) removes reads that came from the host, and [seqkit](../../GLOSSARY.md#seqkit) filters reads by length. All three are included in the Required Setup pack that LGE installs as a unit, so there is no separate install step for them.
 
-Deacon also needs its human index, and that one you install yourself. An index is a prepared, searchable copy of a genome, built ahead of time so a program can check a read against the whole human genome in a moment rather than in an hour. The Plugin Manager's Databases tab does not list it, because that tab carries only the classifier databases, so the command line is the only route. Open the Terminal application from the Applications folder under Utilities, or by pressing Cmd-space and typing its name, and type this one line.
+Deacon also needs its human index, and that one is already there. An index is a prepared, searchable copy of a genome, built ahead of time so a program can check a read against the whole human genome in a moment rather than in an hour. It belongs to the Required Setup pack that installs with the app, so nothing is left for you to fetch.
+
+To confirm it, open the Terminal application from the Applications folder under Utilities, or by pressing Cmd-space and typing its name, and type this one line.
 
 ```bash
-lungfish-cli conda db install-managed deacon-panhuman
+lungfish-cli conda db install-managed --list
 ```
 
-The download runs once and takes a few minutes. To check whether it is already there, run `lungfish-cli conda db install-managed --list`, which prints the managed databases and marks the ones already installed. The Plugin Manager shows the same fact a second way. Open it with **Tools > Plugin Manager...** (Cmd-Shift-B) and look inside the Required Setup pack for the row named **Human Read Removal Data**, which reads **Ready** once the index is installed and **Needs download** before that.
+That prints the managed databases and marks the ones already installed, and `deacon-panhuman` is among them. The Plugin Manager shows the same fact a second way. Open it with **Tools > Plugin Manager...** (Cmd-Shift-B) and look inside the Required Setup pack for the row named **Human Read Removal Data**, which reads **Ready**. The Databases tab does not list the index, because that tab carries only the Kraken 2 catalogue.
 
 ## Procedure
 

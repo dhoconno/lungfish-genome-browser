@@ -106,7 +106,7 @@ manual without leaving the app. These rules ensure chapters retrieve well:
 3. **Glossary entries carry stable anchor IDs.** Each term in
    `GLOSSARY.md` declares an explicit `{#anchor}` ID matching its
    `glossary_refs` slug. Chapters cross-link via
-   `[amplicon](../GLOSSARY.md#amplicon)`. The app deep-links to the same
+   `[amplicon]` followed by `(../../GLOSSARY.md#amplicon)`. The app deep-links to the same
    anchor when the user asks "what's this term?"
 4. **Code blocks declare a language.** `bash` for shell, `text` only for
    actual sample output, plus content tags where useful (`vcf`, `fastq`,

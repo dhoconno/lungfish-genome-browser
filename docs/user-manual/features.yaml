@@ -1154,14 +1154,15 @@ features:
       Discovers, installs, and manages the lifecycle of Python, Rust, Swift, and
       CLI plugins that add operations, viewers, data sources, or workflows.
   ai.assistant:
-    title: AI assistant panel
+    title: AI Assistant
     entry_points:
       - "View > AI Assistant"
     inputs: [active-dataset, chat-prompt]
     outputs: [chat-response]
     viewport_class: none
     sources:
-      - Sources/LungfishApp/Views/AI/AIAssistantPanel.swift
+      - Sources/LungfishApp/Views/Inspector/InspectorView.swift
+      - Sources/LungfishApp/Views/Inspector/InspectorViewModel.swift
       - Sources/LungfishApp/Services/AI/AIAssistantService.swift
     notes: >-
       Chat panel that answers questions about the active dataset, suggests

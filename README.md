@@ -72,7 +72,7 @@ LGE runs [Kraken 2](https://github.com/DerrickWood/kraken2) with [Bracken](https
 
 ### Assembly
 
-When mapping to a reference is the wrong question, de novo assembly runs with [SPAdes](https://github.com/ablab/spades), [MEGAHIT](https://github.com/voutcn/megahit), or [SKESA](https://github.com/ncbi/SKESA) for short reads, [Flye](https://github.com/mikolmogorov/Flye) for ONT and PacBio, and [hifiasm](https://github.com/chhylp123/hifiasm) for HiFi, including its haplotype-resolved mode. The assembly view pairs a contig table and Nx plot with the ordinary sequence viewer, and selected contigs can be extracted for mapping or annotation.
+When mapping to a reference is the wrong question, de novo assembly runs with [SPAdes](https://github.com/ablab/spades), [MEGAHIT](https://github.com/voutcn/megahit), or [SKESA](https://github.com/ncbi/SKESA) for short reads, [Flye](https://github.com/mikolmogorov/Flye) for ONT and PacBio, and [hifiasm](https://github.com/chhylp123/hifiasm) for HiFi, including its haplotype-resolved mode. The assembly view pairs a contig table, a summary strip, and a detail pane with the ordinary sequence viewer, and selected contigs can be extracted for mapping or annotation.
 
 ### Sequence alignments and trees
 

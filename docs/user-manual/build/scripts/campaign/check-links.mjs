@@ -24,6 +24,8 @@ for (const f of files) {
     for (const m of line.matchAll(LINK)) {
       const target = m[1];
       if (/^(https?:|mailto:|#)/.test(target)) { if (target.startsWith("#") && !anchors.get(f).has(target.slice(1))) { console.log(`${relative(root, f)}:${i + 1} ${target}`); bad++; } continue; }
+      // The PDF is generated at build time by the with-pdf plugin (mkdocs.yml output_path), so it never exists in the source tree.
+      if (target.startsWith("pdf/")) continue;
       const [pathPart, frag] = target.split("#");
       const abs = resolve(dirname(f), pathPart);
       if (!existsSync(abs)) { console.log(`${relative(root, f)}:${i + 1} ${target}`); bad++; continue; }

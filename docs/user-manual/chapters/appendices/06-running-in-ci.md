@@ -125,14 +125,15 @@ Error: Workflow execution failed: workflow run executions require at least one
 Use --prepare-only or --dry-run for planning-only runs.
 ```
 
-That refusal exited 64, and `--quiet` did not suppress it, which is the behaviour a CI job wants. An exit status is the number a command hands back when it finishes, where zero means success and anything else means it stopped. The exit numbers this appendix relies on are collected below.
+That refusal exited 64, the workflow-error status, and `--quiet` did not suppress it, which is the behaviour a CI job wants. An exit status is the number a command hands back when it finishes, where zero means success and anything else means it stopped. The exit numbers this appendix relies on are collected below.
 
 | Exit status | What it means for a job |
 |---|---|
 | 0 | The command succeeded and the job step passes. |
+| 2 | A usage error, such as a misspelled flag or a missing argument. The step fails before any work happened. |
 | 3 | A pack id was not recognised. The step fails and nothing was installed. |
 | 10 | `tools update --plan` found pending work. The step fails, which is what makes it an assertion. |
-| 64 | A usage refusal, such as a run with no `--expected-output` or a `provenance verify` on an unsigned record. The step fails before any work happened. |
+| 64 | A workflow error, such as a run with no `--expected-output`, an empty Kraken 2 report, or a `provenance verify` on an unsigned record. The step fails. |
 
 Naming an expected output tells LGE where to look for a finished file and does not make the workflow produce one. A path that does not match where the pipeline actually writes gives a run that reports success and leaves no provenance behind. That is the quietest failure in this appendix. To find the real path, run the pipeline once at a desk with `--results-dir` set and list what appeared in that folder, then point `--expected-output` at what you found.
 

@@ -11,7 +11,7 @@ parameters_refs: [import.reference, import.annotation-track]
 entry_points:
   - File > Import Center... (Cmd-Shift-I)
   - Sequence > Go to Location... (Cmd-L)
-  - Sequence > Go to Gene... (Cmd-Option-G)
+  - Sequence > Go to Gene... (Cmd-Opt-G)
   - Sequence > Find ORFs...
   - CLI: lungfish-cli import fasta
 shots:
@@ -131,7 +131,7 @@ The [sidebar](../../GLOSSARY.md#sidebar) on the left shows the bundle inside the
 
 The viewport draws the record on one horizontal axis. Three lanes stack vertically inside that one view. They are drawing layers rather than separate labelled panes, so there is no divider to drag between them.
 
-![A sequence viewport drawn as three stacked lanes, a position ruler above a run of bases above a row of coloured feature blocks](../../assets/illustrations-imagegen/02-sequences/01-importing-and-viewing/viewport-lanes.png)
+<!-- ILLUSTRATION: viewport-lanes -->
 
 The top lane is the position ruler, the numbered strip that reports coordinates. The middle lane is the bases, which show as letters when you are zoomed in far enough to fit them and as a density rendering when you are not. Zoomed out, each pixel column covers more bases than a letter could be drawn for, so the lane becomes a run of coloured blocks, each block tinted for the base that dominates the stretch beneath it. Zoom out further still and even the blocks give way to a plain line marking where the sequence runs. Zooming back in reverses both steps and the letters return. The bottom lane is the annotations, present only when the bundle carries features, drawn as coloured blocks. The colour comes from a per-type table, so a `misc_feature` and a `mat_peptide` are different colours. One colour means one feature type, never one gene.
 
@@ -147,7 +147,7 @@ Two commands cover most movement, and both live on the **Sequence** menu.
 
 The editable position field at the left end of the ruler accepts the same input and shows the placeholder `chr:start-end`.
 
-**Sequence > Go to Gene...** (Cmd-Option-G) opens a dialog where you type a gene name, which is the faster route when you know the gene and not the coordinate. The field is free text with the placeholder `e.g., BRCA1 or TP53`, so nothing is listed for you to pick from and you have to know the name the annotation carries. Clicking a feature block in the annotation lane selects it and highlights its row in the table drawer rather than moving the view. Use **Zoom to Annotation** in its right-click menu to fit the view to the feature, and double-click the block to read its details in a popover.
+**Sequence > Go to Gene...** (Cmd-Opt-G) opens a dialog where you type a gene name, which is the faster route when you know the gene and not the coordinate. The field is free text with the placeholder `e.g., BRCA1 or TP53`, so nothing is listed for you to pick from and you have to know the name the annotation carries. Clicking a feature block in the annotation lane selects it and highlights its row in the table drawer rather than moving the view. Use **Zoom to Annotation** in its right-click menu to fit the view to the feature, and double-click the block to read its details in a popover.
 
 ### Right-click actions
 

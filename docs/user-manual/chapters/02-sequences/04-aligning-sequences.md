@@ -119,7 +119,7 @@ The MAFFT pane holds eleven settings. Five sit in plain view, and they are the f
 
 ### Viewport display controls
 
-These nine settings change what you see and never change the bundle on disk. Six of them live in the Inspector's View tab, which is the panel on the right of the project window, opened with **View > Show Inspector** (Cmd-Option-I). Those six are Numbering, the two consensus sliders named Low support and High gap, Mask, Reference, and Display. The remaining three live on the viewport itself, and they are All Sites, the colour scheme, and the name gutter.
+These nine settings change what you see and never change the bundle on disk. Six of them live in the Inspector's View tab, which is the panel on the right of the project window, opened with **View > Show Inspector** (Cmd-Opt-I). Those six are Numbering, the two consensus sliders named Low support and High gap, Mask, Reference, and Display. The remaining three live on the viewport itself, and they are All Sites, the colour scheme, and the name gutter.
 
 **All Sites / Variable Sites.** Chooses whether the viewport shows every alignment column or only the columns where the sequences disagree. The default is All Sites, which is the honest starting view because it shows the conserved stretches as well as the differences. Switch to Variable Sites on a long alignment of close relatives, where the differences would otherwise be thousands of columns apart. This setting has no command-line flag.
 
