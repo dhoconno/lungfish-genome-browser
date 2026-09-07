@@ -6425,7 +6425,7 @@ operations:
       - "Right-click a finished workflow row in the Operations panel > Run Again..."
       - "CLI: lungfish-cli workflow run <pipeline.nf|Snakefile> --results-dir <dir> --expected-output <path>"
       - "CLI: lungfish-cli run-headless <workflow> [workflow run options]"
-    gating: [docker]
+    gating: []
     sources:
       - Sources/LungfishApp/Services/WorkflowLibrary.swift
       - Sources/LungfishApp/Views/WorkflowLibrary/WorkflowLibraryPanelView.swift
@@ -6456,9 +6456,9 @@ operations:
       - label: FASTQ Bundles
         control: file
         default: the bundles selected in the sidebar when the window opened
-        allowed: one or more .lungfishfastq bundles
-        effect: Supplies the sequencing reads the package manifest declares as a required input. Every selected bundle is pooled into one run rather than being run separately, which the summary line states as they will run as one batch.
-        when_to_change: Add bundles when several libraries belong to the same analysis, and split the selection when each library should get its own result.
+        allowed: exactly one .lungfishfastq bundle for a linked package
+        effect: Supplies the sequencing reads the package manifest declares as a required input. A linked workflow package accepts one bundle, and selecting more than one makes the Readiness line read that imported workflow packages currently accept one FASTQ bundle.
+        when_to_change: Change it when a different library belongs in this run, and run the bundles one at a time when you have several.
         cli_flag: --input
       - label: Include subfolders
         control: checkbox
@@ -6478,7 +6478,7 @@ operations:
         control: number
         default: the app's default thread count
         allowed: integers of 1 or more
-        effect: How many processor cores the workflow engine may use. A local Snakemake run receives this as its --cores value, and a Nextflow run records it without enforcing a per-process limit.
+        effect: How many processor cores the workflow engine may use. A local Snakemake run receives this as its --cores value, and a Nextflow run records it without enforcing a per-process limit. The field is disabled during a Run Again, because a repeat run must reuse the recorded core count.
         when_to_change: Lower it to keep the machine responsive while a long pipeline runs, and raise it on a machine with cores to spare.
         cli_flag: --cpus
       - label: Directory
