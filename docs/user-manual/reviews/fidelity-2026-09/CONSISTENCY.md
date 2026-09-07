@@ -265,3 +265,16 @@ more than one says so. The manual invents no further read thresholds. A
 genotype-only result hides the cohort summary panel and the Smart
 Cohorts section, so chapters written against the Williams project take
 the cohort-level depth judgement from `genotype list-samples`.
+
+## Shortcut spelling (settled by the chapter 62 fidelity review)
+
+Modifiers are written Cmd, Shift, Opt, and Ctrl, joined by hyphens, in
+the order the committed chapters use most. The Option key is Opt, never
+Option, so the Inspector opens with Cmd-Opt-I. Where Control takes part
+it comes first, so the sidebar toggles with Ctrl-Cmd-S and the side
+panes restore with Ctrl-Cmd-Opt-F, matching the source comments in
+MainMenu.swift. Symbol keys are named by the key a US keyboard prints on
+them, so Help is Cmd-Shift-slash, written Cmd-? only with that gloss
+beside it. A greyed menu item's shortcut does nothing until the item is
+enabled. Chapters committed with Cmd-Option or Cmd-Ctrl are a Phase 6
+sweep item.

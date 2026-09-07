@@ -10,6 +10,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Adapter**{#adapter}. The short synthetic DNA sequence that library preparation attaches to each end of a fragment so the instrument can bind and read it, which appears at the end of a read whenever the fragment was shorter than the read length and the instrument read straight through it. See also: library prep, FASTQ, fastp.
 
+**Advisory lock**{#advisory-lock}. A claim one process takes on a file to tell other cooperating processes to wait, enforced only because every one of them checks it rather than by the operating system refusing access, which is how Lungfish Genome Explorer stops two installs from writing to one conda root at the same time. See also: conda, plugin pack.
+
 **AI assistant**{#ai-assistant}. An in-app chat panel that answers questions about the active dataset and suggests workflows through a bring-your-own-key AI provider; it interprets and explains but does not modify your project.
 
 **API access**{#api-access}. A stored key from an outside AI provider that lets Lungfish Genome Explorer send a question to that provider's service over the internet, which a few optional features require and which nothing in a genotyping run needs. See also: AI assistant.
