@@ -104,7 +104,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Depth**{#depth}. Synonym for coverage in this manual. The number of reads stacked at one reference position. See also: coverage.
 
-**Download Center**{#download-center}. The surface that reports the progress of anything Lungfish fetches from the internet, whether a reference record from NCBI or a sequencing run from the SRA, and the place to look when a download does not appear where you expected it. See also: Operations Panel, SRA.
+**Download Center**{#download-center}. An older name for the Operations Panel that survives in some documentation and in the source as an alias. Downloads from NCBI and the SRA report as rows in the Operations Panel, which is the place to look when a download does not appear where you expected it. See also: Operations Panel, SRA.
 
 **Duplex read**{#duplex-read}. An Oxford Nanopore read produced by basecalling both strands of the same DNA molecule and reconciling them into a single high-accuracy consensus; duplex Q30+ approximates Illumina-grade accuracy and is the basis for modern Medaka-duplex models. See also: simplex read, basecaller.
 
@@ -139,6 +139,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## G
 
 **Gap**{#gap}. The `-` character an aligner writes into one row of a multiple sequence alignment at a column where that sequence has no residue, standing for an insertion in the other sequences or a deletion in this one, and letting rows of unequal length share a rectangular grid. See also: alignment column, MSA.
+
+**GC content**{#gc-content}. The percentage of bases in a sequence or a read set that are G or C rather than A or T, reported by Lungfish as one of the nine FASTQ summary cards, and a property of the source organism rather than of the sequencing run, so a figure far from the expected value usually means another species is present. See also: read, quality control.
 
 **Genetic code**{#genetic-code}. The mapping from codons to amino acids; Lungfish lets you pick the code (for example the vertebrate mitochondrial code) when translating a sequence. See also: codon, reading frame.
 
@@ -292,6 +294,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Quality binning**{#quality-binning}. The lossy compression step that rounds each base's Phred score to one of a small set of values before the reads are stored, offered by Lungfish at import as Illumina 4-level, 8-level, or None; Illumina instruments from the NovaSeq onward already report binned scores in hardware, so binning such a run discards little that was not already lost. See also: Phred score, FASTQ.
 
+**Quality control**{#quality-control}. The step of judging whether a set of reads is fit to analyse before anything is computed from it, which in Lungfish has no separate screen and is read instead from the nine summary cards and three sparkline charts the FASTQ viewport shows for every read bundle. See also: Phred score, sparkline, GC content.
+
 **Query coverage**{#query-coverage}. In a BLAST result, the fraction of the query sequence that participated in the alignment to the subject; a high percent identity over only a fraction of the read is much weaker evidence than a moderate identity over most of the read. See also: BLAST, percent identity.
 
 ## R
@@ -351,6 +355,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Smart-filter token**{#smart-filter-token}. One of the named filter chips revealed by the Presets button above the Variants tab, such as PASS, SNV, or DP >= 10, that applies a common variant filter with a single click and appears only when the loaded track carries the field it needs. See also: filter profile, FILTER.
 
 **Soft-clip**{#soft-clip}. A flag in a BAM record (the `S` letter in a CIGAR string) marking bases at the start or end of a read that are present in the record but excluded from pileup, coverage, and variant calling; primer trimming works by soft-clipping primer-derived bases rather than deleting them. See also: primer trim, CIGAR.
+
+**Sparkline**{#sparkline}. A small chart drawn without axes or labels, sized to sit inside a strip rather than to be read precisely, of which Lungfish draws three under a FASTQ bundle's summary cards, labelled Length Dist., Q / Position, and Q Score Dist., with a click on any one opening the full-size chart in a popover. See also: quality control, FASTQ.
 
 **SRA (Sequence Read Archive)**{#sra}. The NCBI public archive of raw sequencing reads, identified by accession numbers that start with `SRR` for runs and `SRP` for projects. Lungfish downloads SRA reads via the ENA mirror first and falls back to the SRA Toolkit if ENA refuses. See also: ENA.
 

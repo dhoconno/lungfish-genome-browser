@@ -78,7 +78,7 @@ One habit is worth forming before you start. Type the version suffix, the `.1` i
 
     <!-- SHOT: ncbi-results-download-selected -->
 
-4. Click Download Selected. LGE fetches the record, fetches its annotations, and assembles the `.lungfishref` bundle in one action, reporting each stage in the Download Center rather than in the Operations Panel.
+4. Click Download Selected. LGE fetches the record, fetches its annotations, and assembles the `.lungfishref` bundle in one action, reporting each stage as a row in the Operations Panel, which opens with **Operations > Show Operations Panel** (Cmd-Shift-P).
 
 5. Find the finished bundle in the sidebar under `Downloads/`, which is a folder inside your project and not the system Downloads folder, and open it. The sequence fills the viewport and the annotation features draw above the bases.
 
@@ -174,7 +174,7 @@ Confirm the accession, including the version. The bundle name and the manifest's
 
 Confirm the annotations are there and came from where you think. Features should draw above the bases, and the track should be named NCBI GFF3 Annotations. A track named NCBI GenBank Annotations means the fallback described above ran.
 
-Confirm the folder. A downloaded bundle lands under the project's `Downloads/` folder, which is how a project distinguishes what came off the internet from what came off your own disk under `Imports/`. If a reference you expected to find there is missing, check the Download Center row for the download rather than searching the disk.
+Confirm the folder. A downloaded bundle lands under the project's `Downloads/` folder, which is how a project distinguishes what came off the internet from what came off your own disk under `Imports/`. If a reference you expected to find there is missing, check the download's row in the Operations Panel rather than searching the disk.
 
 ## When a download returns a different accession
 
