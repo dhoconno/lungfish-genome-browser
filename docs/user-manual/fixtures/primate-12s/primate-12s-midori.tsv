@@ -1,0 +1,6 @@
+seq_id	common_name	latin_name	group	taxid	name_source	taxonomy
+Homo_sapiens	Human	Homo sapiens	Mammal	9606	NCBI	Chordata;Mammalia;Primates;Homo sapiens
+Pan_troglodytes	Chimpanzee	Pan troglodytes	Mammal	9598	NCBI	Chordata;Mammalia;Primates;Pan troglodytes
+Gorilla_gorilla	Western gorilla	Gorilla gorilla	Mammal	9593	NCBI	Chordata;Mammalia;Primates;Gorilla gorilla
+Macaca_mulatta	Rhesus macaque	Macaca mulatta	Mammal	9544	NCBI	Chordata;Mammalia;Primates;Macaca mulatta
+Macaca_fascicularis	Cynomolgus macaque	Macaca fascicularis	Mammal	9541	NCBI	Chordata;Mammalia;Primates;Macaca fascicularis

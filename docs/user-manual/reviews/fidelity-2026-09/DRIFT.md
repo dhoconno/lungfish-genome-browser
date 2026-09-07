@@ -3764,7 +3764,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 38 | 06-classification/07-running-freyja | Running Freyja | [workflow.freyja-demix] | sarscov2-srr36291587 | existing | done |
 | 39 | 06-classification/08-importing-cz-id-results | Importing CZ ID Results | [import.cz-id] | CZ ID export (open item) | existing | done |
 | 40 | 06-classification/09-novel-virus-detection | Novel Virus Diagnostics | [import.nvd] | nvd-demo | existing | done |
-| 41 | 06-classification/10-twelve-s-metabarcoding | 12S Amplicon Metabarcoding | [classify.twelve-s-match] | 12S run (open item) | existing | queued |
+| 41 | 06-classification/10-twelve-s-metabarcoding | 12S Amplicon Metabarcoding | [classify.twelve-s-match] | primate-12s | existing | done |
 | 42 | 06-human-germline-variants/01-haplotype-caller | HaplotypeCaller | [variants.call-gatk-haplotypecaller, variants.call-gatk-whatshap-phased] | hg002-chr20 | existing (nav label fixed) | queued |
 | 43 | 06-human-germline-variants/02-joint-genotyping | Joint Genotyping | [variants.gatk-plans] | hg002-chr20 | existing | queued |
 | 44 | 06-human-germline-variants/03-filtering-selecting-and-metrics | Filtering, Selecting, and Metrics | [variants.gatk-plans] | hg002-chr20 | existing | queued |

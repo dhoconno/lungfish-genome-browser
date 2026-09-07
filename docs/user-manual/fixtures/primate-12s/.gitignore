@@ -1,0 +1,3 @@
+# Provenance sidecars the CLI writes beside its outputs. The sibling fixtures
+# do not commit these either. They are reproducible by running regenerate.sh.
+*.lungfish-provenance.json

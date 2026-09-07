@@ -74,6 +74,14 @@ alignment chapter as unaligned input and the tree chapter as aligned input,
 with five primate mitochondrial reference genomes (human, chimpanzee,
 gorilla, rhesus macaque, cynomolgus macaque).
 
+`primate-12s/` is a constructed teaching fixture cut from the two above it. It
+supports the 12S amplicon metabarcoding chapter with a five-species primate 12S
+reference sliced out of `primate-mito/`'s genomes and a human 12S amplicon read
+set selected out of `human-mito/`'s HG002 chrM reads. It is not a published 12S
+dataset, and its README says so and explains the trade-off. Deviating from the
+tier list is not at issue here because the fixture stays inside the human and
+primate comparative tiers it is built from.
+
 `demo-assets/` is a README pointing at the rhesus macaque tier's demo
 asset, the lab's own 30-sample MiSeq amplicon genotyping project. The
 project is too large to commit, so it stays outside the repo under

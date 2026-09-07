@@ -4715,7 +4715,7 @@ operations:
         control: checkbox
         default: "true"
         allowed: "true, false"
-        effect: Checks the unresolved sequence clusters for chimeras, which are artificial sequences stitched together from two real templates during PCR. Each cluster comes back marked as not detected, candidate, or confirmed.
+        effect: Checks the unresolved sequence clusters for chimeras, which are artificial sequences stitched together from two real templates during PCR. Each cluster comes back marked as not reviewed, not detected, candidate, or confirmed, and the review itself writes only not detected or candidate.
         when_to_change: Leave it on. Turn it off only to shorten a run where you will not look at the unresolved clusters.
         cli_flag: --chimera-review
       - label: Directory

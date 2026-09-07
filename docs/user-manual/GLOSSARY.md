@@ -616,6 +616,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Topology**{#topology}. The branching pattern of a phylogenetic tree, meaning which tips group with which and in what order, considered apart from the branch lengths; it is the tree's main claim and the part a support value measures confidence in. See also: tip, internal node, support value, branch length.
 
+**Transition to transversion ratio**{#transition-transversion-ratio}. The count of substitutions that swapped a base for the other one of the same chemical shape, meaning A for G or C for T, divided by the count that swapped between shapes, written `TITV` in Picard's metrics output. Genuine human variation runs at roughly 2 to 3 because transitions arise more readily in biology, while random sequencing error has no such preference and produces a ratio near 0.5, which makes the figure a fast check on whether a call set is real. See also: SNV, dbSNP, novel variant.
+
+**TSV (tab-separated values)**{#tsv}. A plain text table whose columns are separated by tab characters, one row per line, readable by any spreadsheet and by most analysis scripts, and the format `lungfish-cli gatk variants-to-table` writes when it flattens a VCF for use outside the genomics tools. See also: VCF, CSV.
+
 **12S**{#twelve-s}. A short mitochondrial 12S rRNA amplicon used to identify vertebrate species; Lungfish matches merged 12S reads exactly against a deduplicated reference FASTA. See also: metabarcoding.
 
 ## U

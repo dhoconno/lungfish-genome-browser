@@ -180,6 +180,12 @@ calls `createAnalysisDirectory`, and both routes write
 while the import sheet's Project Destination readout composes an
 `Analyses/cz-id-<timestamp>` path nothing writes to.
 
+A 12S Amplicon Matching run writes a fixed category folder rather than a
+timestamped one. The result lands at
+`Analyses/12S amplicon results/<Result Name>.lungfish12s` (settled by the
+chapter 41 fidelity review), so that part of the manual names the folder
+by that string.
+
 The command-line section of every procedure chapter opens with chapter 33's
 fixed paragraph. "This section is optional. If you do your work in the LGE
 window, everything above is complete without it, and nothing here unlocks a
