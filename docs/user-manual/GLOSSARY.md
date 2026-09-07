@@ -206,6 +206,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Derived bundle**{#derived-bundle}. A reference bundle built from a selection taken out of something already in the project, most often a set of contigs picked from an assembly, which holds the selected sequences with a fresh FASTA index and carries a Derived Subset metadata block naming the assembler, the source, and the sequences that were chosen. See also: reference bundle, assembly bundle, contig, provenance.
 
+**Determinism**{#determinism}. The property of a command that running it again on the same inputs with the same settings produces the same output, which for a genomics tool usually holds at a fixed thread count and often stops holding when the thread count changes, so a claim of determinism in this manual means two runs were actually compared rather than that the tool is expected to behave. See also: thread, reproducibility, provenance sidecar.
+
 **dbSNP**{#dbsnp}. The NCBI catalogue of human genetic variants that have already been observed and named, distributed as a large VCF per reference build and used by GATK as a known-sites resource so that expected human variation is not mistaken for sequencing error. Lungfish Genome Explorer neither ships nor downloads it, so you fetch it yourself from the Broad Institute's public GATK resource bundle. See also: known sites, BQSR, VCF.
 
 **Directed acyclic graph**{#directed-acyclic-graph}. A set of boxes joined by one-way arrows in which no path of arrows ever leads back to the box it started from, which is the shape a Workflow Builder drawing must have so that the runner can always work out an order in which every step's input is ready before that step runs. See also: node port, workflow bundle.
@@ -761,6 +763,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Taxonomy identifier**{#taxonomy-id}. The number NCBI's Taxonomy database assigns to one taxon, such as `28875` for Rotavirus A, which classifiers and surveillance pipelines report instead of a name because the number is stable while names are revised, so a result table often has to resolve the numbers into names before a reader can use it. See also: taxon, taxonomic rank, accession.
 
 **TaxTriage**{#taxtriage}. A pathogen-detection workflow run as a Nextflow pipeline inside a container, which classifies reads against an installed Kraken 2 database and scores each organism it reports for confidence, opened in Lungfish Genome Explorer from **Tools > Classification > TaxTriage...**. See also: read classification, Nextflow, container, Kraken 2.
+
+**Thread**{#thread}. One parallel worker inside a running program, so a tool given eight threads divides its work into eight streams that run at once on different processor cores, which usually finishes sooner and can change the output in small ways when the streams finish in a different order. See also: determinism, wall time.
 
 **Tiling**{#tiling}. An amplicon design in which many primer pairs produce overlapping amplicons laid end to end, so that together they cover a whole region of interest rather than one locus. See also: amplicon, primer scheme.
 

@@ -3783,7 +3783,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 57 | appendices/cli-reference | CLI Reference | [] | cli-help dumps | existing | done |
 | 58 | appendices/06-running-in-ci | Running in CI | [] | none | existing | done |
 | 59 | appendices/ai-assistant | AI Assistant | [] | demo project | existing (add to nav) | done |
-| 60 | appendices/bibliography | Bibliography | [] | none | existing | queued |
+| 60 | appendices/bibliography | Bibliography | [] | none | existing | done |
 | 61 | appendices/file-formats | File Formats | [] | none | existing | queued |
 | 62 | appendices/keyboard-shortcuts | Keyboard Shortcuts | [] | none | existing | queued |
 | 63 | appendices/power-user-notes | Power User Notes | [] | none | existing | queued |
