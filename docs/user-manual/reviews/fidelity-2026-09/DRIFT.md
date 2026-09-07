@@ -3768,7 +3768,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 42 | 06-human-germline-variants/01-haplotype-caller | HaplotypeCaller | [variants.call-gatk-haplotypecaller, variants.call-gatk-whatshap-phased] | hg002-chr20 | existing (nav label fixed) | done |
 | 43 | 06-human-germline-variants/02-joint-genotyping | Joint Genotyping | [variants.gatk-plans] | hg002-chr20 | existing | done |
 | 44 | 06-human-germline-variants/03-filtering-selecting-and-metrics | Filtering, Selecting, and Metrics | [variants.gatk-plans] | hg002-chr20 | existing | done |
-| 45 | 06-human-germline-variants/04-reference-packs | Reference Files for GATK | [] | hg002-chr20 | existing (nav label fixed) | queued |
+| 45 | 06-human-germline-variants/04-reference-packs | Reference Files for GATK | [] | hg002-chr20 | existing (nav label fixed) | done |
 | 46 | 07-assembly/01-when-to-assemble | When to Assemble | [] | human-mito | existing | queued |
 | 47 | 07-assembly/02-running-spades | Running SPAdes | [assemble.spades, assemble.megahit, assemble.skesa] | human-mito | existing | queued |
 | 48 | 07-assembly/03-running-flye-or-hifiasm | Running Flye or hifiasm | [assemble.flye, assemble.hifiasm] | hg002-long-reads | existing | queued |

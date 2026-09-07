@@ -68,10 +68,10 @@ Two of these stop a run cold, the sequence dictionary and the read group, and th
 The reference FASTA needs a [sequence dictionary](../../GLOSSARY.md#sequence-dictionary) beside it, a small `.dict` file listing each contig and its length. LGE never creates that file, and GATK refuses to start without it, so make it once per reference before you run anything. Both routes need it, the dialog exactly as much as the command line, because both hand GATK the same bare FASTA. Open the Terminal application, change to the folder holding your reference, and run this one command.
 
 ```bash
-gatk CreateSequenceDictionary -R GRCh38.chr20.10.0-10.5Mb.fasta
+~/.lungfish/conda/envs/gatk-core/bin/gatk CreateSequenceDictionary -R GRCh38.chr20.10.0-10.5Mb.fasta
 ```
 
-That writes a `.dict` file beside the FASTA and you never touch it again. Install the GATK Core pack first, which the next subsection covers, since this line calls GATK directly rather than through `lungfish-cli`. If your shell answers that `gatk` cannot be found, LGE keeps its copy at `~/.lungfish/conda/envs/gatk-core/bin/gatk`, and typing that whole path in place of `gatk` runs the same program.
+That writes a `.dict` file beside the FASTA and you never touch it again. Install the GATK Core pack first, which the next subsection covers, since this line calls GATK directly rather than through `lungfish-cli`. The command names the program by its full path because the pack keeps its copy at `~/.lungfish/conda/envs/gatk-core/bin/gatk` and does not add it to the folders your shell searches, so a bare `gatk` is not found. The tilde stands for your home folder and is typed exactly as printed.
 
 The BAM needs a [read group](../../GLOSSARY.md#read-group), which is a header line naming the sample the reads came from, because GATK refuses to run without one and uses that name as the sample column of the VCF. The alignment LGE's mapper produces carries one already, so there is nothing for you to do here. You can see the value LGE will write in the Map Reads wizard's **Read Group** disclosure, in its **Sample** field, which reads `HG002` on this fixture.
 
@@ -79,7 +79,7 @@ The alignment should also be shotgun rather than amplicon data. Shotgun sequenci
 
 ### Install the plugin pack
 
-The tools arrive in [plugin packs](../../GLOSSARY.md#plugin-pack), which are groups of third-party programs LGE installs on request. HaplotypeCaller needs the `gatk-core` pack and the phased route needs `phasing` as well. Install both from **Tools > Plugin Manager...** (Cmd-Shift-B) with experimental features turned on, since both packs are marked experimental and the Plugin Manager is the only place that shows them. Installing `gatk-core` also puts the `gatk` program on your path, which is what makes the sequence dictionary command above work.
+The tools arrive in [plugin packs](../../GLOSSARY.md#plugin-pack), which are groups of third-party programs LGE installs on request. HaplotypeCaller needs the `gatk-core` pack and the phased route needs `phasing` as well. Install both from **Tools > Plugin Manager...** (Cmd-Shift-B) with experimental features turned on, since both packs are marked experimental and the Plugin Manager is the only place that shows them. Installing `gatk-core` places the `gatk` program at the full path the sequence dictionary command above uses.
 
 ## Procedure
 
