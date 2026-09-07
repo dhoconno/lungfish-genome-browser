@@ -25,17 +25,17 @@ straight double quotes, which the linter exempts.
 Fifth, **bullet lists are capped.** At most five items per list, at most
 two lists per H2 section. Longer enumerations become prose or a table.
 
-Lint: `em-dash.js` (error), `semicolon.js`, `sentence-colon.js`,
-`ai-tells.js`, `bullet-cap.js`.
+The linter enforces these rules with `em-dash.js` (an error), `semicolon.js`,
+`sentence-colon.js`, `ai-tells.js`, and `bullet-cap.js`.
 
 ## Written identity
 
-The app is **"Lungfish Genome Explorer"**. Spell it out at first mention in
-every chapter body, then write **LGE**. **"Lungfish"** alone names the research
+The app is **Lungfish Genome Explorer**. Spell it out at first mention in
+every chapter body, then write **LGE**. **Lungfish** alone names the research
 collaborative (the **Lungfish Research Collaboratory**), never the app. The
 installed preview build is "Lungfish Preview.app" and may be named that way
 inside quotes or code. Never `LUNGFISH`, `LungFish`, `Lung Fish`, or lowercase
-`lungfish` in prose. Lint: `app-name.js`.
+`lungfish` in prose. The linter enforces this with `app-name.js`.
 
 ## Palette
 
@@ -115,8 +115,9 @@ and whatever else applies.
    procedure.
 
 Each Settings entry is one paragraph that begins with the control's label
-in bold with a period inside the bold, then three sentences in this order,
-what it does, what the default is and why, when to change it.
+in bold with a period inside the bold. The paragraph then has three
+sentences in this order. What it does, what the default is and why, when
+to change it.
 
     **Minimum read length.** Discards reads shorter than this after
     trimming. The default is 50 bases, long enough to map uniquely on most

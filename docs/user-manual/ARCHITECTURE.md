@@ -22,7 +22,11 @@ the template in `STYLE.md` against the 2026.9.13 Preview build, adds
 `parameters.yaml`, flips fixtures to human and macaque data, and
 recaptures screenshots. Editorial rule 5 (screenshots at gate 2) is in force
 again. The audience for every chapter is now the undergraduate reader
-described in `STYLE.md`. The three tiers below remain as labels.
+described in `STYLE.md`. The three tiers below remain as labels. The tiers
+describe how much a reader already knows, not how the chapter is written.
+Every chapter is written so the undergraduate reader can follow it, and a
+tier label only tells authors which background they may mention without a
+gloss.
 
 ## Audience tiers
 
