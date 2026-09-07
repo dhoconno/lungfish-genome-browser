@@ -3739,7 +3739,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 13 | 02-sequences/05-building-trees | Building Trees | [tree.iqtree, tree.reroot, tree.extract-subtree, import.tree] | primate-mito | new (split from 04-msa-and-trees) | done |
 | 14 | 03-reads/01-importing-fastq | Importing FASTQ | [import.fastq, import.fastq-sample-sheet] | hg002-chr20 | existing | done |
 | 15 | 03-reads/02-downloading-from-sra | Downloading from SRA | [fetch.sra] | live SRA | existing | done |
-| 16 | 03-reads/03-quality-control | Quality Control | [fastq.refresh-qc-summary] | hg002-chr20 | existing | queued |
+| 16 | 03-reads/03-quality-control | Quality Control | [fastq.refresh-qc-summary] | hg002-chr20 | existing | done |
 | 17 | 03-reads/04-trimming-and-filtering | Trimming and Filtering | [fastq.fastp-trim, fastq.quality-trim, fastq.adapter-removal, fastq.primer-trimming, fastq.trim-fixed-bases, fastq.filter-by-read-length] | hg002-chr20 | existing | queued |
 | 18 | 03-reads/05-decontamination | Decontamination | [fastq.remove-human-reads, fastq.remove-ribosomal-rna, fastq.remove-contaminants, fastq.low-complexity-filter, fastq.remove-duplicates] | hg002-chr20 | existing | queued |
 | 19 | 03-reads/06-subsetting-and-extraction | Subsetting and Extraction | [fastq.subsample-by-proportion, fastq.subsample-by-count, fastq.extract-reads-by-id, fastq.extract-reads-by-motif, fastq.select-reads-by-sequence] | hg002-chr20 | existing | queued |
