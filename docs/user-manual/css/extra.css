@@ -113,3 +113,19 @@
 .md-banner a {
   color: #664D03;
 }
+
+/* Screenshots embedded by build/hooks/shots.py */
+img.screenshot {
+  display: block;
+  max-width: 100%;
+  margin: 1rem auto 0.4rem auto;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+}
+.shot-caption {
+  font-size: 0.85em;
+  color: var(--md-default-fg-color--light);
+  text-align: center;
+  margin: 0 auto 1.4rem auto;
+  max-width: 44em;
+}

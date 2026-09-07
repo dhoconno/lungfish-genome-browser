@@ -30,8 +30,17 @@ def _captions(meta, key):
 
 
 def _embed(indent, rel, alt):
-    alt = " ".join(str(alt).split()).replace("]", "").replace("[", "")
-    return f"{indent}![{alt}]({rel}){{ .screenshot }}"
+    """Return the image followed by a visible caption paragraph.
+
+    Plain Markdown rather than a figure element, because a marker inside a
+    numbered step is indented and an HTML block there is not processed by
+    md_in_html. The caption is a paragraph with the shot-caption class,
+    styled in css/extra.css.
+    """
+    caption = " ".join(str(alt).split())
+    alt = caption.replace("]", "").replace("[", "")
+    lines = [f"![{alt}]({rel}){{ .screenshot }}", "", f"{caption}{{ .shot-caption }}"]
+    return "\n".join(indent + line if line else "" for line in lines)
 
 
 def on_page_markdown(markdown, page, config, files):
