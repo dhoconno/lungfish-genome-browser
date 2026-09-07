@@ -109,3 +109,12 @@ Then: "This chapter uses the HBB gene record. Download the file
 https://github.com/dhoconno/lungfish-genome-explorer/tree/main/docs/user-manual/fixtures/hbb-gene
 and remember where you saved it." All four readers of chapter 1 stopped at
 step 1 because neither fact was stated. Never assume a project or a file.
+
+## Variant track storage (settled by the chapter 5 fidelity review)
+
+A variant track lives under the reference bundle's `variants/` folder as
+`<name>.vcf.gz` with a `.vcf.gz.tbi` index and a `.db` SQLite sidecar that
+the Variants tab uses for fast filtering
+(`BundleVariantTrackAttachmentService.swift:71-74`). There is no BCF and no
+CSI index, whatever the drift report's row 3 for chapter 5 said. The filter
+chips sit behind a **Presets** disclosure button above the Variants table.

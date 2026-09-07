@@ -139,13 +139,13 @@ These counts are position matches only, not full-genotype concordance, and are n
 
 The bcftools VCF is 46 KB with a 4 KB index, and its provenance sidecar is 28 KB.
 The LoFreq VCF is 16 KB with a 4 KB index, and its provenance sidecar is 24 KB.
-All six files live under `expected/variants/` alongside `expected/mapping/`, and like that folder they are gitignored rather than committed, reproducible from `regenerate.sh`.
+All six files live under `expected/variants/` alongside `expected/mapping/`. The two `.vcf.gz` files and their `.tbi` indexes are committed because they are small, while the provenance sidecars carry machine paths and stay out of git. `regenerate.sh` rebuilds all six.
 
 ## Regenerating
 
 ```bash
 bash docs/user-manual/fixtures/hg002-chr20/fetch.sh       # rebuilds the committed files
-bash docs/user-manual/fixtures/hg002-chr20/regenerate.sh  # remaps into expected/ (gitignored)
+bash docs/user-manual/fixtures/hg002-chr20/regenerate.sh  # remaps and recalls into expected/
 ```
 
 `fetch.sh` needs the managed `samtools`, `bcftools`, and `htslib`
