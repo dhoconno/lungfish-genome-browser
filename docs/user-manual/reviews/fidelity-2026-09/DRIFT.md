@@ -3734,7 +3734,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 8 | 01-foundations/08-provenance-and-reproducibility | Provenance and Reproducibility | [provenance.export] | demo project | existing | done |
 | 9 | 02-sequences/01-importing-and-viewing | Importing and Viewing | [import.reference, import.annotation-track] | hbb-gene | existing | done |
 | 10 | 02-sequences/02-downloading-from-ncbi | Downloading from NCBI | [fetch.ncbi, fetch.pathoplexus] | live fetch | existing | done |
-| 11 | 02-sequences/03-extracting-and-comparing | Extracting and Comparing | [] | hbb-gene | existing | queued |
+| 11 | 02-sequences/03-extracting-and-comparing | Extracting and Comparing | [sequence.find-orfs, sequence.extract-region] | hbb-gene | existing | done |
 | 12 | 02-sequences/04-aligning-sequences | Aligning Sequences | [msa.mafft, msa.view, msa.export, import.msa] | primate-mito | new (split from 04-msa-and-trees) | queued |
 | 13 | 02-sequences/05-building-trees | Building Trees | [tree.iqtree, tree.reroot, tree.extract-subtree, import.tree] | primate-mito | new (split from 04-msa-and-trees) | queued |
 | 14 | 03-reads/01-importing-fastq | Importing FASTQ | [import.fastq, import.fastq-sample-sheet] | hg002-chr20 | existing | queued |
