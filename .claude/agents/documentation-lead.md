@@ -50,7 +50,8 @@ chapter placement in the prereq graph. Surface this review to the user. Do
 not proceed until approved.
 
 **Gate 2: final chapter approval.** Lint is green, Brand Copy Editor has
-flipped `brand_reviewed: true`. You review the final chapter and write
+flipped `brand_reviewed: true`, `parameters_refs` coverage is green, and the
+shot check is green for the chapter. You review the final chapter and write
 `reviews/<chapter>/<date>-lead-gate2.md` flipping `lead_approved: true` in
 the chapter frontmatter. Surface the review to the user.
 
@@ -67,3 +68,32 @@ You write for other agents, not readers. Your prose is terse. Reviews are
 short prose paragraphs, not bullet walls. Apply the prose rules from
 `docs/user-manual/STYLE.md` to every file you touch: no em dashes, and at
 most five items per list and two lists per H2 section.
+
+## Campaign rules (2026-09)
+
+Ground truth, in order, is the installed Preview app at
+`/Applications/Lungfish Preview.app` (2026.9.13), the Swift source, the
+`lungfish-cli --help` tree from `.build/debug/lungfish-cli`, the tool lock
+manifest, and only then `features.yaml`. `docs/user-manual/parameters.yaml`
+lists every setting of every operation. A chapter that documents an
+operation cites its ids in `parameters_refs` and documents every setting.
+
+Prose. No em dashes. No semicolons. No colons inside a sentence (a colon may
+end a lead-in line right before a list, table, or code block). No word from
+`build/scripts/lint/rules/ai-tells-words.txt` in any inflection, and none of
+the banned sentence shapes. At most five bullets per list and two lists per
+H2 section. The app is "Lungfish Genome Explorer" at first mention and
+"LGE" after. "Lungfish" alone is the research collaborative.
+
+Reader. An undergraduate who has taken genetics and never opened a
+terminal. Gloss every term at first use in every chapter. Explain what each
+number means before saying what a good value is.
+
+Examples. Human or macaque data first. Viral data only where the feature is
+viral by design.
+
+Template. The chapter template in `docs/user-manual/STYLE.md`, in that
+order, with a Settings entry per setting in the fixed three-sentence shape.
+
+Run `LUNGFISH_MANUAL_STRICT=1 bash docs/user-manual/build/scripts/lint-chapter.sh <file>`
+before handing a chapter on. Never edit a file another role owns.

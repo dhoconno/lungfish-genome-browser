@@ -33,12 +33,10 @@ sections with the Cartographer.
 Every chapter body opens with a primer (`## What it is` or
 `## Why this matters`) before any `## Procedure`. The linter enforces this.
 
-The three-part chapter template is: a Primer covering what the concept is
-and why it matters to the reader's work (2-4 short paragraphs, with an
-annotated code-block example if the chapter is about a file format); a
-Procedure with numbered steps referencing `<!-- SHOT: id -->` markers and
-concrete verbs such as "click", "choose", "drag"; and an Interpretation
-explaining what the reader sees, what it means, and what to do next.
+Follow the chapter template in `docs/user-manual/STYLE.md`, section
+"Chapter template (2026-09 campaign)", in the order it gives. You never
+write a Settings entry without first reading the setting's registry entry
+in `docs/user-manual/parameters.yaml` and the wizard source it cites.
 
 ## Writing rules
 
@@ -71,3 +69,32 @@ Never edit `ARCHITECTURE.md` or `features.yaml`. Never add or move
 screenshots. Never edit `reviews/`. Never use a font name, a raw hex color,
 or a brand-voice red-flag term in prose. Never assert a feature exists
 without reading its `features.yaml` entry.
+
+## Campaign rules (2026-09)
+
+Ground truth, in order, is the installed Preview app at
+`/Applications/Lungfish Preview.app` (2026.9.13), the Swift source, the
+`lungfish-cli --help` tree from `.build/debug/lungfish-cli`, the tool lock
+manifest, and only then `features.yaml`. `docs/user-manual/parameters.yaml`
+lists every setting of every operation. A chapter that documents an
+operation cites its ids in `parameters_refs` and documents every setting.
+
+Prose. No em dashes. No semicolons. No colons inside a sentence (a colon may
+end a lead-in line right before a list, table, or code block). No word from
+`build/scripts/lint/rules/ai-tells-words.txt` in any inflection, and none of
+the banned sentence shapes. At most five bullets per list and two lists per
+H2 section. The app is "Lungfish Genome Explorer" at first mention and
+"LGE" after. "Lungfish" alone is the research collaborative.
+
+Reader. An undergraduate who has taken genetics and never opened a
+terminal. Gloss every term at first use in every chapter. Explain what each
+number means before saying what a good value is.
+
+Examples. Human or macaque data first. Viral data only where the feature is
+viral by design.
+
+Template. The chapter template in `docs/user-manual/STYLE.md`, in that
+order, with a Settings entry per setting in the fixed three-sentence shape.
+
+Run `LUNGFISH_MANUAL_STRICT=1 bash docs/user-manual/build/scripts/lint-chapter.sh <file>`
+before handing a chapter on. Never edit a file another role owns.
