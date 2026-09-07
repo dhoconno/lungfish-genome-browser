@@ -1987,6 +1987,30 @@ git commit -m "Add the demo project build script for the manual's screenshots
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+### Task 3.8: HG002 long reads (ONT and HiFi mitochondrial reads, ONT run-folder layout)
+
+Added by the controller from the drift report: the ONT-run, nanopore variant calling, and long-read assembly chapters need human long reads.
+
+**Files:**
+- Create: `docs/user-manual/fixtures/hg002-long-reads/README.md`, `fetch.sh`, `regenerate.sh`, `.gitignore`
+- Create (generated): `HG002.chrM.ont.fastq.gz`, `HG002.chrM.hifi.fastq.gz`, `ont-run/` (a minimal ONT run-folder layout holding the ONT reads under `fastq_pass/barcode01/`), `expected/flye/assembly.fasta`, `expected/hifiasm/` (primary contigs FASTA)
+
+**Interfaces:**
+- Source BAMs are GRCh38-aligned GIAB HG002 long-read BAMs, so `chrM` is rCRS. Find the current files by listing `https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG002_NA24385_son/` (ONT under `UCSC_Ultralong_OxfordNanopore_Promethion/` or `Ultralong_OxfordNanopore/`, HiFi under `PacBio_CCS_15kb_20kb_chemistry2/GRCh38/` or a sibling) with `curl -sL <dir>/ | grep -oE 'href="[^"]+\.bam"'`, pick one GRCh38 BAM of each type, and record the exact URLs in the README. Verify each with `curl -sI`.
+- The reference is the human-mito fixture's `NC_012920.1.fasta`; do not duplicate it, reference it by relative path in the README and scripts.
+- The ONT run-folder layout must be one the app's ONT run import recognizes: read `Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift` and the ONT ingestion code under `Sources/LungfishWorkflow/Ingestion` (grep `fastq_pass`) for the files it looks for, build the minimal layout, and prove it with `lungfish-cli import-fastq --dry-run --platform ont <ont-run dir>` (dry run lists detected inputs without importing).
+
+- [ ] **Step 1: Write `fetch.sh`** using the human-mito fixture's conventions (managed samtools, `cache/` cwd for remote reads, seeded downsampling). Slice `chrM` from each BAM, convert to single-end FASTQ (`samtools fastq -0 out.fastq.gz -n` after name sort), downsample with `samtools view -s 42.<fraction>` so each FASTQ is under 10 MB, and build `ont-run/fastq_pass/barcode01/HG002_chrM_pass_barcode01_0.fastq.gz` as a copy of the ONT FASTQ plus whatever sidecar file the import requires.
+- [ ] **Step 2: Write `regenerate.sh`**: `lungfish-cli assemble --assembler flye --read-type ont-reads --name HG002-chrM-ONT -o expected/flye HG002.chrM.ont.fastq.gz` and `lungfish-cli assemble --assembler hifiasm --read-type pacbio-hifi --name HG002-chrM-HiFi -o expected/hifiasm HG002.chrM.hifi.fastq.gz`. If an assembler refuses the tiny input, record the exact error in the README and keep the FASTQ (the chapter can still show the wizard).
+- [ ] **Step 3: Run both, check sizes, write the README** (source URLs, public-domain GIAB license, Zook 2019 citation, sizes, downsampling fractions, read N50 and count for each FASTQ from `seqkit stats` in `~/.lungfish/conda/envs/seqkit/bin`, the assembly results observed, the ONT run-folder files and the dry-run output, a consistency note), add `.gitignore` for `cache/` and over-cap outputs, and commit:
+
+```bash
+git add docs/user-manual/fixtures/hg002-long-reads
+git commit -m "Add the HG002 long-read fixture for the ONT, nanopore calling, and long-read assembly chapters
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
 ---
 
 ## Phase 4: Chapter rewrite pipeline
