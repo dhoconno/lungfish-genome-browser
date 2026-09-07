@@ -1,5 +1,5 @@
 # Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
-# App state: The Presets chip strip above the Variants table, showing the Biological Effect, Quality/QC, and Population/Frequency groups.
+# App state: The Variants tab's chip strip with the sidebar and Inspector hidden and the window back at 1400 points, showing the Biological Effect, Quality / QC and Population / Frequency groups; the Sample / Genotype group sits past the right edge even at this width.
 id: variants-preset-chips
 chapter: 05-variants/02-reading-the-variant-browser
 caption: The Presets chip strip open above the Variants table, grouped into the Biological Effect, Quality
@@ -22,15 +22,15 @@ steps:
   size:
   - 1400
   - 900
-  # PROSE-ONLY: Selected chr20_10.0-10.5Mb in the sidebar, Variants tab
-  # PROSE-ONLY: Collapsed the Inspector and sidebar for width
-  # PROSE-ONLY: The Sample/Genotype group (Het Only, Bookmarked) sits beyond the visible width at the ruled 1468pt window size and could not be brought into frame with the permitted background tools
+  # PROSE-ONLY: Select chr20_10.0-10.5Mb and click the drawer's Variants tab
+  # PROSE-ONLY: Choose View > Hide Sidebar, click the toolbar Inspector button, and set the window back to 1400 by 900
+  # PROSE-ONLY: Capture the chip strip region, then choose View > Show Sidebar and reopen the Inspector
 crop:
   mode: region
   region:
   - 0
-  - 660
-  - 1130
+  - 658
+  - 1400
   - 90
 post:
   retina: true
