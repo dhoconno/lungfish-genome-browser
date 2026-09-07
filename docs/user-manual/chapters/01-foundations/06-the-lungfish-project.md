@@ -108,7 +108,7 @@ The sidebar is the authoritative view of the project, so when it and Finder disa
 | `Phylogenetic Trees/` | Tree bundles carrying the extension `.lungfishtree`, built from an alignment in the window or imported |
 | `Analyses/` | Every analysis result. A run by a named tool such as a classifier, a mapper, or an assembler gets its own subfolder named `<tool>-<timestamp>`, and a read operation from the operations window writes its result bundle here directly, named for the operation |
 
-The angle brackets in `<tool>-<timestamp>` stand for values LGE fills in, so a real folder is named something like `kraken2-2026-09-04T14-12-33`. You never type that name yourself. A trimmed or decontaminated read bundle skips that subfolder and sits directly under `Analyses/` with a name such as `fastpTrim`. Most results record their provenance beside the output, and the Provenance and Reproducibility chapter shows where each one keeps it.
+The angle brackets in `<tool>-<timestamp>` stand for values LGE fills in, so a real folder is named something like `kraken2-2026-09-04T14-12-33`. You never type that name yourself. A trimmed or decontaminated read bundle skips that subfolder and sits directly under `Analyses/` with a name built from its input and the operation, such as `HG002.chr20.10.0-10.5Mb-fastpTrim`. Most results record their provenance beside the output, and the Provenance and Reproducibility chapter shows where each one keeps it.
 
 The Analyses group in the sidebar is worth one caveat. LGE builds that group from the project's own records rather than reading the folder directly, so it can list a result whose files Finder shows somewhere else. An empty project shows no Analyses group at all, and one appears as soon as the first result lands.
 

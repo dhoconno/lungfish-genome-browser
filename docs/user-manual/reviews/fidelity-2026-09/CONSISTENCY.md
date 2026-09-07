@@ -52,8 +52,9 @@ esviritu, kraken2, taxtriage, minimap2, bwa-mem2, bowtie2, bbmap, spades,
 megahit, skesa, flye, hifiasm, naomgs, nvd, cz-id, mafft, ont-genotyping,
 viralrecon). A FASTQ/FASTA operation from the operations window (trimming,
 filtering, decontamination, subsetting, read processing) writes its result
-bundle directly under `Analyses/`, named for the operation, for example
-`fastpTrim` (`FASTQOperationDialogState.defaultOutputDirectory`,
+bundle directly under `Analyses/`, named `<input stem>-<operation>`, for example
+`HG002.chr20.10.0-10.5Mb-fastpTrim` (`FASTQOperationOutputImporter.bundleNameStem`,
+`FASTQOperationDialogState.defaultOutputDirectory`,
 `MainSplitViewController+GenomicsDisplay.swift:993-994` and `:1231`, settled
 2026-09-07). A Grouped Result run names its folder from the operation
 title, not a timestamp. One further exception.
