@@ -3727,9 +3727,9 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 1 | 01-foundations/01-what-is-a-genome | What Is a Genome | [import.reference] | hbb-gene | existing | done |
 | 2 | 01-foundations/02-sequencing-reads | Sequencing Reads | [] | hg002-chr20, hg002-long-reads | existing | done |
 | 3 | 01-foundations/03-amplicon-vs-shotgun | Amplicons and Shotgun Sequencing | [] | hg002-chr20, Williams project | existing | done |
-| 4 | 01-foundations/04-alignment-files | Alignment Files | [] | hg002-chr20 | existing | queued |
+| 4 | 01-foundations/04-alignment-files | Alignment Files | [] | hg002-chr20 | existing | done |
 | 5 | 01-foundations/05-variants-and-vcf | Variants and VCF Files | [] | hg002-chr20 | existing | queued |
-| 6 | 01-foundations/06-the-lungfish-project | The Lungfish Genome Explorer Project | [import.fastq, import.reference] | demo project | existing | queued |
+| 6 | 01-foundations/06-the-lungfish-project | The Lungfish Genome Explorer Project | [] | demo project | existing | queued |
 | 7 | 01-foundations/07-plugin-packs | Plugin Packs | [classify.install-database] | none | existing | queued |
 | 8 | 01-foundations/08-provenance-and-reproducibility | Provenance and Reproducibility | [provenance.export] | demo project | existing | queued |
 | 9 | 02-sequences/01-importing-and-viewing | Importing and Viewing | [import.reference, import.annotation-track] | hbb-gene | existing | queued |
