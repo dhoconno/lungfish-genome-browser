@@ -138,5 +138,6 @@ test("settings-coverage flags unknown ids and undocumented settings", async () =
   const reasons = messages.map((m) => m.reason).join("\n");
   assert.match(reasons, /unknown parameters_refs id 'test.missing'/);
   assert.match(reasons, /setting 'Quality cutoff' of 'test.trim' is not documented/);
+  assert.match(reasons, /period outside the bold/);
   assert.doesNotMatch(reasons, /setting 'Minimum length'/);
 });

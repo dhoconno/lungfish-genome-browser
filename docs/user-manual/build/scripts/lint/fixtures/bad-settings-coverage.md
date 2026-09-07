@@ -20,3 +20,5 @@ Lungfish Genome Explorer trims reads.
 ## Settings
 
 **Minimum length.** Drops reads shorter than this. Default 50. Change it for very short amplicons.
+
+**Quality cutoff**. Trims bases below this score. Default 20. Rarely changed.
