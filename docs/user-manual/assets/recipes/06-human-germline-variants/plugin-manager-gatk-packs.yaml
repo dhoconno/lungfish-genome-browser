@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Packs tab with the GATK Core and Variant Phasing cards under Variant Calling, GATK Core showing a Reinstall button and Needs reinstall status rather than Install.
+id: plugin-manager-gatk-packs
+chapter: 06-human-germline-variants/04-reference-packs
+caption: The Plugin Manager Packs tab with experimental features shown, listing the GATK Core and Variant
+  Phasing cards under Variant Calling with their size estimates and install buttons.
+viewport_class: none
+app_state:
+  fixture: none
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Tools > Plugin Manager... (Cmd-Shift-B)
+  # PROSE-ONLY: Stay on the Packs tab
+  # PROSE-ONLY: Scroll to the Variant Calling category
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

@@ -1,0 +1,38 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Call Variants dialog with LoFreq selected by default and GATK HaplotypeCaller disabled in the tool sidebar showing the Requires GATK4 badge, because GATK4 needs reinstall in this profile; clicking the card was refused.
+id: call-variants-dialog-gatk
+chapter: 06-human-germline-variants/01-haplotype-caller
+caption: The Call Variants dialog with GATK HaplotypeCaller selected, showing the tool sidebar, the Overview
+  section's Alignment Track picker and Output Variant Track Name field, the Thresholds fields the GATK
+  tools ignore, and the readiness line in the footer.
+viewport_class: variant
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select the chr20 reference bundle in the sidebar
+  # PROSE-ONLY: Tools > Call Variants...
+  # PROSE-ONLY: Click GATK HaplotypeCaller in the tool sidebar (refused; card disabled)
+  # PROSE-ONLY: Cancel
+crop:
+  mode: region
+  region:
+  - 208
+  - 102
+  - 982
+  - 696
+post:
+  retina: true
+  format: png

@@ -1,0 +1,30 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: The Advanced tab of Settings with the Show Experimental Features toggle off and its warning text visible, before turning it on.
+id: settings-advanced-experimental
+chapter: 06-human-germline-variants/04-reference-packs
+caption: The Advanced tab of Settings, showing the Show Experimental Features toggle and the warning printed
+  beside it.
+viewport_class: none
+app_state:
+  fixture: none
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Application menu > Settings...
+  # PROSE-ONLY: Click the Advanced tab
+crop:
+  mode: window
+post:
+  retina: true
+  format: png
