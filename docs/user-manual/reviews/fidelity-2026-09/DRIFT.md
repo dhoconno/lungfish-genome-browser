@@ -3767,7 +3767,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 41 | 06-classification/10-twelve-s-metabarcoding | 12S Amplicon Metabarcoding | [classify.twelve-s-match] | primate-12s | existing | done |
 | 42 | 06-human-germline-variants/01-haplotype-caller | HaplotypeCaller | [variants.call-gatk-haplotypecaller, variants.call-gatk-whatshap-phased] | hg002-chr20 | existing (nav label fixed) | done |
 | 43 | 06-human-germline-variants/02-joint-genotyping | Joint Genotyping | [variants.gatk-plans] | hg002-chr20 | existing | done |
-| 44 | 06-human-germline-variants/03-filtering-selecting-and-metrics | Filtering, Selecting, and Metrics | [variants.gatk-plans] | hg002-chr20 | existing | queued |
+| 44 | 06-human-germline-variants/03-filtering-selecting-and-metrics | Filtering, Selecting, and Metrics | [variants.gatk-plans] | hg002-chr20 | existing | done |
 | 45 | 06-human-germline-variants/04-reference-packs | Reference Files for GATK | [] | hg002-chr20 | existing (nav label fixed) | queued |
 | 46 | 07-assembly/01-when-to-assemble | When to Assemble | [] | human-mito | existing | queued |
 | 47 | 07-assembly/02-running-spades | Running SPAdes | [assemble.spades, assemble.megahit, assemble.skesa] | human-mito | existing | queued |
