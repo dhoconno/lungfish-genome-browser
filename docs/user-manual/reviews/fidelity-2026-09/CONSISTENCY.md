@@ -147,6 +147,17 @@ https://github.com/dhoconno/lungfish-genome-explorer/tree/main/docs/user-manual/
 and remember where you saved it." All four readers of chapter 1 stopped at
 step 1 because neither fact was stated. Never assume a project or a file.
 
+When a fixture is a whole folder rather than one file (nvd-demo, primate-mito,
+human-mito, and any fixture whose data is several files), the sentence after
+the GitHub link is fixed as well, because a GitHub folder page offers no
+download button and three readers of chapter 40 stopped there: "GitHub
+offers no download for a single folder, so open the repository's front page
+at https://github.com/dhoconno/lungfish-genome-explorer, click the green
+**Code** button, choose **Download ZIP**, double-click the downloaded file
+to unpack it, and find the folder inside it under
+`docs/user-manual/fixtures/`." Chapters committed before this ruling get the
+sentence in the Phase 6 sweep.
+
 ## Variant track storage (settled by the chapter 5 fidelity review)
 
 A variant track lives under the reference bundle's `variants/` folder as

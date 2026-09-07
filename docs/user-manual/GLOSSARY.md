@@ -320,6 +320,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Mitochondrial genome**{#mitochondrial-genome}. The small circular DNA molecule carried inside the mitochondrion, the compartment that supplies a cell's chemical energy, separate from the nuclear chromosomes and present in many copies per cell, the human one being the 16,569-base record `NC_012920.1` known as the revised Cambridge Reference Sequence. See also: reference genome, accession.
 
+**miniBAM**{#minibam}. A compact read-pileup panel drawn inside a result's detail pane, showing the reads that landed on one reference accession without opening the full alignment viewport, used in Lungfish Genome Explorer to put the read evidence for one taxon beside the number that summarises it. See also: BAM, pileup, coverage.
+
 **minimap2**{#minimap2}. A general-purpose read mapper that finds, for each read, the reference position where it fits best, used inside Lungfish Genome Explorer both as a mapper you run directly and as the alignment step hidden inside EsViritu's viral detection. See also: mapping, alignment, BAM.
 
 **Minimizer**{#minimizer}. The smallest k-mer within a sliding window of a sequence, picked as a compact fingerprint so a tool can match reads quickly without comparing every base; Kraken2 classifies on minimizers and Deacon counts minimizer hits to flag host reads. See also: Kraken2, Deacon.
@@ -440,6 +442,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Reading frame**{#reading-frame}. One of the three ways to divide a nucleotide sequence into codons on a given strand, selected when translating a sequence to protein. See also: genetic code, codon.
 
+**Reads per billion**{#reads-per-billion}. An abundance figure, abbreviated RPB and reported per contig by the NVD viewport, calculated as the reads mapping to that contig divided by the sample's total read count and multiplied by a billion, so that contigs from libraries sequenced to different depths can be compared on one scale. See also: NVD, contig, read.
+
 **Regular expression**{#regular-expression}. A compact pattern language for describing text to search for rather than spelling out the exact text, where writing a plain word already means "contains this anywhere" and square brackets such as `[GA]` mean "any one of these characters here". See also: read identifier, sequence motif.
 
 **Reference bundle**{#reference-bundle}. A `.lungfishref` bundle stored under a project's `Reference Sequences/` folder, containing a primary FASTA, an index, optional annotations such as GFF3 or GTF, any tracks attached to that reference (alignments, variants, classifications), and a manifest. See also: bundle, assembly bundle.
@@ -551,6 +555,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Taxon**{#taxon}. Any named group on the tree of life, at any level of the naming hierarchy, so *Homo sapiens*, *Streptococcus*, and *Coronaviridae* are each one taxon, and a classifier's answer for a single read is the name of one of them. See also: taxonomic rank, lowest common ancestor, read classification.
 
 **Taxonomic rank**{#taxonomic-rank}. The level of the biological naming hierarchy a taxon belongs to, running from domain down through phylum, class, order, family, and genus to species, which is what a classifier's result table reports in its Rank column and what each ring of a sunburst chart stands for. See also: taxon, clade, read classification.
+
+**Taxonomy identifier**{#taxonomy-id}. The number NCBI's Taxonomy database assigns to one taxon, such as `28875` for Rotavirus A, which classifiers and surveillance pipelines report instead of a name because the number is stable while names are revised, so a result table often has to resolve the numbers into names before a reader can use it. See also: taxon, taxonomic rank, accession.
 
 **TaxTriage**{#taxtriage}. A pathogen-detection workflow run as a Nextflow pipeline inside a container, which classifies reads against an installed Kraken 2 database and scores each organism it reports for confidence, opened in Lungfish Genome Explorer from **Tools > Classification > TaxTriage...**. See also: read classification, Nextflow, container, Kraken 2.
 
