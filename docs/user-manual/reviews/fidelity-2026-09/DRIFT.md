@@ -3755,7 +3755,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 29 | 05-variants/04-nanopore-variant-calling | Nanopore Variant Calling | [variants.call-medaka, variants.call-clair3] | hg002-long-reads | existing | done |
 | 30 | 05-variants/05-consensus-and-lineage | Extracting a Consensus Sequence | [bam.extract-consensus] | hg002-chr20 | existing (retitled) | done |
 | 31 | 05-variants/06-importing-existing-vcfs | Importing Existing VCFs | [import.vcf] | hg002-chr20 | existing | done |
-| 32 | 06-classification/01-what-is-classification | What Is Classification | [] | sarscov2-srr36291587 | existing | queued |
+| 32 | 06-classification/01-what-is-classification | What Is Classification | [] | sarscov2-srr36291587 | existing | done |
 | 33 | 06-classification/02-running-kraken2 | Running Kraken 2 | [classify.kraken2, classify.install-database, classify.taxonomy-browser, classify.extract-reads-by-taxon] | sarscov2-srr36291587 | existing | queued |
 | 34 | 06-classification/03-running-esviritu | Running EsViritu | [classify.esviritu] | sarscov2-srr36291587 | existing | queued |
 | 35 | 06-classification/04-running-taxtriage | Running TaxTriage | [classify.taxtriage] | sarscov2-srr36291587 | existing | queued |
