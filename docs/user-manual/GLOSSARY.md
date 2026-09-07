@@ -14,6 +14,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Alignment**{#alignment}. The mapping of one read against a reference genome, recorded as one row in a BAM file with a position, strand, CIGAR string, and quality scores. See also: BAM, mapping.
 
+**Alignment column**{#alignment-column}. One vertical slice through a multiple sequence alignment, holding one residue or one gap character from every row, taken to represent a single inferred homologous position across all the aligned sequences. See also: MSA, gap, homologous.
+
 **Allele**{#allele}. One of the alternative sequences observed at a locus; in Lungfish MHC genotyping an allele is an individual MiSeq target identity, distinct from a named haplotype that spans several loci. See also: haplotype, MHC.
 
 **Allele frequency**{#allele-frequency}. The proportion of sequencing reads at a position that carry the alternate base. A clinical isolate usually shows allele frequencies near 0 or 1; a mixed-population sample (for example, wastewater) shows a full spectrum.
@@ -74,6 +76,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Consensus FASTA**{#consensus-fasta}. The reference sequence with high-confidence sample variants applied in place; positions with insufficient evidence are masked as `N`. The format Pangolin and Nextclade expect for SARS-CoV-2 lineage assignment, and the format used for GISAID and NCBI surveillance submissions. See also: VCF, allele frequency.
 
+**Consensus sequence**{#consensus-sequence}. A single sequence built from a multiple sequence alignment by taking each column's most common residue, with columns whose rows disagree too weakly or are too heavily gapped written as a mask character instead of a base. See also: MSA, alignment column, conservation.
+
+**Conservation**{#conservation}. At one alignment column, the share of the non-gap rows that carry that column's most common residue, so a column where every row agrees scores 1 and a column split evenly between two residues scores 0.5. See also: alignment column, MSA.
+
 **Contig**{#contig}. A contiguous stretch of assembled sequence emitted by an assembler, representing the longest path through the assembly graph that the algorithm could resolve unambiguously; one assembly bundle holds many contigs, ranked by length in the assembly viewport. See also: assembly bundle, N50.
 
 **Contig (in a reference)**{#contig-reference}. One named sequence in a multi-record FASTA; in `.lungfishref` bundles the contig list comes from FASTA headers and matches the BAM, VCF, and GFF3 contig fields.
@@ -124,6 +130,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 ## G
 
+**Gap**{#gap}. The `-` character an aligner writes into one row of a multiple sequence alignment at a column where that sequence has no residue, standing for an insertion in the other sequences or a deletion in this one, and letting rows of unequal length share a rectangular grid. See also: alignment column, MSA.
+
 **Genetic code**{#genetic-code}. The mapping from codons to amino acids; Lungfish lets you pick the code (for example the vertebrate mitochondrial code) when translating a sequence. See also: codon, reading frame.
 
 **GenomicsDB**{#genomicsdb}. GATK's on-disk multi-sample variant store that scales joint genotyping to large cohorts better than a single combined GVCF; Lungfish builds one with `GenomicsDBImport` when a cohort exceeds 50 samples. See also: GVCF, joint genotyping.
@@ -141,6 +149,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Haplotype**{#haplotype}. A set of alleles across linked loci that tend to travel together; in Lungfish MHC genotyping these are the named M1 to M7 families spanning the MHC-A, MHC-E, MHC-B, MHC-DR, MHC-DQ, and MHC-DP loci. See also: allele, MHC.
 
 **Heterozygous**{#heterozygous}. Carrying two different alleles at one position, one on each copy of a chromosome, written `0/1` in a VCF genotype field. See also: homozygous, genotype.
+
+**Homologous**{#homologous}. Descended from the same position in a shared ancestral sequence, which is what a column of a multiple sequence alignment claims about the residues stacked in it, and which is an inference from similarity rather than something the data states directly. See also: alignment column, MSA.
 
 **Homozygous**{#homozygous}. Carrying the same allele on both copies of a chromosome at one position, written `0/0` for the reference allele and `1/1` for the alternate. See also: heterozygous, genotype.
 
