@@ -97,3 +97,15 @@ Gloss a term the first time it appears in a chapter, even if an earlier
 chapter glossed it. The gloss is one short sentence in plain words, and the
 full definition lives in the Glossary. Add new terms to `GLOSSARY.md` in
 alphabetical order using the existing entry shape.
+
+## Before you start, fixed sentences (added after the chapter 1 reader team)
+
+Every procedure chapter's Before you start section opens with these two
+sentences, adjusted only for the fixture name and file. "You need a
+project open. If you do not have one, choose **File > New Project**
+(Cmd-N), or click Create Project on the Welcome window, and pick a folder."
+Then: "This chapter uses the HBB gene record. Download the file
+`NG_000007.3.gb` from the manual's fixtures on GitHub at
+https://github.com/dhoconno/lungfish-genome-explorer/tree/main/docs/user-manual/fixtures/hbb-gene
+and remember where you saved it." All four readers of chapter 1 stopped at
+step 1 because neither fact was stated. Never assume a project or a file.
