@@ -22,13 +22,15 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Alignment track**{#alignment-track}. One named BAM attached to a reference bundle and drawn as its own read stack and coverage curve in the alignment viewport, so a bundle can carry several alignments side by side, whether of different read sets or of one read set before and after trimming. See also: BAM, reference bundle, mapping.
 
-**Allele**{#allele}. One of the alternative sequences observed at a locus; in Lungfish MHC genotyping an allele is an individual MiSeq target identity, distinct from a named haplotype that spans several loci. See also: haplotype, MHC.
+**Allele**{#allele}. One of the alternative sequences a locus can carry, and the unit an MHC genotyping run actually measures, distinct from a haplotype, which is a set of alleles across several linked loci. See also: haplotype, MHC, locus, allele target.
 
 **Allele depth**{#allele-depth}. The pair of read counts a caller writes in a VCF's per-sample `AD` field, giving the number of reads supporting the reference allele and the number supporting the alternate, so a value of `20,33` at a depth of 53 means a third more reads carried the change than carried the reference. Lungfish Genome Explorer derives a per-sample allele frequency from this pair whenever a filter asks for one, which is why a per-sample `AF` clause matches nothing on a caller that writes no `AD`. See also: allele frequency, depth, FORMAT.
 
 **Allele frequency**{#allele-frequency}. The proportion of sequencing reads at a position that carry the alternate base. A clinical isolate usually shows allele frequencies near 0 or 1; a mixed-population sample (for example, wastewater) shows a full spectrum.
 
 **Allele-specific annotation**{#allele-specific-annotation}. A per-row VCF statistic that GATK computes separately for each alternate allele rather than pooling them, written with an `AS_` prefix such as `AS_QD`, so a position carrying two different alternate alleles gets one quality figure for each instead of one blended figure for both. Lungfish Genome Explorer always requests these in a joint-genotyping run. See also: INFO, joint genotyping, GenotypeGVCFs.
+
+**Allele target**{#allele-target}. One reference sequence in the allele library an MHC genotyping run matches reads against, named by its FASTA record name and forming one row of the genotype matrix, so a read either matches an allele target exactly over the sequenced stretch or contributes nothing to it. See also: allele, genotype matrix, retained read.
 
 **Amplicon**{#amplicon}. A target region of a genome amplified by PCR, used as the unit of an amplicon-based sequencing protocol such as ARTIC or QIASeqDIRECT. A run produces many overlapping amplicons that together tile the region of interest.
 
@@ -53,6 +55,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Barcode kit**{#barcode-kit}. The named set of barcode sequences a sequencing kit uses to tag samples, which Lungfish reads to demultiplex a run. See also: barcode, demultiplex.
 
 **Barcode scout**{#barcode-scout}. A command-line step that scans a subset of a read set against a barcode kit and reports how many reads hit each barcode, writing a `scout-result.json` that marks each barcode accepted, rejected, or undecided, so a wrong kit is caught before a full demultiplex is run. See also: barcode kit, demultiplex.
+
+**bbmerge**{#bbmerge}. The BBTools program that joins the two mates of a paired-end read into one longer fragment wherever they overlap, run automatically before mapping in an MHC genotyping workflow so that amplicons longer than a single mate can still be spanned end to end. See also: read merging, paired-end, allele target.
 
 **BCF**{#bcf}. The compact binary form of VCF, holding the same rows and header but packed for machines. Lungfish Genome Explorer reads an imported BCF with a CSI index beside it, but stores the variant tracks it writes as a bgzip-compressed VCF with a tabix index under the bundle's `variants/` folder, alongside a SQLite sidecar that indexes the same rows. See also: VCF, CSI, tabix.
 
@@ -121,6 +125,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Consensus FASTA**{#consensus-fasta}. The reference sequence with high-confidence sample variants applied in place; positions with insufficient evidence are masked as `N`. The format Pangolin and Nextclade expect for SARS-CoV-2 lineage assignment, and the format used for GISAID and NCBI surveillance submissions. See also: VCF, allele frequency.
 
 **Consensus sequence**{#consensus-sequence}. A single sequence built from a multiple sequence alignment by taking each column's most common residue, with columns whose rows disagree too weakly or are too heavily gapped written as a mask character instead of a base. See also: MSA, alignment column, conservation.
+
+**Class I MHC**{#class-i-mhc}. The group of MHC genes whose proteins are carried on nearly every cell in the body and display fragments of the proteins that cell is making internally, which is how an infected or altered cell is recognized. In a macaque genotyping result these are the loci named MHC-A, MHC-B, and their relatives. See also: MHC, class II MHC, locus.
+
+**Class II MHC**{#class-ii-mhc}. The group of MHC genes whose proteins are carried on a smaller set of immune cells and display fragments the cell has taken in from outside it. In a macaque genotyping result these are the loci named MHC-DP, MHC-DQ, and MHC-DR and their subunits. See also: MHC, class I MHC, locus.
 
 **Consequence**{#consequence}. The predicted effect of one variant on the protein a gene encodes, written as a controlled term such as `missense_variant` for a change that swaps one amino acid or `synonymous_variant` for one that leaves the protein unchanged. Lungfish Genome Explorer shows it in the Variants tab's own `Consequence` column and in the Inspector, and it appears only where an annotation supplies it, since no caller writes it on its own. See also: AA change, GFF, variant-caller.
 
@@ -248,7 +256,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Haplogroup**{#haplogroup}. A branch of the human maternal family tree, defined by the set of mitochondrial positions its members share and named with a letter and digits such as H or U5b, so a mitochondrial call set that recovers a coherent haplogroup marker set is evidence the calling worked. See also: mitochondrial genome, SNV.
 
-**Haplotype**{#haplotype}. A set of alleles across linked loci that tend to travel together; in Lungfish MHC genotyping these are the named M1 to M7 families spanning the MHC-A, MHC-E, MHC-B, MHC-DR, MHC-DQ, and MHC-DP loci. See also: allele, MHC.
+**Haplotype**{#haplotype}. A set of alleles across linked loci that are inherited together as one block, because the loci sit close enough on a chromosome that they rarely separate; a genotyping run observes alleles rather than haplotypes, so a haplotype call is an interpretation built on top of the allele calls. See also: allele, MHC, locus.
 
 **Hard filter**{#hard-filter}. A fixed list of arithmetic tests applied to statistics a variant caller already wrote into each VCF row, with no training step and no model, so a row failing any test is labelled in its FILTER column rather than removed. GATK publishes a recommended list for human germline work and Lungfish Genome Explorer ships it as the default preset of `lungfish-cli gatk filter`. See also: FILTER, quality by depth, strand odds ratio, VCF.
 
@@ -283,6 +291,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Interleaved FASTQ**{#interleaved-fastq}. A single FASTQ file holding a paired-end run with the two mates of each fragment written as consecutive records, forward then reverse, rather than split across an R1 and an R2 file. Lungfish stores a paired-end sample inside its bundle as one interleaved file, and offers Interleave and Deinterleave as explicit operations on files outside a bundle. See also: paired-end, FASTQ.
 
 **Interval list**{#interval-list}. A file naming the stretches of a reference genome a GATK command should restrict itself to, written either as a BED table of contig, start, and end, as a Picard-style `.interval_list`, or as a bare contig name, and passed to Lungfish Genome Explorer's GATK commands with `--intervals` so both steps of a joint-genotyping run read the same restricted region. See also: BED, contig, joint genotyping.
+
+**IPD-MHC**{#ipd-mhc}. The Immuno Polymorphism Database's MHC section, the reference catalogue of named MHC alleles for non-human species, whose FASTA record names an MHC genotyping run copies through unchanged into its calls, and whose group records fold together alleles that cannot be told apart over the stretch a short amplicon sequences. See also: allele target, MHC, allele.
 
 **IQ-TREE**{#iqtree}. A maximum-likelihood phylogenetic inference program with a built-in ModelFinder step and ultrafast bootstrap support estimation, used by Lungfish to produce `.lungfishtree` bundles from MSA bundles. See also: MSA, phylogram, support value.
 
@@ -326,6 +336,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Local reassembly**{#local-reassembly}. The strategy a variant caller such as GATK HaplotypeCaller uses in stretches where the reads look unsettled, discarding the original alignment across that stretch, rebuilding the candidate sequences from the reads themselves, and rescoring every read against those candidates, which mainly repays its cost around indels because an aligner placing one read at a time often puts the same insertion in slightly different spots on different reads. See also: variant-caller, indel, alignment.
 
+**Locus**{#locus}. The place on a chromosome where one particular gene sits, so that the alternative sequences a population carries at that place are its alleles; MHC genotyping reports one group of calls per locus, and which loci appear depends on the allele library a run used. See also: allele, MHC, allele target.
+
 **Lowest common ancestor**{#lowest-common-ancestor}. The most specific taxon that every organism matching a read belongs to, which a classifier reports instead of guessing when a read's sequence fits several relatives equally well, so a read shared across a whole genus is labelled with the genus rather than with one of its species. See also: taxon, taxonomic rank, read classification.
 
 ## M
@@ -356,7 +368,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Methods export**{#methods-export}. The Lungfish provenance export that emits a plain-prose Markdown paragraph naming each tool and its resolved version in the order the workflow ran them, suitable for pasting into a paper's methods section. See also: provenance sidecar.
 
-**MHC (Major Histocompatibility Complex)**{#mhc}. A gene-dense immune region genotyped here by amplicon sequencing, using the Mauritian cynomolgus macaque as the running example. See also: haplotype, immunogenetics.
+**MHC (Major Histocompatibility Complex)**{#mhc}. The gene-dense immune region whose proteins hold up fragments of what is inside a cell for the immune system to inspect, the most variable region of a vertebrate genome, and the target of the amplicon genotyping workflows in this manual. See also: haplotype, immunogenetics, class I MHC, class II MHC.
 
 **Micromamba**{#micromamba}. A small standalone bootstrap that speaks the conda protocol without requiring a full Anaconda installation, used by Lungfish as the engine for plugin pack installs. See also: conda, plugin pack.
 
@@ -527,6 +539,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Required Setup pack**{#required-setup-pack}. The one plugin pack Lungfish installs as a unit and cannot run without, shown in the Plugin Manager as Third-Party Tools, holding the seventeen everyday utilities the rest of the app assumes are present, among them samtools, bcftools, htslib, fastp, Deacon, seqkit, BBTools, Nextflow, and Snakemake. See also: plugin pack, managed environment.
 
 **Reproducibility**{#reproducibility}. The property that a workflow re-run with the same inputs, the same plugin pack version, and the same Lungfish build produces output that matches the original by checksum (bit-identical) or by content (logically equivalent); the provenance sidecar carries every field needed to verify this. See also: provenance sidecar.
+
+**Retained read**{#retained-read}. In an MHC genotyping run, a read whose alignment spanned an allele target from its first base to its last with no substitutions, indels aside, and which therefore counts towards that allele target's support; reads failing any part of that test are discarded rather than counted weakly, so the retained fraction of a run is far smaller than a mapping workflow would report. See also: allele target, genotype matrix, bbmerge.
 
 **Reverse complement**{#reverse-complement}. The sequence read from the opposite DNA strand, obtained by reading the bases backwards and swapping each for its pairing partner (A for T, C for G), so reading frames -1, -2, and -3 are the three frames counted along it and Lungfish runs the transformation from **Sequence > Reverse Complement...**. See also: strand, reading frame.
 

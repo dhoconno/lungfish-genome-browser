@@ -3771,7 +3771,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 45 | 06-human-germline-variants/04-reference-packs | Reference Files for GATK | [] | hg002-chr20 | existing (nav label fixed) | done |
 | 46 | 07-assembly/01-when-to-assemble | When to Assemble | [] | human-mito | existing | done |
 | 47 | 07-assembly/02-running-spades | Running SPAdes | [assemble.spades, assemble.megahit, assemble.skesa] | human-mito | existing | done |
-| 48 | 07-assembly/03-running-flye-or-hifiasm | Running Flye or hifiasm | [assemble.flye, assemble.hifiasm] | hg002-long-reads | existing | queued |
+| 48 | 07-assembly/03-running-flye-or-hifiasm | Running Flye or hifiasm | [assemble.flye, assemble.hifiasm] | hg002-long-reads | existing | done |
 | 49 | 07-assembly/04-extracting-contigs | Extracting Contigs | [assemble.extract-contigs] | human-mito | existing | done |
 | 50 | 08-workflows/01-the-workflow-builder | The Workflow Builder | [workflow.builder] | demo project | existing | queued |
 | 51 | 08-workflows/02-exporting-as-nextflow-or-snakemake | Exporting as Nextflow or Snakemake | [provenance.export] | demo project | existing | queued |
