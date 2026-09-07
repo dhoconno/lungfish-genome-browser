@@ -111,7 +111,7 @@ The second part-wide finding is that no classification result is written next to
 
 | Feature or setting | Evidence it exists |
 |---|---|
-| The Classification category submenu also carries the workflow-library entries for the category, drawn separately below a divider | `MainMenu.swift:794-798` |
+| The Classification category submenu also carries the workflow-library entries for the category, drawn separately below a divider (STRUCK 2026-09-07 at the chapter 32 review. The divider is drawn only when the category has workflows, and no WorkflowLibraryItem is filed under classification, so the submenu holds three items and no divider.) | `MainMenu.swift:794-798` |
 | Six cards on the Import Center's Classification Results tab, not three: Kraken2, EsViritu, TaxTriage, NAO-MGS, NVD, CZ-ID | `ImportCenterViewModel.swift:413-508` |
 | 12S Amplicon Matching is filed under the Genotyping category, not Classification, and is a specialized workflow that must be enabled first | `WorkflowLibrary.swift:141-149` (`categoryID: .genotyping`, `maturity: .specialized`) |
 | The Kraken 2 catalog has nine collections including MinusB and EuPathDB46, plus two locally built special databases (SILVA, Greengenes) | `MetagenomicsModels.swift:75-84`; `third-party-tools-lock.json` databases section |

@@ -72,6 +72,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **BQSR (Base Quality Score Recalibration)**{#bqsr}. The GATK preprocessing step that corrects systematic errors in a sequencer's per-base quality scores by modelling them against a set of known-variant sites, run in Lungfish through `lungfish gatk bqsr` ahead of germline calling. See also: VCF, HaplotypeCaller.
 
+**Bracken**{#bracken}. A companion program to Kraken 2 that re-estimates how abundant each species really was, by redistributing the reads Kraken 2 parked at a broad rank down onto the species those reads most likely came from, using how much the database's reference genomes overlap one another. Lungfish Genome Explorer always runs it after a Kraken 2 classification started from the dialog, and its numbers appear as the taxonomy table's Bracken column. See also: Kraken 2, read classification, clade count, taxon.
+
 **Branch length**{#branch-length}. The number attached to one branch of a phylogenetic tree, in the default phylogram drawing the estimated substitutions per site accumulated along that branch, so a long branch means a lot of inferred change rather than a long span of time. See also: phylogram, cladogram, topology.
 
 **Bundle**{#bundle}. A folder that the macOS Finder shows as a single icon with an extension and that Lungfish treats as one logical object, with a manifest, primary data files, optional indexes and annotations, and a `provenance/` subfolder. Lungfish bundle types include `.lungfishref` for references and assemblies and `.lungfishprimers` for primer schemes. See also: reference bundle, assembly bundle, primer scheme.
@@ -82,11 +84,15 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Checksum**{#checksum}. A short fingerprint computed from a file's exact bytes, recorded by Lungfish as SHA-256 in every provenance record so two people can confirm they hold the identical file. See also: provenance, reproducibility.
 
+**Capped database**{#capped-database}. A reference database deliberately shrunk to a target memory size by discarding most of its stored sequence fragments, so a machine too small to hold the full collection can still run the classifier against it. The cost falls on sensitivity, since a read the full collection would have named at species level is more often left unclassified or reported at a broader rank, and the loss is heaviest for whichever organism the sample is actually full of. See also: Kraken 2, minimizer, read classification.
+
 **CIGAR**{#cigar}. A compact string in each BAM row that describes, base by base, how the read aligns to the reference: `M` for aligned positions, `I` and `D` for insertions and deletions, `S` for soft-clipped ends, and `H` for hard-clipped ends. See also: BAM, soft-clip.
 
 **Circular consensus sequencing (CCS)**{#circular-consensus-sequencing}. The PacBio protocol that circularises a DNA fragment, reads it repeatedly, and reports the consensus of those passes as one read, which is why HiFi reads carry both long lengths and Q30+ quality strings; a HiFi read's quality is a consensus confidence, not a raw signal measurement. See also: read length, Phred score.
 
 **Clade**{#clade}. A group on a phylogenetic tree consisting of one internal node and every tip descended from it; the unit a phylogeneticist points to when claiming "these isolates share a recent common ancestor". See also: phylogram.
+
+**Clade count**{#clade-count}. The number of reads a classifier assigned to one taxon together with every taxon beneath it in the hierarchy, reported as the Reads column of the taxonomy table and set against the Direct count, which holds only the reads assigned to that exact taxon and no lower. A family row with a large clade count and a Direct count of zero means every one of those reads was resolved to something more specific. See also: taxon, taxonomic rank, kreport, Bracken.
 
 **Cladogram**{#cladogram}. A phylogenetic tree drawn with every tip at the same depth so that only the branching order is shown and branch lengths carry no meaning; one of the two layouts the Lungfish Genome Explorer tree viewport offers, useful when one very long branch would otherwise squash the rest. See also: phylogram, topology, clade.
 
@@ -255,6 +261,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **k-mer**{#k-mer}. A substring of exactly k bases taken from a longer sequence, the unit several tools match on because comparing short fixed-length words is far faster than comparing whole sequences. bbduk spots a primer in a read by looking for the primer's k-mers. See also: bbduk, minimizer, Hamming distance.
 
 **Kraken 2**{#kraken2}. A read classifier that assigns each read to a taxon by matching the read's minimizers against a database of reference genomes, chosen for breadth rather than depth and run in Lungfish Genome Explorer from **Tools > Classification > Kraken2...**, usually with Bracken estimating abundances from its assignments afterwards. See also: read classification, minimizer, lowest common ancestor, taxon.
+
+**Kreport**{#kreport}. The six-column summary file Kraken 2 writes beside its per-read output, holding one row per taxon with the percentage of reads under it, its clade count, its direct count, a one-letter rank code, its numeric taxonomy identifier, and its name indented by depth. It is the file the taxonomy viewport reads, and the file `lungfish-cli import kraken2` takes when you bring in a classification produced elsewhere. See also: Kraken 2, clade count, taxon, taxonomic rank.
 
 ## L
 
