@@ -1568,13 +1568,24 @@ operations:
       - Sources/LungfishApp/Views/ImportCenter/ImportCenterViewModel.swift
       - Sources/LungfishApp/App/AppDelegate+ImportCenter.swift
       - Sources/LungfishApp/App/VCFImportHelper.swift
+      - Sources/LungfishApp/Views/Settings/GeneralSettingsTab.swift
       - docs/user-manual/reviews/fidelity-2026-09/cli-help/import.txt
       - docs/user-manual/reviews/fidelity-2026-09/ground-truth/05-variants.md
-    settings: []
+    settings:
+      - label: "Import profile:"
+        control: radio
+        default: Auto
+        allowed: Auto, Fast, Low Memory
+        effect: Chooses how much memory the import may use while it reads the VCF into the bundle's database. The segmented picker lives in Settings under General in the VCF Import section, not in the Import Center, and its caption reads "Auto balances speed and memory. Fast uses more RAM for large files. Low Memory streams in chunks." (GeneralSettingsTab.swift). The code also defines an ultra-low-memory profile the picker does not offer, and the picker tags Low Memory as lowMemory against the enum's raw value low-memory, matched by a lowercased fallback.
+        when_to_change: Choose Low Memory before importing a very large VCF on a machine with little RAM, and Fast when RAM is plentiful and the import is slow.
+        cli_flag: null
     cli_only:
       - flag: --output-dir
         default: the current directory
         effect: Names the directory the validated VCF and its index are copied into.
+      - flag: --format
+        default: text
+        effect: Accepted with the values text, json, and tsv, and ignored on this subcommand, which prints the same text summary whatever you pass (settled 2026-09-07).
     notes: >-
       The card has no controls beyond a file panel that accepts one or more .vcf
       or .gz files, so which reference bundle the variants join is decided before
@@ -4445,12 +4456,14 @@ operations:
     entry_points:
       - "Right-click a taxon in the taxonomy viewport > Extract Reads..."
       - "Taxonomy viewport action bar > Extract FASTQ"
-      - "CLI: lungfish-cli conda extract --kraken-output <kraken> --source <fastq> --output <fastq> --taxid <taxid>"
+      - "CLI: lungfish-cli extract reads --by-classifier --tool kraken2 --result <run-dir> --taxon <taxid> --source <fastq> --output <fastq>"
+      - "CLI (older form): lungfish-cli conda extract --kraken-output <kraken> --source <fastq> --output <fastq> --taxid <taxid>"
     gating: []
     sources:
       - Sources/LungfishApp/Views/Metagenomics/TaxonomyReadExtractionAction.swift
       - Sources/LungfishApp/Views/Metagenomics/ClassifierExtractionDialog.swift
       - Sources/LungfishKit/ClassifierActionBar.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/extract.txt
       - docs/user-manual/reviews/fidelity-2026-09/cli-help/conda.txt
     settings:
       - label: "Format:"
@@ -4459,14 +4472,14 @@ operations:
         allowed: FASTQ, FASTA
         effect: Chooses whether the pulled-out reads keep their per-base quality scores or come out as sequence only. FASTQ keeps the scores, FASTA drops them.
         when_to_change: Choose FASTA when the next tool only wants sequence, such as a BLAST submission or an alignment.
-        cli_flag: null
+        cli_flag: --read-format
       - label: Include unmapped mates of mapped pairs
         control: checkbox
         default: "false"
         allowed: "true, false"
         effect: Also pulls out the partner read of any pair where only one of the two was assigned to this taxon. The dialog shows how many extra reads that adds.
         when_to_change: Turn it on when you plan to assemble or map the extracted reads, since both halves of a pair carry more information than one.
-        cli_flag: null
+        cli_flag: --include-unmapped-mates
       - label: "Destination:"
         control: radio
         default: Save as Bundle
@@ -4480,25 +4493,33 @@ operations:
         allowed: any text, and it cannot be blank
         effect: Names the bundle or file that is written. It only appears for the Save as Bundle and Save to File destinations.
         when_to_change: Change it when the suggested name will not tell you what the reads are six months from now.
-        cli_flag: null
+        cli_flag: --bundle-name
     cli_only:
-      - flag: --include-children
-        default: "false"
-        effect: Also extracts reads assigned to taxa below the chosen one. This needs --kreport as well, to build the taxonomy tree.
-      - flag: --kreport
+      - flag: --tool
         default: none
-        effect: Names the Kraken2 report file, which is required whenever --include-children is used.
-      - flag: --no-read-pairs
-        default: "false"
-        effect: Extracts only the exact read identifiers listed, without pulling in the /1 and /2 mates.
-      - flag: --taxid
+        effect: Names the classifier whose result is read, one of esviritu, taxtriage, kraken2, naomgs, or nvd.
+      - flag: --result
         default: none
-        effect: Names the taxonomy IDs to extract, comma-separated or repeated. The dialog takes these from the rows you selected.
+        effect: Names the classifier run's result directory. Handing it a single .kraken file fails with a not-located message rather than one naming the expected argument.
+      - flag: --taxon
+        default: none
+        effect: Names the taxonomy IDs to extract, repeatable, for a kraken2 result. The dialog takes these from the rows you selected.
+      - flag: --sample
+        default: none
+        effect: Names the sample the following --accession and --taxon flags apply to, repeatable.
+      - flag: --bundle
+        default: "false"
+        effect: Wraps the output in a .lungfishfastq bundle, which --bundle-name implies.
     notes: >-
       Copy to Clipboard is disabled above 10,000 reads, with a tooltip saying to choose
       another destination. The unmapped-mates checkbox is hidden for Kraken2 results, where
-      it does not apply. Bundles written this way go to the project's Extractions folder,
-      not Imports.
+      it does not apply, and --include-unmapped-mates is rejected with --tool kraken2 in
+      the same way. Bundles written this way go to the project's Extractions folder,
+      not Imports. The older lungfish-cli conda extract command still exists with its
+      own --kraken-output, --taxid, --kreport, --include-children, and --no-read-pairs
+      options, but extract reads --by-classifier shares ClassifierReadResolver with the
+      dialog and gives byte-identical output, so it is the form the manual documents
+      (reconciled 2026-09-07 at the chapter 33 review).
 
   classify.taxonomy-browser:
     title: Taxonomy viewport
