@@ -250,7 +250,7 @@ operations:
     notes: >-
       Adapter Sequence appears only while Adapter Mode is Manual Sequence. This
       operation always runs adapter detection and quality trimming in the same
-      fastp pass, so the CLI's --no-adapter-trimming has no dialog counterpart.
+      fastp pass, so the CLI's --no-adapter-trimming has no dialog counterpart. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   fastq.quality-trim:
     title: Quality Trim
@@ -546,7 +546,7 @@ operations:
       The Primary Settings pane reads "This tool uses the dedicated embedded
       workflow pane or the fixed database chooser above", so the human database
       is picked in the Inputs section rather than as a settings control. The
-      chosen database supplies the CLI's --database-id.
+      chosen database supplies the CLI's --database-id. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   fastq.remove-ribosomal-rna:
     title: Remove ribosomal RNA sequences
@@ -752,7 +752,7 @@ operations:
       Substitutions, Optical Duplicates, and Optical Distance appear only while
       Preset is Custom, and Optical Distance appears only while Optical
       Duplicates is on. The same preset also drives the FASTQ viewport's inline
-      parameter bar.
+      parameter bar. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   fastq.merge-overlapping-pairs:
     title: Merge Overlapping Pairs
@@ -798,7 +798,7 @@ operations:
       The dialog always passes --count-duplicates, so identical merged sequences
       collapse into counted exemplars whose support is written into the FASTQ
       header as size=N. The CLI leaves that flag off by default. The input must
-      be an interleaved FASTQ.
+      be an interleaved FASTQ. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   fastq.repair-paired-end-files:
     title: Repair Paired-End Files
@@ -1018,7 +1018,7 @@ operations:
         effect: Writes the subsampled FASTQ gzip-compressed.
     notes: >-
       The field starts empty, so a proportion must be entered before the Run
-      button becomes available.
+      button becomes available. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   fastq.subsample-by-count:
     title: Subsample by Count
@@ -1451,7 +1451,7 @@ operations:
       after the panel closes, and the same sheet opens when you drag reads onto
       the sidebar. The sheet has no sample-name field, since the sample name comes
       from the shared filename stem. The recipe picker and its description are
-      hidden until the recipe checkbox is on.
+      hidden until the recipe checkbox is on. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   import.fastq-sample-sheet:
     title: FASTQ Sample Sheet
@@ -1660,7 +1660,7 @@ operations:
       carries annotations, so importing one produces a bundle with an annotation
       track already attached, where a bare FASTA does not. The import compresses
       and indexes the sequence and builds the bundle without asking you to confirm
-      anything.
+      anything. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   import.annotation-track:
     title: Annotation Track
@@ -2100,7 +2100,7 @@ operations:
       Organism through Sequence Properties appear in the other two modes. The
       primary button reads Search until you tick a result, then reads Download
       Selected. Selecting more than fifty records prompts you to confirm first. A
-      downloaded record becomes an indexed .lungfishref bundle in the project.
+      downloaded record becomes an indexed .lungfishref bundle in the project. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   fetch.sra:
     title: Search SRA
@@ -2187,7 +2187,7 @@ operations:
       binning, and compression settings apply to the download too. Files come from
       the ENA mirrors over plain HTTP, so no SRA Toolkit install is needed, and each
       run lands as a .lungfishfastq bundle under the project's Imports folder with
-      its ENA provenance recorded.
+      its ENA provenance recorded. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   fetch.pathoplexus:
     title: Search Pathoplexus
@@ -2292,7 +2292,7 @@ operations:
   map.minimap2:
     title: Map Reads (minimap2)
     entry_points:
-      - "Tools > Mapping > minimap2"
+      - "Tools > Mapping > minimap2..."
       - "CLI: lungfish-cli map <fastq-files> --reference <reference> --mapper minimap2"
     gating: [read-mapping]
     sources:
@@ -2311,7 +2311,7 @@ operations:
         when_to_change: Change it whenever the reads came from a different organism or a different strain than the one the picker happened to select first.
         cli_flag: --reference
       - label: Preset
-        control: radio
+        control: popup
         default: Short-read
         allowed: Short-read, Assembly-to-assembly, Spliced CDS/cDNA, Oxford Nanopore, PacBio HiFi, PacBio CLR
         effect: Tells minimap2 what kind of sequence it is being handed so it can pick scoring rules that match. Short reads and long noisy reads need very different error tolerances.
@@ -2419,7 +2419,7 @@ operations:
       from its sample name." An Input Compatibility panel above Advanced Settings
       reports the detected format, the detected read type, and the longest read seen,
       and it disables Run when the preset and the reads do not match. Output is always
-      a coordinate-sorted, indexed BAM.
+      a coordinate-sorted, indexed BAM. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   map.bwa-mem2:
     title: Map Reads (BWA-MEM2)
@@ -4198,7 +4198,7 @@ operations:
       and threshold 10, and it exposes none of those three as controls. Results land in
       Analyses/kraken2-<timestamp>/ inside the project, never beside the source FASTQ. When
       the selected database needs more memory than the Mac has, a banner names the required
-      and available gigabytes and the memory mapping box is checked for you.
+      and available gigabytes and the memory mapping box is checked for you. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   classify.esviritu:
     title: EsViritu
@@ -4215,7 +4215,7 @@ operations:
     settings:
       - label: Sample
         control: text
-        default: empty, which falls back to the sample name worked out from the file name
+        default: the sample name worked out from the file name, filled in when the sheet opens
         allowed: any text
         effect: Names the sample in the output files and in the result viewport. It only appears for a single-sample run.
         when_to_change: Set it when the file name is not the label you want to see in reports.
@@ -4273,7 +4273,7 @@ operations:
       installs, and the wizard shows its version and size instead of a picker, with a
       Download Database... button when it is missing. Separate CLI subcommands manage it,
       esviritu download-db and esviritu db-status. Results land in
-      Analyses/esviritu-<timestamp>/ inside the project.
+      Analyses/esviritu-<timestamp>/ inside the project. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   classify.taxtriage:
     title: TaxTriage
@@ -4883,7 +4883,7 @@ operations:
       Length to SPAdes with the summary "Lungfish post-filter", which is what makes the
       wizard show the stepper, but ManagedAssemblyPipeline.buildSpadesCommand never
       reads the value and AssemblyOutputNormalizer computes statistics from the
-      unfiltered contigs.fasta. The setting is silently ignored.
+      unfiltered contigs.fasta. The setting is silently ignored. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   assemble.megahit:
     title: MEGAHIT
@@ -5445,7 +5445,7 @@ operations:
       single summary line when there is no choice to make, that is when nothing
       is selected or the selection is the whole file. Direction Adjustment,
       Symbol Policy, Threads, Deterministic threading, the FASTQ toggle, and
-      MAFFT Parameters sit inside the collapsed Advanced Options group.
+      MAFFT Parameters sit inside the collapsed Advanced Options group. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   msa.view:
     title: Alignment viewport display controls
@@ -5842,10 +5842,10 @@ operations:
       - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
       - docs/user-manual/reviews/fidelity-2026-09/ground-truth/09-genotyping.md
     settings:
-      - label: Reference
-        control: file
+      - label: Project Reference
+        control: popup
         default: the first MHC reference found in the project, or nothing when the project holds none
-        allowed: an allele FASTA file, a .lungfishref bundle, or a .lungfishmhcref bundle that pairs a FASTA with its haplotype definitions
+        allowed: any reference in the project, or an allele FASTA file, a .lungfishref bundle, or a .lungfishmhcref bundle you pick with the Choose or Replace button beside the picker
         effect: Names the library of known allele sequences every read is compared against. An allele missing from this file can never be reported for any sample.
         when_to_change: Choose the library built for your species and amplicon panel, because a macaque panel will not name human alleles.
         cli_flag: --reference
@@ -5865,7 +5865,7 @@ operations:
         cli_flag: null
       - label: Report Name
         control: text
-        default: a name built from the selected read files
+        default: amplicon-genotyping, a fixed name that does not vary with the selected read files
         allowed: any file name
         effect: Names the result bundle and the Excel workbook the run writes. It is also the label the analysis carries inside that workbook.
         when_to_change: Change it when the suggested name will not tell you later which plate or cohort the run covered.
@@ -5965,7 +5965,7 @@ operations:
       --haplotype-assay, --haplotype-species, --haplotype-definition-scope,
       --haplotype-definition, --haplotype-min-sample-percent,
       --haplotype-min-locus-percent, and
-      --haplotype-min-locus-percent-override are left out for the same reason.
+      --haplotype-min-locus-percent-override are left out for the same reason. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   genotype.full-length-ont:
     title: Full-length ONT MHC genotyping
@@ -6283,12 +6283,12 @@ operations:
         cli_flag: --param platform=<illumina|nanopore>
       - label: Scheme
         control: popup
-        default: the first scheme in alphabetical order, which is ARTIC-SARS-CoV-2-V4
-        allowed: "the eight bundled SARS-CoV-2 schemes ARTIC-nCoV-2019-V3, ARTIC-SARS-CoV-2-V4, ARTIC-SARS-CoV-2-V4.1, ARTIC-SARS-CoV-2-V5.3.2, Midnight-1200-V1, NEB-VarSkip-Long-vsl1, NEB-VarSkip-vss1, QIASeqDIRECT-SARS2, plus any .lungfishprimers bundle in the project's Primer Schemes folder"
+        default: the first scheme in alphabetical order, which is ARTIC SARS-CoV-2 V3 (Built-in)
+        allowed: "the eight bundled SARS-CoV-2 schemes ARTIC SARS-CoV-2 V3, ARTIC SARS-CoV-2 V4, ARTIC SARS-CoV-2 V4.1, ARTIC SARS-CoV-2 V5.3.2, Midnight 1200 bp V1, NEB VarSkip Long v1, NEB VarSkip Short v1, QIAseq Direct SARS-CoV-2 with Booster A, plus any .lungfishprimers bundle in the project's Primer Schemes folder"
         effect: Names the set of PCR primers used to amplify the virus, so the pipeline knows where each amplicon starts and ends and can cut the primer sequence off the reads. Primer bases are copies of the primer rather than of the sample, so leaving them in fakes variant calls at the amplicon edges.
         when_to_change: Always match the scheme to the kit the wet-lab protocol used, because a mismatched scheme trims the wrong positions and leaves real primer sequence behind.
         cli_flag: --param primer_set_version
-      - label: Minimum mapped reads
+      - label: "Minimum mapped reads:"
         control: number
         default: 1000
         allowed: integers from 1 to 1000000, stepping by 100
@@ -6339,7 +6339,7 @@ operations:
       assert they never appear. The wizard also fixes the variant caller to
       iVar, the consensus caller to bcftools, and the protocol to amplicon.
       The Advanced disclosure group holds Annotation and Extra parameters and
-      starts collapsed. Requires Docker Desktop, which the header line states.
+      starts collapsed. Requires Docker Desktop, which the header line states. Live-checked in Preview 2026.9.13 on 2026-09-06.
 
   workflow.freyja-demix:
     title: Freyja demix
