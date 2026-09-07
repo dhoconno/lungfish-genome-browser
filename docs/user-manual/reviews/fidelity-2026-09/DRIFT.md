@@ -3724,7 +3724,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 
 | # | chapter_id | Title | parameters_refs | Fixture | Existing or new | Status |
 |---|---|---|---|---|---|---|
-| 1 | 01-foundations/01-what-is-a-genome | What Is a Genome | [] | hbb-gene | existing | queued |
+| 1 | 01-foundations/01-what-is-a-genome | What Is a Genome | [import.reference] | hbb-gene | existing | done |
 | 2 | 01-foundations/02-sequencing-reads | Sequencing Reads | [] | hg002-chr20, hg002-long-reads | existing | queued |
 | 3 | 01-foundations/03-amplicon-vs-shotgun | Amplicons and Shotgun Sequencing | [] | hg002-chr20, Williams project | existing | queued |
 | 4 | 01-foundations/04-alignment-files | Alignment Files | [] | hg002-chr20 | existing | queued |
