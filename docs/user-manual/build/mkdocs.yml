@@ -86,6 +86,7 @@ nav:
     - Decontamination: chapters/03-reads/05-decontamination.md
     - Subsetting and Extraction: chapters/03-reads/06-subsetting-and-extraction.md
     - ONT Runs: chapters/03-reads/07-ont-runs.md
+    - Read Processing: chapters/03-reads/08-read-processing.md
 
   - Alignments:
     - Mapping Reads to a Reference: chapters/04-alignments/01-mapping-reads-to-a-reference.md
