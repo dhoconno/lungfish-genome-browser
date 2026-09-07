@@ -6293,7 +6293,7 @@ operations:
         allowed: "the eight bundled SARS-CoV-2 schemes ARTIC SARS-CoV-2 V3, ARTIC SARS-CoV-2 V4, ARTIC SARS-CoV-2 V4.1, ARTIC SARS-CoV-2 V5.3.2, Midnight 1200 bp V1, NEB VarSkip Long v1, NEB VarSkip Short v1, QIAseq Direct SARS-CoV-2 with Booster A, plus any .lungfishprimers bundle in the project's Primer Schemes folder"
         effect: Names the set of PCR primers used to amplify the virus, so the pipeline knows where each amplicon starts and ends and can cut the primer sequence off the reads. Primer bases are copies of the primer rather than of the sample, so leaving them in fakes variant calls at the amplicon edges.
         when_to_change: Always match the scheme to the kit the wet-lab protocol used, because a mismatched scheme trims the wrong positions and leaves real primer sequence behind.
-        cli_flag: --param primer_set_version
+        cli_flag: --param primer_bed=<path>, with --param primer_left_suffix and --param primer_right_suffix
       - label: "Minimum mapped reads:"
         control: number
         default: 1000

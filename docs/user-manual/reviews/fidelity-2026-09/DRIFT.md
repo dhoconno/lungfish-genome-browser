@@ -3748,7 +3748,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 22 | 04-alignments/01-mapping-reads-to-a-reference | Mapping Reads to a Reference | [map.minimap2, map.bwa-mem2, map.bowtie2, map.bbmap, import.bam] | hg002-chr20 | existing | done |
 | 23 | 04-alignments/02-reading-an-alignment | Reading an Alignment | [bam.read-display, bam.extract-reads-in-region] | hg002-chr20 | existing | done |
 | 24 | 04-alignments/03-primer-trimming | Primer Trimming | [bam.primer-trim] | sarscov2-srr36291587 | existing | done |
-| 25 | 04-alignments/04-alignment-quality | Alignment Quality | [bam.mark-duplicates, bam.filter] | hg002-chr20 | existing | queued |
+| 25 | 04-alignments/04-alignment-quality | Alignment Quality | [bam.mark-duplicates, bam.filter] | hg002-chr20 | existing | done |
 | 26 | 04-alignments/05-viral-recon-wizard | Viral Recon Wizard | [workflow.viral-recon] | sarscov2-srr36291587 | existing | queued |
 | 27 | 05-variants/01-calling-variants-from-amplicons | Calling Variants | [variants.call-lofreq, variants.call-ivar, variants.call-bcftools] | hg002-chr20 | existing (retitled) | queued |
 | 28 | 05-variants/02-reading-the-variant-browser | Reading the Variants Table | [variants.filter-table, variants.query] | hg002-chr20 | existing (retitled; absorbs the comparison paragraph) | queued |

@@ -58,6 +58,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **bbduk**{#bbduk}. A read-filtering and trimming program from the BBTools suite that matches a supplied sequence against reads as k-mers, used in Lungfish Genome Explorer for read-level primer trimming with a literal primer sequence and for contaminant filtering. See also: k-mer, Hamming distance, primer trim.
 
+**bcftools**{#bcftools}. A command-line toolkit for reading and writing VCF and BCF files that also contains a variant caller, whose `mpileup` and `call` subcommands together model which genotype best explains the reads at each position, making it a reasonable general caller for a sample with a fixed small number of genome copies. It ships in Lungfish Genome Explorer's Required Setup pack rather than the Variant Calling pack, so it is available in every project. See also: variant-caller, mpileup, VCF, genotype.
+
+**bgzip**{#bgzip}. A compression program from HTSlib that writes a gzip-compatible file in independently compressed blocks, so a reader with an index can jump straight to one region instead of decompressing everything before it, which is why a `.vcf.gz` inside a bundle is bgzipped rather than plain-gzipped. See also: tabix, VCF.
+
 **BioSample**{#biosample}. An NCBI record describing one biological sample; Lungfish can export a BioSample submission TSV from a project's sample metadata. See also: sample metadata.
 
 **BLAST (Basic Local Alignment Search Tool)**{#blast}. NCBI's nucleotide and protein sequence search service that ranks database entries by local-alignment score against a query, used in Lungfish to verify a classifier's hit by sending a representative read to NCBI's `nt` database. See also: e-value, percent identity, query coverage.
@@ -214,6 +218,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **INSDC (International Nucleotide Sequence Database Collaboration)**{#insdc}. The three-way partnership of NCBI (USA), EMBL-EBI (Europe), and DDBJ (Japan) that mirrors deposited nucleotide sequences and assigns a single globally-unique accession to each record; ENA, NCBI SRA, and DDBJ Sequence Read Archive are the SRA tier of this partnership. See also: ENA, SRA.
 
+**Indel**{#indel}. A variant that inserts bases the reference lacks or deletes bases the reference has, rather than substituting one base for another, written in a VCF as a REF and ALT of different lengths. Indels are harder to call than substitutions because reads spanning one can often be aligned in more than one equally good way, and some callers report none at all by default. See also: SNV, REF and ALT, variant-caller.
+
 **Insert size**{#insert-size}. The length of the original DNA fragment that a paired-end read pair came from, measured end to end including both reads; when the insert is shorter than twice the read length the two mates overlap and can be merged. See also: paired-end, read length.
 
 **Inspector**{#inspector}. The right-hand pane of a Lungfish project window that shows context-sensitive metadata and analysis actions for whatever is selected in the sidebar or main viewport. Toggle with `Cmd-Opt-I`. See also: sidebar, project.
@@ -243,6 +249,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Library layout**{#library-layout}. The archive field recording whether a sequencing run read each fragment from one end or from both, reported as SINGLE or PAIRED, which is how an SRA search can be restricted to runs whose reads come in mate pairs. See also: paired-end, single-end, SRA.
 
 **Library strategy**{#library-strategy}. The archive field recording what a sequencing library was built to do, with values such as WGS for whole-genome shotgun, AMPLICON for targeted PCR product, WXS for whole-exome capture, and RNA-Seq for transcript sequencing. See also: amplicon, shotgun, SRA.
+
+**LoFreq**{#lofreq}. A variant caller that builds an error model from the base and mapping qualities of the reads and reports a position when the alternate reads are more numerous than that error model alone would produce, which lets it find variants present in a small fraction of the reads without assuming any fixed number of genome copies. Its default output carries no genotype or sample column and reports no indels unless indel calling is switched on. See also: variant-caller, allele frequency, INFO.
 
 **Lineage**{#lineage}. A named subgroup within a viral species, defined by a characteristic set of variants and assigned by a domain-specific tool (Pangolin for SARS-CoV-2, Nextclade for many viruses). Lungfish does not assign lineages itself; it produces consensus FASTAs that downstream tools call lineages from. See also: consensus FASTA.
 
@@ -281,6 +289,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **MinKNOW**{#minknow}. The control software that runs an Oxford Nanopore sequencer, calls bases as the run proceeds, and writes the reads out as numbered FASTQ chunks under a `fastq_pass` folder, placing each barcode's reads in its own subfolder when the library was barcoded. See also: basecaller, barcode, unclassified reads.
 
 **mosdepth**{#mosdepth}. A fast coverage-depth calculator that reports how many reads sit over each position of a genome, run inside the nf-core/viralrecon pipeline to produce both a whole-genome depth table and a per-amplicon one, the second of which is what reveals amplicon dropout. See also: coverage, depth, amplicon dropout.
+
+**mpileup**{#mpileup}. The samtools and bcftools subcommand that walks a reference position by position and reports, for each one, the stack of read bases covering it together with their qualities, which is the raw summary a variant caller then judges. Its flags change what the caller sees, so the depth cap and base-quality floor a pileup is built with are part of why two callers on one alignment disagree. See also: pileup, bcftools, variant-caller.
 
 **MSA (Multiple Sequence Alignment)**{#msa}. A rectangular arrangement of two or more related sequences in which each column represents an inferred homologous position, with `-` gap characters padding insertions; in Lungfish stored as a `.lungfishmsa` bundle. See also: MAFFT.
 
@@ -335,6 +345,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Percent identity**{#percent-identity}. In a BLAST or other pairwise alignment, the fraction of aligned positions where the query and the subject sequence agree, calculated only over the aligned region; read together with query coverage to gauge how much of the read aligned and how well. See also: BLAST, query coverage.
 
 **Pileup**{#pileup}. The column of bases observed at one reference position across every read that covers it, together with their qualities and strands; the unit of evidence a variant caller weighs at each position. See also: coverage, variant-caller.
+
+**Ploidy**{#ploidy}. The number of copies of each chromosome an organism carries, which is two for a human and one for a virus or a bacterium, and which decides what genotypes a caller is allowed to propose at a position. A caller assuming two copies will force a viral sample into `0/1` and `1/1` genotypes that mean nothing, which is why a haploid genome is usually called with an explicit ploidy setting. See also: genotype, heterozygous, variant-caller.
 
 **Plugin pack**{#plugin-pack}. A themed group of related bioinformatics tools that Lungfish installs on demand into per-tool conda environments, named for the workflow it supports (for example, `read-mapping`, `variant-calling`, `assembly`). See also: conda, micromamba.
 
@@ -445,6 +457,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Sliding-window trimming**{#sliding-window-trimming}. A quality-trimming method that averages the quality scores of a small run of neighbouring bases and cuts the read where that average first falls below a threshold, so a single miscalled base does not truncate an otherwise good read. See also: fastp, Phred score.
 
 **Smart-filter token**{#smart-filter-token}. One of the named filter chips revealed by the Presets button above the Variants tab, such as PASS, SNV, or DP >= 10, that applies a common variant filter with a single click and appears only when the loaded track carries the field it needs. See also: filter profile, FILTER.
+
+**SNV (single-nucleotide variant)**{#snv}. A variant in which one reference base is read as one different base, written in a VCF as a REF and an ALT that are each a single character, and the commonest kind of difference between any two genomes. See also: indel, REF and ALT, VCF.
 
 **Soft-clip**{#soft-clip}. A flag in a BAM record (the `S` letter in a CIGAR string) marking bases at the start or end of a read that are present in the record but excluded from pileup, coverage, and variant calling; primer trimming works by soft-clipping primer-derived bases rather than deleting them. See also: primer trim, CIGAR.
 
