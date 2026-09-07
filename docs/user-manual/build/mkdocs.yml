@@ -96,9 +96,8 @@ nav:
     - Viral Recon Wizard: chapters/04-alignments/05-viral-recon-wizard.md
 
   - Variants:
-    - Calling Variants from Amplicons: chapters/05-variants/01-calling-variants-from-amplicons.md
-    - Reading the Variant Browser: chapters/05-variants/02-reading-the-variant-browser.md
-    - Cross-Caller Comparison: chapters/05-variants/03-cross-caller-comparison.md
+    - Calling Variants: chapters/05-variants/01-calling-variants-from-amplicons.md
+    - Reading the Variants Table: chapters/05-variants/02-reading-the-variant-browser.md
     - Nanopore Variant Calling: chapters/05-variants/04-nanopore-variant-calling.md
     - Consensus and Lineage: chapters/05-variants/05-consensus-and-lineage.md
     - Importing Existing VCFs: chapters/05-variants/06-importing-existing-vcfs.md

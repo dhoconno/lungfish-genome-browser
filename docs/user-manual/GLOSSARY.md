@@ -202,11 +202,15 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Hamming distance**{#hamming-distance}. The number of positions at which two sequences of the same length differ, used by bbduk as the mismatch tolerance when deciding whether a stretch of a read matches a supplied primer or contaminant sequence. See also: bbduk, k-mer, primer trim.
 
+**Haplogroup**{#haplogroup}. A branch of the human maternal family tree, defined by the set of mitochondrial positions its members share and named with a letter and digits such as H or U5b, so a mitochondrial call set that recovers a coherent haplogroup marker set is evidence the calling worked. See also: mitochondrial genome, SNV.
+
 **Haplotype**{#haplotype}. A set of alleles across linked loci that tend to travel together; in Lungfish MHC genotyping these are the named M1 to M7 families spanning the MHC-A, MHC-E, MHC-B, MHC-DR, MHC-DQ, and MHC-DP loci. See also: allele, MHC.
 
 **Heterozygous**{#heterozygous}. Carrying two different alleles at one position, one on each copy of a chromosome, written `0/1` in a VCF genotype field. See also: homozygous, genotype.
 
 **Homologous**{#homologous}. Descended from the same position in a shared ancestral sequence, which is what a column of a multiple sequence alignment claims about the residues stacked in it, and which is an inference from similarity rather than something the data states directly. See also: alignment column, MSA.
+
+**Homopolymer**{#homopolymer}. A run of the same base repeated, such as `AAAAAA`, which nanopore basecalling resolves poorly because the electrical signal barely changes as each identical base passes through the pore, making homopolymer length the single largest source of insertion and deletion errors in Oxford Nanopore reads. See also: basecaller, indel, Medaka.
 
 **Homozygous**{#homozygous}. Carrying the same allele on both copies of a chromosome at one position, written `0/0` for the reference allele and `1/1` for the alternate. See also: heterozygous, genotype.
 
@@ -277,6 +281,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Mark duplicates**{#mark-duplicates}. The step that finds BAM rows sharing a start and end position, which are usually PCR copies of one original fragment, and flags the extras so a variant caller counts them once, run in Lungfish as `samtools markdup` through `lungfish-cli bam markdup`. The step is inappropriate for amplicon data, where every fragment is designed to start at the same place. See also: BAM, FLAG.
 
 **Maximum likelihood**{#maximum-likelihood}. The method IQ-TREE uses to choose a phylogenetic tree, which scores every candidate tree by how probable it makes the observed alignment columns under an assumed substitution model and keeps the highest-scoring one. See also: IQ-TREE, substitution model, topology.
+
+**Medaka**{#medaka}. Oxford Nanopore's own variant caller and consensus tool, which scores reads against a neural-network model named for the pore chemistry and basecaller version that produced them, run in Lungfish Genome Explorer from the Call Variants dialog against a FASTQ rebuilt from the chosen alignment rather than against the BAM. See also: Clair3, basecaller, variant-caller.
 
 **Metabarcoding**{#metabarcoding}. Identifying which species are present in a mixed sample by matching a short marker amplicon (such as 12S) against a reference of known sequences. See also: 12S.
 
