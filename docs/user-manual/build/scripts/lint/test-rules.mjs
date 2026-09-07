@@ -106,3 +106,10 @@ test("bullet-cap flags >5-item list and >2 lists per H2 section", async () => {
   // Per-H2 section cap: third list fires
   assert.match(reasons, /3rd list in this H2 section/);
 });
+
+test("semicolon flags semicolons in prose but not in code", async () => {
+  const messages = await lint("bad-semicolon.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /semicolon in prose/);
+  assert.equal((reasons.match(/semicolon in prose/g) || []).length, 2);
+});

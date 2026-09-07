@@ -8,6 +8,7 @@ import frontmatterRule from "./rules/frontmatter.js";
 import dataViz from "./rules/data-viz.js";
 import emDash from "./rules/em-dash.js";
 import bulletCap from "./rules/bullet-cap.js";
+import semicolon from "./rules/semicolon.js";
 
 export default {
   plugins: [
@@ -21,5 +22,6 @@ export default {
     dataViz,
     emDash,
     bulletCap,
+    semicolon,
   ],
 };
