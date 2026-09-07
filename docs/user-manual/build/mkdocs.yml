@@ -75,7 +75,8 @@ nav:
     - Importing and Viewing: chapters/02-sequences/01-importing-and-viewing.md
     - Downloading from NCBI: chapters/02-sequences/02-downloading-from-ncbi.md
     - Extracting and Comparing: chapters/02-sequences/03-extracting-and-comparing.md
-    - MSA and Trees: chapters/02-sequences/04-msa-and-trees.md
+    - Aligning Sequences: chapters/02-sequences/04-aligning-sequences.md
+    - Building Trees: chapters/02-sequences/05-building-trees.md
 
   - Reads (FASTQ):
     - Importing FASTQ: chapters/03-reads/01-importing-fastq.md

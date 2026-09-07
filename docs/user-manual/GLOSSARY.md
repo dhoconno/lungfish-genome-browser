@@ -76,6 +76,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Clair3**{#clair3}. A deep-learning variant caller for Oxford Nanopore reads, run in Lungfish as an alternative to Medaka for ONT variant calling; it reads the sorted BAM directly and takes a model path matched to the basecaller. See also: variant-caller, Medaka.
 
+**Clumpify**{#clumpify}. A program from the BBTools suite that reorders reads so that reads sharing sequence content sit next to each other, and that can collapse those matching reads into one, which is what backs the Remove Duplicates operation in Lungfish Genome Explorer. See also: PCR duplicate, optical duplicate, read clumping.
+
 **Clustering**{#clustering}. Grouping near-identical reads into representative consensus sequences before genotyping, used for full-length ONT MHC amplicons. See also: pbAA, savONT.
 
 **Codon**{#codon}. A run of three consecutive bases inside a protein-coding gene that together encode one amino acid. Three adjacent SNPs falling inside one codon describe one amino acid change, not three; iVar can group them into a single VCF row when given a GFF annotation. See also: VCF.
@@ -103,6 +105,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Ct (cycle threshold)**{#ct}. The qPCR cycle number at which a sample's amplification signal crosses the detection threshold; a lower Ct means more starting template, so for a viral diagnostic a low Ct predicts a higher viral fraction in the sequencing reads and a smaller host-removal rate.
 
 ## D
+
+**Deacon**{#deacon}. A host-depletion program that matches a read's minimizers against a prebuilt index and drops the read when enough of them hit, used in Lungfish Genome Explorer for both human read removal and ribosomal RNA removal. See also: host depletion, minimizer, ribosomal RNA.
 
 **Demultiplex**{#demultiplex}. Separating a mixed sequencing run into per-sample read sets by their barcode. See also: barcode, barcode kit.
 
@@ -173,6 +177,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Homozygous**{#homozygous}. Carrying the same allele on both copies of a chromosome at one position, written `0/0` for the reference allele and `1/1` for the alternate. See also: heterozygous, genotype.
 
 ## I
+
+**Host depletion**{#host-depletion}. The removal of reads that came from the organism the sample was taken from rather than from the organism being studied, done before analysis both to save work on reads no one will look at and to keep a patient's own genome out of a shared dataset. See also: Deacon, decontamination.
 
 **Immunogenetics**{#immunogenetics}. The study of genetic variation in immune-system loci such as the MHC; the domain of Lungfish's amplicon genotyping feature. See also: MHC.
 
@@ -260,6 +266,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Operations Panel**{#operations-panel}. A separate Lungfish window that lists every long-running operation of the current session with its state, elapsed time, command line, and log, and that offers Clear Completed and a per-row context menu. Open it with **Operations > Show Operations Panel** (`Cmd-Shift-P`). The durable audit trail lives in the provenance sidecars rather than in the panel. See also: provenance, project.
 
+**Optical duplicate**{#optical-duplicate}. A read counted twice because one cluster on the flowcell was read as two neighbouring clusters during imaging, rather than because the fragment was copied during amplification, which is why it is recognised by how close two clusters sit rather than by sequence alone. See also: PCR duplicate, clumpify.
+
 **ORF (open reading frame)**{#orf}. A stretch of sequence running from a start codon to an in-frame stop codon without interruption, so it could in principle encode a protein; Lungfish finds ORFs and stores them as an annotation track, but ORF length is only a weak proxy for a real gene. See also: codon.
 
 **Orient Reads**{#orient-reads}. A Lungfish operation that aligns ONT reads against a reference and flips reverse-strand reads so every read in the bundle ends up in the same orientation, useful for amplicon protocols and consensus building. See also: basecaller, simplex read.
@@ -270,6 +278,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Paired-end**{#paired-end}. A sequencing protocol that reads each DNA fragment from both ends, producing two reads per fragment; the two halves of a pair travel as separate FASTQ files with `_1`/`_2` or `_R1`/`_R2` suffixes. See also: FASTQ, single-end.
 
+**PCR duplicate**{#pcr-duplicate}. A read that is a copy of another read because both came from the same original DNA fragment amplified during library preparation, so the two carry one observation between them rather than two. Amplicon protocols produce identical read starts by design, so duplicates there are expected rather than artifacts. See also: optical duplicate, mark duplicates, clumpify.
+
 **Pathoplexus**{#pathoplexus}. An open pathogen-genome database Lungfish can search and import reference sequences from.
 
 **pbAA**{#pbaa}. A read-clustering tool that derives high-accuracy amplicon consensus sequences, one of the clustering options for full-length ONT MHC genotyping. See also: clustering, savONT.
@@ -277,6 +287,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **p-distance**{#p-distance}. The simplest genetic distance between two aligned sequences: the proportion of positions at which they differ, with no model correction. One of the distance models Lungfish's `msa distance` can compute. See also: MSA.
 
 **Phred score**{#phred-score}. A logarithmic per-base quality value defined as `Q = -10 * log10(P)` where P is the error probability; Q20 = 1% error, Q30 = 0.1% error, Q40 = 0.01% error. Encoded in FASTQ files as ASCII characters offset by 33 (so `!` = Q0, `F` = Q37). See also: FASTQ.
+
+**PhiX**{#phix}. The small bacteriophage genome Illumina spikes into a sequencing run as a control, which is never part of the sample's biology and so is a standard thing to filter out, and which Lungfish Genome Explorer ships as the default reference for contaminant filtering. See also: bbduk, decontamination.
 
 **Phylogram**{#phylogram}. A phylogenetic tree drawn so that branch length is proportional to the inferred amount of evolutionary change (substitutions per site); the default tree-viewport layout in Lungfish. See also: clade, IQ-TREE.
 
@@ -338,6 +350,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Reverse complement**{#reverse-complement}. The sequence read from the opposite DNA strand, obtained by reading the bases backwards and swapping each for its pairing partner (A for T, C for G), so reading frames -1, -2, and -3 are the three frames counted along it and Lungfish runs the transformation from **Sequence > Reverse Complement...**. See also: strand, reading frame.
 
+**Ribosomal RNA (rRNA)**{#ribosomal-rna}. The structural RNA of the ribosome, which is by far the most abundant RNA in a cell, so an RNA sequencing library that was not depleted of it returns mostly ribosomal reads and very little of whatever else was in the sample. See also: Deacon, decontamination.
+
 **Rooting**{#rooting}. Choosing which point on a phylogenetic tree stands for the oldest ancestor, which is what turns a statement about who groups with whom into a statement about which lineage came first; IQ-TREE produces unrooted trees, so rooting in Lungfish Genome Explorer is the separate **Re-root Here** step. See also: outgroup, topology, internal node.
 
 **Run accession**{#run-accession}. The identifier naming one pass of one sequencing library through one instrument in a public read archive, written `SRR`, `ERR`, or `DRR` followed by digits according to which INSDC partner took the deposit, and the only accession level that resolves directly to FASTQ files. See also: accession, SRA, INSDC.
@@ -357,6 +371,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Sequence viewport**{#sequence-viewport}. The centre pane of a Lungfish project window when a reference bundle is open, drawing one sequence along a horizontal axis as three stacked lanes rather than three separate panes, with the numbered position ruler on top, the bases in the middle, and the annotation features as coloured blocks below. See also: reference bundle, annotation track, Inspector.
 
 **SH-aLRT**{#sh-alrt}. The Shimodaira-Hasegawa approximate likelihood ratio test, a fast branch-support measure IQ-TREE reports as a percentage at each internal node; read alongside bootstrap support, with values at or above 80 treated as reliable. See also: support value, IQ-TREE.
+
+**Shannon entropy**{#shannon-entropy}. A measure of how varied a stretch of sequence is, running from 0 when one base repeats to 1 when all four appear in even proportion, used by the low-complexity filter to score a read window by window so that a repeat inside an otherwise ordinary read is still caught. See also: bbduk, k-mer.
 
 **Shotgun sequencing**{#shotgun}. A library preparation strategy in which sample nucleic acid is fragmented at random and sequenced without targeted amplification; each read lands at an essentially arbitrary position on the genome. Shotgun data does not require primer trimming. See also: amplicon.
 

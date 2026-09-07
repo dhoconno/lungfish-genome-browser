@@ -216,11 +216,13 @@ foundation prereqs in frontmatter.
   copying as FASTA; comparing two sequences (when this lands).
   Prereqs: S01. Audience: bench-scientist.
 
-- **02-sequences/04-msa-and-trees** — building a multiple sequence
-  alignment with MAFFT; viewing an MSA; inferring a tree with IQ-TREE;
-  reading a phylogenetic tree.
-  Prereqs: F01, F02, S01. Audience: analyst. (Stub for now; ships when
-  MSA/tree viewports are documented.)
+- **02-sequences/04-aligning-sequences** — building a multiple sequence
+  alignment with MAFFT; viewing an MSA; exporting an alignment.
+  Prereqs: F01, F02, S01. Audience: analyst.
+
+- **02-sequences/05-building-trees** — inferring a tree with IQ-TREE;
+  reading a phylogenetic tree; re-rooting and extracting a clade.
+  Prereqs: F01, S04. Audience: analyst.
 
 #### 03 Reads (FASTQ)
 

@@ -185,22 +185,22 @@
       "sourcePng": "02-sequences/02-downloading-from-ncbi/ncbi-accession-anatomy.source.png"
     },
     {
-      "chapter": "02-sequences/04-msa-and-trees",
+      "chapter": "02-sequences/04-aligning-sequences",
       "id": "msa-column-homology",
       "targetDimensions": "1400x600",
       "svgWidth": 1400,
       "svgHeight": 600,
-      "svg": "02-sequences/04-msa-and-trees/msa-column-homology.svg",
-      "sourcePng": "02-sequences/04-msa-and-trees/msa-column-homology.source.png"
+      "svg": "02-sequences/04-aligning-sequences/msa-column-homology.svg",
+      "sourcePng": "02-sequences/04-aligning-sequences/msa-column-homology.source.png"
     },
     {
-      "chapter": "02-sequences/04-msa-and-trees",
+      "chapter": "02-sequences/05-building-trees",
       "id": "tree-anatomy",
       "targetDimensions": "1400x700",
       "svgWidth": 1400,
       "svgHeight": 700,
-      "svg": "02-sequences/04-msa-and-trees/tree-anatomy.svg",
-      "sourcePng": "02-sequences/04-msa-and-trees/tree-anatomy.source.png"
+      "svg": "02-sequences/05-building-trees/tree-anatomy.svg",
+      "sourcePng": "02-sequences/05-building-trees/tree-anatomy.source.png"
     },
     {
       "chapter": "06-classification/01-what-is-classification",

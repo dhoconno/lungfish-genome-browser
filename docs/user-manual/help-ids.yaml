@@ -225,14 +225,14 @@ dialog.ExtractContigsSheet:
   description: Pick contigs from an assembly and derive a new reference bundle.
 
 dialog.IQTreeInferenceDialog:
-  chapter: 02-sequences/04-msa-and-trees
-  anchor: procedure-infer-a-tree-with-iq-tree
+  chapter: 02-sequences/05-building-trees
+  anchor: infer-the-tree
   scope: dialog
   description: Infer a phylogenetic tree with IQ-TREE from an MSA.
 
 dialog.MSAOperations:
-  chapter: 02-sequences/04-msa-and-trees
-  anchor: procedure-build-an-msa-with-mafft
+  chapter: 02-sequences/04-aligning-sequences
+  anchor: align-the-five-genomes
   scope: dialog
   description: Build a multiple sequence alignment with MAFFT.
 
@@ -323,14 +323,14 @@ viewport.TaxonomyViewer:
   description: Classification result viewport with sunburst, taxon table, breadcrumb bar.
 
 viewport.MSAViewer:
-  chapter: 02-sequences/04-msa-and-trees
-  anchor: interpretation-reading-the-msa-viewport
+  chapter: 02-sequences/04-aligning-sequences
+  anchor: the-shape-of-the-viewport
   scope: viewport
   description: MSA viewport with row picker, column ruler, conservation track.
 
 viewport.TreeViewer:
-  chapter: 02-sequences/04-msa-and-trees
-  anchor: interpretation-reading-the-tree-viewport
+  chapter: 02-sequences/05-building-trees
+  anchor: the-shape-of-the-viewport
   scope: viewport
   description: Phylogenetic tree viewport with rectangular phylogram layout.
 
@@ -483,10 +483,10 @@ menu.Tools.FASTQOperations.Subsetting:
   description: Tools > FASTQ/FASTA Operations > Search & Subsetting submenu
 
 menu.Tools.FASTQOperations.MSA:
-  chapter: 02-sequences/04-msa-and-trees
-  anchor: procedure-build-an-msa-with-mafft
+  chapter: 02-sequences/04-aligning-sequences
+  anchor: align-the-five-genomes
   scope: menu
-  description: Tools > FASTQ/FASTA Operations > Multiple Sequence Alignment
+  description: Tools > Multiple Sequence Alignment > MAFFT...
 
 menu.Tools.PluginManager:
   chapter: 01-foundations/07-plugin-packs

@@ -194,7 +194,7 @@ chapters:
           MN908947.3 accession decomposed into prefix, number, and version,
           with fetch-path and snapshot meanings.
 
-  02-sequences/04-msa-and-trees:
+  02-sequences/04-aligning-sequences:
     illustrations:
       - id: msa-column-homology
         target_dimensions: 1400x600
@@ -203,6 +203,9 @@ chapters:
         brief: >
           Three short sequences before and after MAFFT-style gap insertion so
           homologous bases share columns.
+
+  02-sequences/05-building-trees:
+    illustrations:
       - id: tree-anatomy
         target_dimensions: 1400x700
         asset: assets/illustrations-imagegen/02-sequences/05-building-trees/tree-anatomy.png
