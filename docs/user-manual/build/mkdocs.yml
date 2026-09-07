@@ -115,10 +115,10 @@ nav:
     - 12S Amplicon Metabarcoding: chapters/06-classification/10-twelve-s-metabarcoding.md
 
   - Human Germline Variants (Preview):
-    - HaplotypeCaller Dry Runs: chapters/06-human-germline-variants/01-haplotype-caller.md
+    - HaplotypeCaller: chapters/06-human-germline-variants/01-haplotype-caller.md
     - Joint Genotyping: chapters/06-human-germline-variants/02-joint-genotyping.md
     - Filtering, Selecting, and Metrics: chapters/06-human-germline-variants/03-filtering-selecting-and-metrics.md
-    - Reference Packs: chapters/06-human-germline-variants/04-reference-packs.md
+    - Reference Files for GATK: chapters/06-human-germline-variants/04-reference-packs.md
 
   - Assembly:
     - When to Assemble: chapters/07-assembly/01-when-to-assemble.md

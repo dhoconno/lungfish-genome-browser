@@ -186,6 +186,16 @@ timestamped one. The result lands at
 chapter 41 fidelity review), so that part of the manual names the folder
 by that string.
 
+The GATK entries of the Call Variants dialog are a second exception to the
+variant track storage ruling. They write `variants/gatk/<track-id>.vcf.gz`
+inside the bundle with a SQLite sidecar (settled by the chapter 42 fidelity
+review), and the dialog's two Thresholds fields are discarded on both GATK
+entries rather than recorded. Variant counts across the manual follow the
+Part V convention, LGE's Type column judged on the first ALT allele, so the
+HG002 chromosome 20 HaplotypeCaller VCF holds 844 SNVs and 182 indels of
+1,026 rows, and a bcftools tally that reads 843 and 184 is explained in one
+sentence rather than adopted.
+
 The command-line section of every procedure chapter opens with chapter 33's
 fixed paragraph. "This section is optional. If you do your work in the LGE
 window, everything above is complete without it, and nothing here unlocks a

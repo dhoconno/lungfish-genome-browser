@@ -38,6 +38,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Assembly bundle**{#assembly-bundle}. A `.lungfishref` bundle that holds a de novo assembly produced inside the project, typically by SPAdes or MEGAHIT, and lives under the project's `Analyses/` folder alongside every other result. The internal structure is identical to a reference bundle; only the folder placement distinguishes the two. See also: reference bundle, bundle.
 
+**Assembly graph**{#assembly-graph}. The structure an assembler builds before it emits any sequence, in which every stretch of sequence the reads agree on is a node and every observed overlap between two such stretches is an edge, so that emitting contigs amounts to walking the unambiguous paths through it and stopping wherever the graph branches. See also: contig, de novo assembly, N50.
+
 ## B
 
 **BAI**{#bai}. The companion index file for a BAM that lets viewers jump to a specific reference position without reading the whole file; conventionally named `<sample>.bam.bai` and kept in the same folder as the BAM. See also: BAM.
@@ -146,6 +148,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 ## D
 
+**De Bruijn graph**{#de-bruijn-graph}. The particular kind of assembly graph that short-read assemblers such as SPAdes and MEGAHIT build, in which every k-mer taken from the reads is a point and two points are joined whenever one k-mer's tail overlaps the next one's head, so that a stretch the reads agree on forms an unbranching path and a sequencing error or a repeat forms a fork the assembler has to resolve before it can emit a contig. See also: assembly graph, k-mer, contig, de novo assembly.
+
+**De novo assembly**{#de-novo-assembly}. Reconstructing a sample's sequence from the overlaps between its own reads alone, with no reference genome used at any point, which is what lets an assembly report sequence that no database holds and what makes its output a set of contigs rather than a genome laid out in reference coordinates. See also: assembly graph, contig, assembly bundle, mapping.
+
 **Deacon**{#deacon}. A host-depletion program that matches a read's minimizers against a prebuilt index and drops the read when enough of them hit, used in Lungfish Genome Explorer for both human read removal and ribosomal RNA removal. See also: host depletion, minimizer, ribosomal RNA.
 
 **Deduplicated reference**{#deduplicated-reference}. A curated FASTA in which every record is one known marker sequence labelled with the species it belongs to and identical sequences have been collapsed to a single record, which is the reference form 12S amplicon matching requires so that one sequence shared by several species is recognised as shared rather than counted repeatedly. See also: 12S, metabarcoding, FASTA.
@@ -173,6 +179,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Edit distance**{#edit-distance}. The number of single-base substitutions, insertions, and deletions separating an aligned read from the reference stretch it sits on, written into the read's optional `NM` tag by the mapper, so a read with `NM` of 0 matches the reference perfectly and is what the zero-mismatch alignment filter keeps. See also: BAM, percent identity, alignment.
 
 **ENA (European Nucleotide Archive)**{#ena}. The European mirror of the SRA, hosted at EMBL-EBI; one of three INSDC partners (with NCBI SRA and DDBJ) that share deposited sequencing data. Lungfish downloads SRA runs from ENA first because ENA serves pre-converted FASTQs directly, and falls back to the NCBI SRA Toolkit when ENA is unavailable. See also: SRA.
+
+**Error correction**{#error-correction}. A stage some assemblers run before building their graph, in which reads are compared against each other and a base that only one read carries where its neighbours agree on another is rewritten, on the reasoning that a base seen once is more likely a sequencing mistake than a real difference; SPAdes runs it by default and the assembly sheet's Skip error correction toggle turns it off. See also: de Bruijn graph, de novo assembly, read.
 
 **EsViritu**{#esviritu}. A read classifier built around a curated collection of viral genomes, which reports not only how many reads matched each virus but how much of that virus's genome those reads covered, shipped in Lungfish Genome Explorer's `metagenomics` plugin pack and run from **Tools > Classification > EsViritu...**. See also: read classification, coverage breadth, plugin pack.
 
@@ -291,6 +299,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Kreport**{#kreport}. The summary file Kraken 2 writes beside its per-read output, holding one row per taxon with the percentage of reads under it, its clade count, its direct count, a one-letter rank code, its numeric taxonomy identifier, and its name indented by depth. LGE always asks Kraken 2 for minimizer data, so its kreports carry eight columns, with two minimizer counts inserted after the direct count and the taxonomy identifier in the seventh column. It is the file the taxonomy viewport reads, and the file `lungfish-cli import kraken2` takes when you bring in a classification produced elsewhere. See also: Kraken 2, clade count, taxon, taxonomic rank.
 
 ## L
+
+**L50**{#l50}. A summary statistic for a set of assembled contigs, giving the smallest number of contigs whose lengths together reach half of the assembly's total bases, so that an L50 of 1 means one contig holds half the assembly and a large L50 describes a fragmented one. It counts contigs where N50 measures a length, and the two move in opposite directions as an assembly improves. See also: N50, contig, assembly bundle.
 
 **LabKey**{#labkey}. A laboratory data management platform; Lungfish can export genotype results as LabKey-ready CSV files.
 
@@ -536,6 +546,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **savONT**{#savont}. A clustering option for full-length ONT MHC amplicons, an alternative to pbAA. See also: clustering, pbAA.
 
+**Scaffold**{#scaffold}. A run of contigs an assembler has placed in order and orientation relative to one another using paired-end reads that bridge the gaps between them, written as one sequence in which each unresolved gap appears as a run of `N` characters of the estimated length. Lungfish Genome Explorer builds an assembly bundle from the contigs rather than the scaffolds, so a scaffold file sits in the run folder but is not what the assembly viewport shows. See also: contig, paired-end, assembly bundle.
+
 **seqkit**{#seqkit}. A general-purpose toolkit for FASTA and FASTQ manipulation, used in Lungfish Genome Explorer for the read-length filter and for several sequence statistics. See also: FASTQ, read length.
 
 **Secondary alignment**{#secondary-alignment}. An extra record reporting another place a read could plausibly have come from, marked by FLAG bit 256 and produced in quantity by repeated regions, which Lungfish Genome Explorer excludes from a mapping run's BAM by default because the duplicate rows inflate read counts. See also: FLAG, primary alignment, supplementary alignment.
@@ -583,6 +595,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Subsampling**{#subsampling}. Drawing a smaller set of reads at random from a larger one, so the smaller set keeps the composition of the original without anyone choosing which reads survive, used to make a fast test slice or to cut two libraries to a common depth before comparing them. See also: FASTQ, read length.
 
 **Strand odds ratio**{#strand-odds-ratio}. A VCF statistic written as `SOR`, scoring how lopsidedly the reads supporting a variant came from one strand of the DNA rather than from both, with a higher number meaning a more lopsided split. A real variant should be seen about equally from both strands, so GATK's recommended hard filter marks a substitution whose `SOR` exceeds 3 and an indel whose `SOR` exceeds 10. See also: strand bias, hard filter, INFO.
+
+**Structural variation**{#structural-variation}. A difference between two genomes large enough to move, duplicate, invert, or delete a whole block of sequence rather than change individual bases, conventionally taken to mean anything from about fifty bases upward. Reference mapping reports these only indirectly, through reads whose ends fail to align and read pairs landing implausibly far apart, whereas an assembly reconstructs the rearranged sequence outright. See also: de novo assembly, soft-clip, contig.
 
 **Substitution model**{#substitution-model}. The set of assumed rates at which one base or residue changes into another, which a maximum-likelihood method needs before it can score a tree; IQ-TREE's default `MFP` setting is an instruction to test many models and use the best-fitting one rather than a model itself. See also: maximum likelihood, IQ-TREE.
 

@@ -3720,14 +3720,14 @@ operations:
         control: text
         default: "0.05"
         allowed: a decimal between 0 and 1, or blank
-        effect: Recorded with the run but not passed to GATK. GATK decides which alleles to emit from its own genotype likelihoods rather than from a frequency cut-off.
+        effect: Discarded when the run starts, neither passed to GATK nor recorded in provenance. GATK decides which alleles to emit from its own genotype likelihoods rather than from a frequency cut-off.
         when_to_change: Leave it alone. Use Extra arguments for a real GATK threshold.
         cli_flag: null
       - label: Minimum Depth
         control: text
         default: "10"
         allowed: a whole number, or blank
-        effect: Recorded with the run but not passed to GATK.
+        effect: Discarded when the run starts, neither passed to GATK nor recorded in provenance.
         when_to_change: Leave it alone. Use Extra arguments for a real GATK threshold.
         cli_flag: null
       - label: Extra arguments
