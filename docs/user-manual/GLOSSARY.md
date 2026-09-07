@@ -46,6 +46,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Annotation track**{#annotation-track}. One named set of features stored together inside a reference bundle and drawn as a single layer in the annotation lane of the sequence viewport, carrying both a display name and a stable track ID, so a GenBank import creates one named Imported Annotations and a bundle can hold several tracks at once. See also: reference bundle, GFF, sequence viewport.
 
+**argv**{#argv}. The command you typed split into its separate words, recorded in a provenance sidecar as a list so the exact invocation can be read back without guessing where one argument ended and the next began. See also: provenance sidecar, command-line flag, exit status.
+
 **Assembly bundle**{#assembly-bundle}. A `.lungfishref` bundle that holds a de novo assembly produced inside the project, typically by SPAdes or MEGAHIT, and lives under the project's `Analyses/` folder alongside every other result. The internal structure is identical to a reference bundle; only the folder placement distinguishes the two. See also: reference bundle, bundle.
 
 **Assembly graph**{#assembly-graph}. The structure an assembler builds before it emits any sequence, in which every stretch of sequence the reads agree on is a node and every observed overlap between two such stretches is an edge, so that emitting contigs amounts to walking the unambiguous paths through it and stopping wherever the graph branches. See also: contig, de novo assembly, N50.
@@ -98,6 +100,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **BQSR (Base Quality Score Recalibration)**{#bqsr}. The GATK preprocessing step that corrects systematic errors in a sequencer's per-base quality scores by modelling them against a set of known-variant sites, run in Lungfish through `lungfish gatk bqsr` ahead of germline calling. See also: VCF, HaplotypeCaller.
 
+**Boolean**{#boolean}. A value that is either true or false and nothing else, written in JSON as the bare words `true` and `false`, which is the shape of the role flags on a primer scheme's reference accessions. See also: JSON, manifest.
+
 **Bracken**{#bracken}. A companion program to Kraken 2 that re-estimates how abundant each species really was, by redistributing the reads Kraken 2 parked at a broad rank down onto the species those reads most likely came from, using how much the database's reference genomes overlap one another. Lungfish Genome Explorer always runs it after a Kraken 2 classification started from the dialog, and its numbers appear as the taxonomy table's Bracken column. See also: Kraken 2, read classification, clade count, taxon.
 
 **Branch length**{#branch-length}. The number attached to one branch of a phylogenetic tree, in the default phylogram drawing the estimated substitutions per site accumulated along that branch, so a long branch means a lot of inferred change rather than a long span of time. See also: phylogram, cladogram, topology.
@@ -117,6 +121,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Checkout**{#checkout}. The step at the start of a continuous integration job that copies a repository's tracked files onto the runner, written on GitHub Actions as `uses: actions/checkout@v4` and on CircleCI as the bare step `checkout`, without which the job has no files to work on. See also: repository, runner, continuous integration.
 
 **Call**{#call}. The identification a tool commits to after weighing the read evidence at one position or one locus, so an allele call names the allele the genotyping run believes the sample carries and a variant call names a position where the sample differs from the reference. A call is a best guess with evidence behind it rather than a measurement, which is why a genotype result offers a way to mark one reviewed or confirmed. See also: allele, genotype, variant-caller.
+
+**Canonical accession**{#canonical-accession}. The accession a primer scheme's coordinates were written against, marked `canonical` in the bundle manifest and the name an alignment's contig must match, directly or through an equivalent accession, for a trim to find its primers. See also: accession, equivalent accession, primer scheme.
 
 **Capped database**{#capped-database}. A reference database deliberately shrunk to a target memory size by discarding most of its stored sequence fragments, so a machine too small to hold the full collection can still run the classifier against it. The cost falls on sensitivity, since a read the full collection would have named at species level is more often left unclassified or reported at a broader rank, and the loss is heaviest for whichever organism the sample is actually full of. See also: Kraken 2, minimizer, read classification.
 
@@ -240,6 +246,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Environment variable**{#environment-variable}. A named value the shell hands to every program it starts, used by Lungfish Genome Explorer to relocate managed storage with `LUNGFISH_STORAGE_ROOT` and `LUNGFISH_CONDA_ROOT`, which it reads together, and to supply an NCBI account key with `NCBI_API_KEY`. See also: continuous integration, conda.
 
+**Equivalent accession**{#equivalent-accession}. A second accession listed in a primer scheme manifest as naming the same sequence as the canonical one, so an alignment mapped to either identifier resolves against the same scheme. See also: accession, canonical accession, alias map.
+
 **Error correction**{#error-correction}. A stage some assemblers run before building their graph, in which reads are compared against each other and a base that only one read carries where its neighbours agree on another is rewritten, on the reasoning that a base seen once is more likely a sequencing mistake than a real difference; SPAdes runs it by default and the assembly sheet's Skip error correction toggle turns it off. See also: de Bruijn graph, de novo assembly, read.
 
 **EsViritu**{#esviritu}. A read classifier built around a curated collection of viral genomes, which reports not only how many reads matched each virus but how much of that virus's genome those reads covered, shipped in Lungfish Genome Explorer's `metagenomics` plugin pack and run from **Tools > Classification > EsViritu...**. See also: read classification, coverage breadth, plugin pack.
@@ -255,6 +263,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## F
 
 **FAI (FASTA index)**{#fai}. A small text index file (typically `<sequence>.fasta.fai`) produced by `samtools faidx` that lets tools jump to a specific position in a FASTA without reading the whole file; required for variant calling and many other reference-keyed operations. See also: FASTA.
+
+**Failure report**{#failure-report}. The block Lungfish Genome Explorer assembles the moment an operation fails, holding the operation title, the command that ran, the error message, the error detail, and the log, written to a file under `~/Library/Logs/` in a build-named folder beneath `Operations/Failures` and reachable from the failed row's right-click menu. See also: Operations Panel, provenance sidecar, exit status.
 
 **FASTA**{#fasta}. A plain-text format for nucleotide or protein sequences, with each record introduced by a `>` header line followed by sequence lines containing the bases. Lungfish accepts plain FASTA, multi-record FASTA, and bgzipped FASTA at every reference picker. See also: FAI, FASTQ.
 
@@ -378,6 +388,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Key equivalent**{#key-equivalent}. The single letter, digit, or symbol at the end of a macOS keyboard shortcut, held to the modifier keys that come before it, which is the term Apple's own frameworks use for the value a menu item stores and the term the Lungfish Genome Explorer source uses when it defines one. See also: modifier key.
 
+**Kilobase**{#kilobase}. A thousand bases of sequence, written kb, the unit amplicon lengths are usually quoted in once they pass a few hundred bases. See also: amplicon, read length.
+
 **Kraken 2**{#kraken2}. A read classifier that assigns each read to a taxon by matching the read's minimizers against a database of reference genomes, chosen for breadth rather than depth and run in Lungfish Genome Explorer from **Tools > Classification > Kraken2...**, usually with Bracken estimating abundances from its assignments afterwards. See also: read classification, minimizer, lowest common ancestor, taxon.
 
 **Known sites**{#known-sites}. A catalogue of reference positions where human variation is already documented, supplied to GATK as one or more indexed VCF files so that steps such as BQSR can set those positions aside before treating any remaining mismatch as a sequencing error. The standard resources are dbSNP and the curated Mills indel set, and Lungfish Genome Explorer's `gatk bqsr` accepts them through a repeatable `--known-sites` option. See also: dbSNP, BQSR, VCF.
@@ -485,6 +497,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Newick**{#newick}. A compact parenthesised text format for phylogenetic trees, with branch lengths after colons and optional support values at internal nodes; the lingua franca for moving trees between FigTree, iTOL, ete3, and Lungfish. See also: phylogram.
 
 **Nanopore sequencing**{#nanopore-sequencing}. The Oxford Nanopore method that reads a DNA strand by drawing it through a protein pore and measuring how the ionic current changes as each stretch of bases passes through, which puts no ceiling on read length and yields reads tens of thousands of bases long, at the cost of a per-base error rate far higher than a short-read instrument's; Flye and hifiasm both accept these reads, and Flye accepts nothing else. See also: basecaller, read length, circular consensus sequencing.
+
+**NCBI (National Center for Biotechnology Information)**{#ncbi}. The American public repository for sequence data, which issues the accessions Lungfish Genome Explorer matches primer schemes against and serves the reference sequences a scheme's provenance record checksums. See also: accession, RefSeq, SRA.
 
 **Negative control**{#negative-control}. A sample carrying no template on purpose, prepared and sequenced alongside the real specimens so that any organism appearing in it must have come from the reagents, the laboratory, or the sequencing run rather than from a specimen, which is what makes it the reference point for judging contamination across a batch. See also: TaxTriage, read classification, samplesheet.
 
@@ -682,6 +696,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **SAM (Sequence Alignment Map)**{#sam}. The plain-text alignment format holding one row per aligned read, of which BAM is the compressed binary equivalent. Lungfish Genome Explorer reads and writes SAM, but its mapping pipeline never leaves one behind, sorting and indexing every alignment into a BAM and deleting the intermediate text file. See also: BAM, CRAM, BAI.
 
+**Shearing**{#shearing}. Breaking DNA into fragments at no fixed position, by physical or enzymatic means, which is how a shotgun library is made and the opposite of the numbered pieces an amplicon protocol produces. See also: shotgun sequencing, amplicon, library prep.
+
 **Shell**{#shell}. The program that reads what you type at a terminal prompt and runs it, holding the `PATH` it searches for programs and the environment variables it hands to each one it starts. See also: PATH, environment variable, exit status.
 
 **Sample metadata**{#sample-metadata}. Structured per-sample fields (collection date, source, and so on) imported from a CSV or TSV sheet and attached to samples in a project. See also: BioSample.
@@ -728,6 +744,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Smart-filter token**{#smart-filter-token}. One of the named filter chips revealed by the Presets button above the Variants tab, such as PASS, SNV, or DP >= 10, that applies a common variant filter with a single click and appears only when the loaded track carries the field it needs. See also: filter profile, FILTER.
 
+**snake_case**{#snake-case}. A naming style in which lowercase words are joined by underscores, as in `primer_count`, used for every key in a primer scheme manifest. See also: JSON, manifest.
+
 **Snakemake**{#snakemake}. A workflow language and runner in which an analysis is written as a set of rules, each naming its input files, its output files, and the command that turns one into the other, so the runner works out the order for itself, pinned by Lungfish Genome Explorer at version 9.25.2 and emitted as a `Snakefile` by the Snakemake Workflow provenance export. See also: Nextflow, provenance sidecar, container.
 
 **SNV (single-nucleotide variant)**{#snv}. A variant in which one reference base is read as one different base, written in a VCF as a REF and an ALT that are each a single character, and the commonest kind of difference between any two genomes. See also: indel, REF and ALT, VCF.
@@ -759,6 +777,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Substitution model**{#substitution-model}. The set of assumed rates at which one base or residue changes into another, which a maximum-likelihood method needs before it can score a tree; IQ-TREE's default `MFP` setting is an instruction to test many models and use the best-fitting one rather than a model itself. See also: maximum likelihood, IQ-TREE.
 
 **Switch**{#switch}. A command-line flag that carries no value after it, so it is either typed or left out and never takes a word of its own, as `--compress` and `--force` do on the Lungfish Genome Explorer commands that accept them. See also: command-line flag, subcommand.
+
+**Symlink**{#symlink}. A file that holds nothing but the path of another file or folder, so opening it opens the target instead, of which macOS keeps one at `/tmp` pointing at `/private/tmp`, giving one folder two spellings that some Lungfish Genome Explorer commands compare as though they were different places. See also: working directory.
 
 **Supplementary alignment**{#supplementary-alignment}. A secondary record for a read that maps in pieces (split-read or chimeric alignment), with the full read mapped at the primary position and supplementary records covering the other pieces; flag bit 2048 marks supplementary alignments. See also: BAM, FLAG.
 
@@ -839,6 +859,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Workflow lineage**{#workflow-lineage}. The ordered chain of tool invocations a Lungfish run record holds, shown as the Lineage block of the Inspector's Provenance section, where each numbered step expands to its own command, inputs, outputs, exit status, and wall time. Distinct from a viral lineage, which names a subgroup of a virus species. See also: run record, provenance sidecar.
 
 **Workflow package**{#workflow-package}. A `.lungfishflowpkg` folder holding a Nextflow or Snakemake pipeline together with a `manifest.json` that names the workflow, gives it a version and a category, declares which engine runs it, and declares the input bundle types it requires and the output bundle types it produces, from which Lungfish Genome Explorer generates the run form. A package is linked into the Workflow Library rather than copied into a project, and it can be enabled only when its runner is Nextflow or Snakemake and its manifest declares a required reference input, a required reads input, and at least one output. See also: workflow engine, run bundle, bundle.
+
+**Working directory**{#working-directory}. The folder a Terminal window is sitting in when a command is typed, which decides where relative paths point and where a command writes by default, and which the command `pwd` prints. See also: symlink, exit status.
+
+**Workflow Library**{#workflow-library}. The window opened with **Tools > Workflow Library...** that lists every specialized workflow and every linked workflow package as a card with an Enabled switch, and which is the only place a specialized workflow can be turned on before its Tools menu item stops reading `(not enabled)`. See also: workflow package, plugin pack.
 
 ## X
 
