@@ -42,6 +42,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Assembly graph**{#assembly-graph}. The structure an assembler builds before it emits any sequence, in which every stretch of sequence the reads agree on is a node and every observed overlap between two such stretches is an edge, so that emitting contigs amounts to walking the unambiguous paths through it and stopping wherever the graph branches. See also: contig, de novo assembly, N50.
 
+**Audit log**{#audit-log}. The record of analyst actions a genotype result keeps inside its `annotations.json` sidecar, written out as its own sheet in an exported workbook and as its own CSV in a LabKey export, so a reviewed result carries the trail of who changed what alongside the calls themselves. See also: override, provenance, genotype result bundle.
+
 ## B
 
 **BAI**{#bai}. The companion index file for a BAM that lets viewers jump to a specific reference position without reading the whole file; conventionally named `<sample>.bam.bai` and kept in the same folder as the BAM. See also: BAM.
@@ -116,6 +118,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Codon**{#codon}. A run of three consecutive bases inside a protein-coding gene that together encode one amino acid. Three adjacent SNPs falling inside one codon describe one amino acid change, not three; iVar can group them into a single VCF row when given a GFF annotation. See also: VCF.
 
+**Command-line flag**{#command-line-flag}. A named option typed after a command with two leading hyphens, such as `--to-format fasta`, which either carries a value after it or stands alone as a switch that is simply present or absent. See also: positional argument, subcommand.
+
 **Cohort**{#cohort}. A set of samples genotyped and compared together, presented across the columns of the genotype comparison matrix. See also: genotype matrix.
 
 **CombineGVCFs**{#combinegvcfs}. The GATK tool that merges several per-sample GVCFs into one combined GVCF held in a single file, which Lungfish Genome Explorer chooses over GenomicsDB for cohorts of 50 samples or fewer because a single file is simpler to move and inspect at that scale. See also: GVCF, GenomicsDB, joint genotyping, GenotypeGVCFs.
@@ -147,6 +151,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Coverage breadth**{#coverage-breadth}. The fraction of reference positions covered by at least one read, reported per contig in a mapping run's `mapping-result.json` and distinct from depth, which counts how many reads sit over a position rather than whether any do. See also: coverage, mapping.
 
 **CSI (coordinate-sorted index)**{#csi}. The alternative BAM index format for a reference sequence longer than the 512-megabase limit a BAI index can address, serving the same purpose of letting a viewer jump straight to a chosen position. Lungfish Genome Explorer writes BAI for the BAMs it produces and reads a CSI that arrives beside an imported BAM. See also: BAI, BAM.
+
+**CSV (comma-separated values)**{#csv}. A plain text table whose columns are separated by commas, one row per line, with any field containing a comma wrapped in quotation marks, readable by every spreadsheet and by any analysis script without a special library. See also: TSV, long format, XLSX.
 
 **Ct (cycle threshold)**{#ct}. The qPCR cycle number at which a sample's amplification signal crosses the detection threshold; a lower Ct means more starting template, so for a viral diagnostic a low Ct predicts a higher viral fraction in the sequencing reads and a smaller host-removal rate.
 
@@ -195,6 +201,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Error correction**{#error-correction}. A stage some assemblers run before building their graph, in which reads are compared against each other and a base that only one read carries where its neighbours agree on another is rewritten, on the reasoning that a base seen once is more likely a sequencing mistake than a real difference; SPAdes runs it by default and the assembly sheet's Skip error correction toggle turns it off. See also: de Bruijn graph, de novo assembly, read.
 
 **EsViritu**{#esviritu}. A read classifier built around a curated collection of viral genomes, which reports not only how many reads matched each virus but how much of that virus's genome those reads covered, shipped in Lungfish Genome Explorer's `metagenomics` plugin pack and run from **Tools > Classification > EsViritu...**. See also: read classification, coverage breadth, plugin pack.
+
+**Exit status**{#exit-status}. The number a command hands back to the shell when it finishes, where zero means it succeeded and any other value means it stopped for a reason the command defines, which is what a script tests to decide whether to carry on. See also: command-line flag, subcommand.
 
 **Exon**{#exon}. One of the stretches of a gene that survives splicing and contributes to the mature transcript, so a protein-coding sequence split across three exons is written in a GenBank record as a `join()` of three ranges. See also: CDS, GFF.
 
@@ -340,6 +348,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Locus**{#locus}. The place on a chromosome where one particular gene sits, so that the alternative sequences a population carries at that place are its alleles; MHC genotyping reports one group of calls per locus, and which loci appear depends on the allele library a run used. See also: allele, MHC, allele target.
 
+**Long format**{#long-format}. A table shape in which each row records one single fact, such as one sample's read count for one allele target, rather than one row per sample with a column per allele, which makes the table taller and narrower and is the shape a database loads most easily. See also: CSV, LabKey, pivot workbook.
+
 **Lowest common ancestor**{#lowest-common-ancestor}. The most specific taxon that every organism matching a read belongs to, which a classifier reports instead of guessing when a read's sequence fits several relatives equally well, so a read shared across a whole genus is labelled with the genus rather than with one of its species. See also: taxon, taxonomic rank, read classification.
 
 ## M
@@ -369,6 +379,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Metagenomics**{#metagenomics}. The study of all the nucleic acid present in a mixed sample at once, rather than of one cultured organism, which is the setting read classification was built for and the reason its tools ask for large reference databases and a great deal of memory. See also: read classification, metabarcoding, shotgun.
 
 **Methods export**{#methods-export}. The Lungfish provenance export that emits a short Markdown document with a Methods heading, a Computational Analysis section naming each successful step's tool and resolved version in the order they ran, a tool versions table, an input file list with checksums, and a reproducibility paragraph, written as a draft to edit before it goes into a paper. See also: provenance sidecar.
+
+**MCM (Mauritian cynomolgus macaque)**{#mcm}. A macaque population descended from a small founding group, which left it carrying only a handful of MHC haplotypes where other macaque populations carry many, making it the standard dataset for teaching and testing haplotype assignment. See also: haplotype, MHC, immunogenetics.
 
 **MHC (Major Histocompatibility Complex)**{#mhc}. The gene-dense immune region whose proteins hold up fragments of what is inside a cell for the immune system to inspect, the most variable region of a vertebrate genome, and the target of the amplicon genotyping workflows in this manual. See also: haplotype, immunogenetics, class I MHC, class II MHC.
 
@@ -434,9 +446,13 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Outgroup**{#outgroup}. A sequence included in a phylogenetic analysis because you are confident it falls outside the group under study, used to place the root so the rest of the tree can be read as a sequence of descent. See also: rooting, topology, clade.
 
+**Override**{#override}. A genotype call an analyst replaced by hand in the result window, stored in the result's annotation sidecar alongside the original call, the reason, and the author, so an exported workbook or LabKey file reports the reviewed call while still carrying the pipeline's own. See also: audit log, genotype matrix, genotype result bundle.
+
 ## P
 
 **Paired-end**{#paired-end}. A sequencing protocol that reads each DNA fragment from both ends, producing two reads per fragment; the two halves of a pair travel as separate FASTQ files with `_1`/`_2` or `_R1`/`_R2` suffixes. See also: FASTQ, single-end.
+
+**PCR (Polymerase Chain Reaction)**{#pcr}. The laboratory reaction that makes millions of copies of one chosen stretch of DNA, using a pair of primers to mark where copying starts and stops, which is what produces the amplicons an amplicon sequencing run reads. See also: amplicon, primer, PCR duplicate.
 
 **PCR duplicate**{#pcr-duplicate}. A read that is a copy of another read because both came from the same original DNA fragment amplified during library preparation, so the two carry one observation between them rather than two. Amplicon protocols produce identical read starts by design, so duplicates there are expected rather than artifacts. See also: optical duplicate, mark duplicates, clumpify.
 
@@ -462,9 +478,13 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Pileup**{#pileup}. The column of bases observed at one reference position across every read that covers it, together with their qualities and strands; the unit of evidence a variant caller weighs at each position. See also: coverage, variant-caller.
 
+**Pivot workbook**{#pivot-workbook}. An Excel workbook whose main sheet lays samples across the columns and allele targets down the rows, the transpose of the sample-by-locus matrix, which is the orientation most downstream genotyping spreadsheets expect and the shape the Filtered Pivot export writes. See also: XLSX, genotype matrix, long format.
+
 **Ploidy**{#ploidy}. The number of copies of each chromosome an organism carries, which is two for a human and one for a virus or a bacterium, and which decides what genotypes a caller is allowed to propose at a position. A caller assuming two copies will force a viral sample into `0/1` and `1/1` genotypes that mean nothing, which is why a haploid genome is usually called with an explicit ploidy setting. See also: genotype, heterozygous, variant-caller.
 
 **Plugin pack**{#plugin-pack}. A themed group of related bioinformatics tools that Lungfish installs on demand into per-tool conda environments, named for the workflow it supports (for example, `read-mapping`, `variant-calling`, `assembly`). See also: conda, micromamba.
+
+**Positional argument**{#positional-argument}. A value typed at a fixed place in a command with no name in front of it, so its meaning comes from where it sits rather than from a label, which is how most commands take their input file. See also: command-line flag, subcommand.
 
 **Post-install hook**{#post-install-hook}. A follow-up command a plugin pack declares for itself and Lungfish runs after the pack's tools are installed, such as downloading the lineage data a surveillance tool needs, with the count of hooks shown on the pack's card in the Plugin Manager. See also: plugin pack.
 
@@ -624,6 +644,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Sublineage**{#sublineage}. A viral lineage nested inside another one, named by extending the parent's name with a further number, so BQ.1.19 carries every mutation that defines BQ.1 plus the additional ones that distinguish it, which is why closely related sublineages are the hardest pairs for a demixing tool to tell apart. See also: lineage, demixing.
 
+**Subcommand**{#subcommand}. The word typed after a command-line program's name that picks which operation runs, as `convert` does in `lungfish-cli convert`, and which may itself carry further subcommands beneath it. See also: command-line flag, positional argument.
+
 **Subsampling**{#subsampling}. Drawing a smaller set of reads at random from a larger one, so the smaller set keeps the composition of the original without anyone choosing which reads survive, used to make a fast test slice or to cut two libraries to a common depth before comparing them. See also: FASTQ, read length.
 
 **Strand odds ratio**{#strand-odds-ratio}. A VCF statistic written as `SOR`, scoring how lopsidedly the reads supporting a variant came from one strand of the DNA rather than from both, with a higher number meaning a more lopsided split. A real variant should be seen about equally from both strands, so GATK's recommended hard filter marks a substitution whose `SOR` exceeds 3 and an indel whose `SOR` exceeds 10. See also: strand bias, hard filter, INFO.
@@ -701,3 +723,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Workflow lineage**{#workflow-lineage}. The ordered chain of tool invocations a Lungfish run record holds, shown as the Lineage block of the Inspector's Provenance section, where each numbered step expands to its own command, inputs, outputs, exit status, and wall time. Distinct from a viral lineage, which names a subgroup of a virus species. See also: run record, provenance sidecar.
 
 **Workflow package**{#workflow-package}. A `.lungfishflowpkg` folder holding a Nextflow or Snakemake pipeline together with a `manifest.json` that names the workflow, gives it a version and a category, declares which engine runs it, and declares the input bundle types it requires and the output bundle types it produces, from which Lungfish Genome Explorer generates the run form. A package is linked into the Workflow Library rather than copied into a project, and it can be enabled only when its runner is Nextflow or Snakemake and its manifest declares a required reference input, a required reads input, and at least one output. See also: workflow engine, run bundle, bundle.
+
+## X
+
+**XLSX**{#xlsx}. The Excel workbook format, a zipped folder of XML sheets that every spreadsheet application reads, and the format of both workbooks a genotype export writes, the sample-by-locus matrix workbook and the samples-across pivot workbook. See also: pivot workbook, CSV, genotype result bundle.

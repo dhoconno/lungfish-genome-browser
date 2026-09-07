@@ -248,3 +248,20 @@ qc-summary` reports the arithmetic mean of the scores (34.93 on the same
 reads). Both are right. Chapters quote the card value when they describe
 the window, name which average a number is whenever the command line is
 involved, and never compare a card to a CLI report.
+
+## Genotyping sample status (settled by the chapter 54 fidelity review)
+
+The manual splits a genotyping plate the way the app labels it. A sample
+whose retained unique reads number fewer than 1,000 carries the app's
+`lowSupport` label and one at 1,000 or more carries `ok`
+(`InspectorViewController+PublicAPI.swift:743-748`), which on the Williams
+plate gives 23 `ok` and 7 `lowSupport`, with `ok` running from 1,976 to
+58,370 reads and `lowSupport` from 2 to 713. No chapter draws its own
+line at a different count. The Call-support check in the sample
+workbench uses 1,000 reads and 20 alignments, and the cohort summary's
+default `Below 5.0K reads` threshold belongs to a haplotyped result, so
+the three numbers are three different checks and a chapter that names
+more than one says so. The manual invents no further read thresholds. A
+genotype-only result hides the cohort summary panel and the Smart
+Cohorts section, so chapters written against the Williams project take
+the cohort-level depth judgement from `genotype list-samples`.
