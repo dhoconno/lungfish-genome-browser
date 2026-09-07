@@ -128,9 +128,13 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Duplex read**{#duplex-read}. An Oxford Nanopore read produced by basecalling both strands of the same DNA molecule and reconciling them into a single high-accuracy consensus; duplex Q30+ approximates Illumina-grade accuracy and is the basis for modern Medaka-duplex models. See also: simplex read, basecaller.
 
+**Duplicate rate**{#duplicate-rate}. The share of an alignment's records that duplicate marking flagged as copies of another record, read as a judgement on the library rather than on the sequencing, so a few percent on a PCR-free shotgun library is healthy while a fifth or more means the library was amplified from too few distinct starting molecules. See also: PCR duplicate, mark duplicates, library prep.
+
 ## E
 
 **E-value**{#e-value}. The number of database alignments of equal or better score expected by chance for a given query length and database size; in BLAST results, smaller is better, with values at or below `1e-30` indicating an essentially unmistakable match for a typical viral read. See also: BLAST, percent identity.
+
+**Edit distance**{#edit-distance}. The number of single-base substitutions, insertions, and deletions separating an aligned read from the reference stretch it sits on, written into the read's optional `NM` tag by the mapper, so a read with `NM` of 0 matches the reference perfectly and is what the zero-mismatch alignment filter keeps. See also: BAM, percent identity, alignment.
 
 **ENA (European Nucleotide Archive)**{#ena}. The European mirror of the SRA, hosted at EMBL-EBI; one of three INSDC partners (with NCBI SRA and DDBJ) that share deposited sequencing data. Lungfish downloads SRA runs from ENA first because ENA serves pre-converted FASTQs directly, and falls back to the NCBI SRA Toolkit when ENA is unavailable. See also: SRA.
 
@@ -156,7 +160,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **FORMAT (in a VCF)**{#format}. The ninth VCF column, declaring a colon-separated list of keys that describe the per-sample payload columns following it, such as the `GT:PL:AD` that bcftools writes. The column is optional, and LoFreq output has no FORMAT and no sample column at all. See also: VCF, INFO.
 
-**Flagstat**{#flagstat}. The per-category tally `samtools flagstat` produces by decoding the FLAG field of every record in a BAM, giving counts for total, primary, secondary, supplementary, mapped, properly paired, and singleton records, and shown in the alignment Inspector as a collapsed Flag Stats list. See also: FLAG, BAM, primary alignment.
+**Flagstat**{#flagstat}. The per-category tally `samtools flagstat` produces by decoding the FLAG field of every record in a BAM, giving counts for total, primary, secondary, supplementary, mapped, properly paired, and singleton records, and shown in the alignment Inspector as a collapsed Flag Statistics list. See also: FLAG, BAM, primary alignment.
 
 **Fluidigm sample barcode**{#fluidigm-sample-barcode}. The sample-identifying sequence carried between the fixed CS1 and CS2 primer sequences in a library built with Fluidigm Access Array primers, which Lungfish Genome Explorer reads to split one bulk Oxford Nanopore bundle into per-sample bundles of the insert lying between those two primers. See also: barcode, demultiplex, amplicon.
 
