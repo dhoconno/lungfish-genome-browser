@@ -166,6 +166,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **dbSNP**{#dbsnp}. The NCBI catalogue of human genetic variants that have already been observed and named, distributed as a large VCF per reference build and used by GATK as a known-sites resource so that expected human variation is not mistaken for sequencing error. Lungfish Genome Explorer neither ships nor downloads it, so you fetch it yourself from the Broad Institute's public GATK resource bundle. See also: known sites, BQSR, VCF.
 
+**Directed acyclic graph**{#directed-acyclic-graph}. A set of boxes joined by one-way arrows in which no path of arrows ever leads back to the box it started from, which is the shape a Workflow Builder drawing must have so that the runner can always work out an order in which every step's input is ready before that step runs. See also: node port, workflow bundle.
+
 **Docker**{#docker}. The container software that nf-core pipelines run their tool steps inside, installed on a Mac as the separate Docker Desktop application rather than through the Lungfish Genome Explorer Plugin Manager, and the only execution profile the Viral Recon wizard will accept. See also: container, nf-core, Nextflow.
 
 **Download Center**{#download-center}. An older name for the Operations Panel that survives in some documentation and in the source as an alias. Downloads from NCBI and the SRA report as rows in the Operations Panel, which is the place to look when a download does not appear where you expected it. See also: Operations Panel, SRA.
@@ -393,6 +395,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Nextflow**{#nextflow}. A language and runner for describing an analysis as a set of steps and the files that flow between them, which then executes those steps in the right order and inside containers, shipped with the Required Setup pack and used by Lungfish Genome Explorer to run the nf-core/viralrecon pipeline. See also: nf-core, container, run bundle.
 
 **nf-core**{#nf-core}. A community that curates, versions, and tests openly published Nextflow pipelines to a common standard, so a pipeline named by release runs the same steps for everyone who runs that release, and Lungfish Genome Explorer supports one of them, nf-core/viralrecon, pinned at release 3.0.0. See also: Nextflow, container.
+
+**Node port**{#node-port}. A labelled connection point on the edge of a Workflow Builder node, carrying a direction and a data type, so that LGE accepts a connection only between two ports whose types match and refuses one that would join, for example, a reads port to an alignments port. See also: directed acyclic graph, workflow bundle.
 
 **Novel variant**{#novel-variant}. A call absent from the catalogue of variation it was compared against, reported by Picard's metrics step as `NOVEL_SNPS` and `NOVEL_INDELS`, and worth reading with suspicion rather than excitement because in a well-studied human sample most genuine variation is already catalogued. See also: dbSNP, transition to transversion ratio, VCF.
 
@@ -669,5 +673,7 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## W
 
 **Wastewater Surveillance pack**{#wastewater-surveillance}. The Lungfish Genome Explorer plugin pack that installs Freyja together with iVar, minimap2, Pangolin, and Nextclade, marked Experimental in the Plugin Manager and installing a build of Freyja that runs natively on Apple Silicon. See also: plugin pack, Freyja, demixing.
+
+**Workflow bundle**{#workflow-bundle}. A `.lungfishflow` folder under a project's `Workflows` folder holding one Workflow Builder chain, with the drawing and every parameter in `workflow.json`, a copy in `graph.json`, one line per save in `versions/history.json`, a `provenance.json` naming the LGE version and the checksum of each written file, and a `runs/<run-id>/` folder for each time the chain was run. See also: directed acyclic graph, node port, provenance.
 
 **Workflow lineage**{#workflow-lineage}. The ordered chain of tool invocations a Lungfish run record holds, shown as the Lineage block of the Inspector's Provenance section, where each numbered step expands to its own command, inputs, outputs, exit status, and wall time. Distinct from a viral lineage, which names a subgroup of a virus species. See also: run record, provenance sidecar.

@@ -5302,7 +5302,7 @@ operations:
     title: Create Bundle
     entry_points:
       - "Assembly viewport action bar: Create Bundle"
-      - "Assembly viewport contig table context menu: Create Bundle"
+      - "Assembly viewport contig table context menu: Extract to New Bundle..."
       - "CLI: lungfish-cli extract contigs --assembly <run folder> --contig <name> --bundle"
     gating: []
     sources:

@@ -3772,7 +3772,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 46 | 07-assembly/01-when-to-assemble | When to Assemble | [] | human-mito | existing | done |
 | 47 | 07-assembly/02-running-spades | Running SPAdes | [assemble.spades, assemble.megahit, assemble.skesa] | human-mito | existing | queued |
 | 48 | 07-assembly/03-running-flye-or-hifiasm | Running Flye or hifiasm | [assemble.flye, assemble.hifiasm] | hg002-long-reads | existing | queued |
-| 49 | 07-assembly/04-extracting-contigs | Extracting Contigs | [assemble.extract-contigs] | human-mito | existing | queued |
+| 49 | 07-assembly/04-extracting-contigs | Extracting Contigs | [assemble.extract-contigs] | human-mito | existing | done |
 | 50 | 08-workflows/01-the-workflow-builder | The Workflow Builder | [workflow.builder] | demo project | existing | queued |
 | 51 | 08-workflows/02-exporting-as-nextflow-or-snakemake | Exporting as Nextflow or Snakemake | [provenance.export] | demo project | existing | queued |
 | 52 | 08-workflows/03-running-external-workflows | Running External Workflows | [workflow.library-run] | hello-world packages | existing (add to nav) | queued |
