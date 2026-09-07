@@ -12,9 +12,15 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **AI assistant**{#ai-assistant}. An in-app chat panel that answers questions about the active dataset and suggests workflows through a bring-your-own-key AI provider; it interprets and explains but does not modify your project.
 
+**API access**{#api-access}. A stored key from an outside AI provider that lets Lungfish Genome Explorer send a question to that provider's service over the internet, which a few optional features require and which nothing in a genotyping run needs. See also: AI assistant.
+
+**API key**{#api-key}. The long secret string an outside service issues so it can tell which account a request belongs to and which account to bill for it, held by Lungfish Genome Explorer in the macOS Keychain rather than in a project folder. See also: AI assistant, API access, Keychain.
+
 **Alu element**{#alu-element}. The most abundant repeated sequence in the human genome, a roughly 300-base insertion present in about a million copies and making up over a tenth of the genome, so a shotgun library from human DNA carries recognisable Alu sequence in a small but steady percentage of its reads. See also: sequence motif, shotgun sequencing.
 
 **Alias map**{#alias-map}. The internal table Lungfish consults during VCF import to recognise that two reference accessions (for example, the GenBank record `MN908947.3` and the RefSeq record `NC_045512.2`) name the same underlying sequence, so a VCF keyed against one resolves cleanly to a project bundle keyed against the other. See also: VCF, reference bundle.
+
+**Alias table**{#alias-table}. The fixed list built into Lungfish Genome Explorer that maps the many spellings one tool answers to, such as `bwa`, `bwa-mem`, and `bwa-mem2`, onto a single upstream citation, consulted by `provenance bibliography` when it turns a run's recorded steps into a reference list. See also: citation, provenance sidecar, DOI.
 
 **Alignment**{#alignment}. The mapping of one read against a reference genome, recorded as one row in a BAM file with a position, strand, CIGAR string, and quality scores. See also: BAM, mapping.
 
@@ -92,6 +98,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 ## C
 
+**cDNA**{#cdna}. A DNA copy made from a messenger RNA transcript, so it holds the joined coding stretches of a gene without the intervening non-coding stretches a genomic sequence carries, which makes a cDNA record of the same allele shorter than its genomic counterpart. See also: CDS, allele target.
+
 **CDS (coding sequence)**{#cds}. The portion of a gene that is translated into protein; Lungfish can annotate a best-match CDS on a sequence. See also: open reading frame, reading frame.
 
 **Checksum**{#checksum}. A short fingerprint computed from a file's exact bytes, recorded by Lungfish as SHA-256 in every provenance record so two people can confirm they hold the identical file. See also: provenance, reproducibility.
@@ -103,6 +111,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Chimera**{#chimera}. An artificial sequence formed when two real templates join during PCR, so the result looks like a single genuine molecule while belonging to no organism, which is why a metabarcoding run checks its unmatched sequences for chimeras before anyone reports them as a new species. See also: metabarcoding, vsearch, amplicon.
 
 **Circular consensus sequencing (CCS)**{#circular-consensus-sequencing}. The PacBio protocol that circularises a DNA fragment, reads it repeatedly, and reports the consensus of those passes as one read, which is why HiFi reads carry both long lengths and Q30+ quality strings; a HiFi read's quality is a consensus confidence, not a raw signal measurement. See also: read length, Phred score.
+
+**Citation**{#citation}. The formal reference to the paper or project page that describes a bioinformatics tool, owed to that tool's authors whenever it contributed a number to a published result, and printed for one finished run by `lungfish-cli provenance bibliography`. See also: DOI, alias table, provenance sidecar.
 
 **Clade**{#clade}. A group on a phylogenetic tree consisting of one internal node and every tip descended from it; the unit a phylogeneticist points to when claiming "these isolates share a recent common ancestor". See also: phylogram.
 
@@ -187,6 +197,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Directed acyclic graph**{#directed-acyclic-graph}. A set of boxes joined by one-way arrows in which no path of arrows ever leads back to the box it started from, which is the shape a Workflow Builder drawing must have so that the runner can always work out an order in which every step's input is ready before that step runs. See also: node port, workflow bundle.
 
 **Docker**{#docker}. The container software that nf-core pipelines run their tool steps inside, installed on a Mac as the separate Docker Desktop application rather than through the Lungfish Genome Explorer Plugin Manager, and the only execution profile the Viral Recon wizard will accept. See also: container, nf-core, Nextflow.
+
+**DOI**{#doi}. The digital object identifier of a published article, the permanent string beginning `10.` that a journal prints on the first page and that resolves at `https://doi.org/` even after the journal moves its website, which is why a bibliography cites it rather than a URL. See also: citation, alias table.
 
 **Download Center**{#download-center}. An older name for the Operations Panel that survives in some documentation and in the source as an alias. Downloads from NCBI and the SRA report as rows in the Operations Panel, which is the place to look when a download does not appear where you expected it. See also: Operations Panel, SRA.
 
@@ -323,6 +335,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 ## K
 
 **k-mer**{#k-mer}. A substring of exactly k bases taken from a longer sequence, the unit several tools match on because comparing short fixed-length words is far faster than comparing whole sequences. bbduk spots a primer in a read by looking for the primer's k-mers. See also: bbduk, minimizer, Hamming distance.
+
+**Keychain**{#keychain}. The macOS system store for passwords and other secrets, unlocked by your login, which is where Lungfish Genome Explorer writes an AI provider's API key so that the key survives a restart without ever entering a `.lungfish` project folder. See also: API key, AI assistant.
 
 **Kraken 2**{#kraken2}. A read classifier that assigns each read to a taxon by matching the read's minimizers against a database of reference genomes, chosen for breadth rather than depth and run in Lungfish Genome Explorer from **Tools > Classification > Kraken2...**, usually with Bracken estimating abundances from its assignments afterwards. See also: read classification, minimizer, lowest common ancestor, taxon.
 
@@ -721,6 +735,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Virtual bundle**{#virtual-bundle}. A read bundle that stores a short manifest naming its parent bundle and the operation to apply rather than a second copy of the reads, keeping only a preview of about a thousand reads on disk, so that many subsets of one sample cost about as much storage as one. See also: materialization, bundle, subsampling.
 
 ## W
+
+**Wall time**{#wall-time}. The real elapsed time a run took from start to finish, as a clock on the wall would measure it, which is longer than the processor time when a run waits on disk and shorter than the summed processor time when it uses several cores at once. See also: threads, provenance.
 
 **Wastewater Surveillance pack**{#wastewater-surveillance}. The Lungfish Genome Explorer plugin pack that installs Freyja together with iVar, minimap2, Pangolin, and Nextclade, marked Experimental in the Plugin Manager and installing a build of Freyja that runs natively on Apple Silicon. See also: plugin pack, Freyja, demixing.
 

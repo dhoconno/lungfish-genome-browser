@@ -133,7 +133,7 @@ nav:
 
   - Genotyping:
     - What Is MHC Genotyping: chapters/09-genotyping/01-what-is-mhc-genotyping.md
-    - Running Genotyping: chapters/09-genotyping/02-running-genotyping.md
+    - Running Amplicon MHC Genotyping: chapters/09-genotyping/02-running-genotyping.md
     - Reading the Genotype Comparison: chapters/09-genotyping/03-reading-the-genotype-comparison.md
     - Exporting Genotypes: chapters/09-genotyping/04-haplotype-definitions-and-export.md
 
@@ -144,6 +144,7 @@ nav:
     - Primer Schemes: chapters/appendices/primer-schemes.md
     - Tool Versions: chapters/appendices/tool-versions.md
     - Running in CI: chapters/appendices/06-running-in-ci.md
+    - AI Assistant: chapters/appendices/ai-assistant.md
     - Power User Notes: chapters/appendices/power-user-notes.md
     - Shared Projects and Bundle Migration: chapters/appendices/shared-projects.md
     - Troubleshooting: chapters/appendices/troubleshooting.md
