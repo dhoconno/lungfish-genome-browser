@@ -100,7 +100,7 @@ The sidebar is the authoritative view of the project, so when it and Finder disa
 | Folder | What lands there |
 |---|---|
 | `Imports/` | Anything you brought in from your own disk, such as reads copied off a sequencer or a reference a colleague mailed you |
-| `Downloads/` | Anything LGE fetched from the internet, each item arriving with a provenance sidecar |
+| `Downloads/` | Reference records LGE fetched from NCBI, each arriving with its origin recorded. Reads fetched from SRA go through the import path and land under `Imports/` instead |
 | `Reference Sequences/` | Reference bundles, each carrying the extension `.lungfishref` |
 | `Primer Schemes/` | Primer-scheme bundles carrying the extension `.lungfishprimers`, which list the short DNA primers used to amplify a target region |
 | `Extractions/` | Reads and reference regions pulled out into new bundles by an extraction operation |

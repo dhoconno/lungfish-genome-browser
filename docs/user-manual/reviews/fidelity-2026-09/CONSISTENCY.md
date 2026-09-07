@@ -40,7 +40,9 @@ browser window.
 ## Folders and files
 
 A project is a `.lungfish` folder. Inside it, imported reads sit under
-`Imports/`, downloaded data under `Downloads/`, reference bundles under
+`Imports/`, downloaded reference records under `Downloads/` (reads fetched
+from SRA or ENA go through the Import Center and land under `Imports/` as
+`.lungfishfastq` bundles, settled by a live download on 2026-09-06), reference bundles under
 `Reference Sequences/`, extractions under `Extractions/`, and every
 analysis result under `Analyses/<tool>-<timestamp>/`, with one exception.
 Multiple sequence alignments land under `Analyses/Multiple Sequence
