@@ -278,3 +278,16 @@ them, so Help is Cmd-Shift-slash, written Cmd-? only with that gloss
 beside it. A greyed menu item's shortcut does nothing until the item is
 enabled. Chapters committed with Cmd-Option or Cmd-Ctrl are a Phase 6
 sweep item.
+
+## Exit statuses and the Deacon indexes (settled by the chapter 67 fidelity review)
+
+`lungfish-cli` exits 2 for a usage error, 3 for an unknown pack, 10 when
+`tools update --plan` finds pending work, and 64 for a workflow error,
+which is the status behind the missing expected output refusal, the
+empty Kraken 2 report, and `provenance verify` on an unsigned record
+(`LungfishCLI.swift:154`). No chapter calls 64 a usage refusal. Both
+Deacon indexes (`deacon-panhuman` and the ribosomal index) are managed
+data entries the tool lock folds into Required Setup, so they install
+with the app and no chapter says the command line is the only route to
+them. The Plugin Manager's Databases tab still lists only the Kraken 2
+catalogue, which is why they do not appear there.
