@@ -43,8 +43,20 @@ A project is a `.lungfish` folder. Inside it, imported reads sit under
 `Imports/`, downloaded reference records under `Downloads/` (reads fetched
 from SRA or ENA go through the Import Center and land under `Imports/` as
 `.lungfishfastq` bundles, settled by a live download on 2026-09-06), reference bundles under
-`Reference Sequences/`, extractions under `Extractions/`, and every
-analysis result under `Analyses/<tool>-<timestamp>/`, with one exception.
+`Reference Sequences/`, extractions under `Extractions/`, and analysis
+results under `Analyses/`. Two shapes live there. A run by a named tool
+(a classifier, a mapper, an assembler, ONT genotyping, Viral Recon) gets
+its own subfolder `Analyses/<tool>-<timestamp>/`
+(`AnalysesFolder.createAnalysisDirectory`, whose `knownTools` list names
+esviritu, kraken2, taxtriage, minimap2, bwa-mem2, bowtie2, bbmap, spades,
+megahit, skesa, flye, hifiasm, naomgs, nvd, cz-id, mafft, ont-genotyping,
+viralrecon). A FASTQ/FASTA operation from the operations window (trimming,
+filtering, decontamination, subsetting, read processing) writes its result
+bundle directly under `Analyses/`, named for the operation, for example
+`fastpTrim` (`FASTQOperationDialogState.defaultOutputDirectory`,
+`MainSplitViewController+GenomicsDisplay.swift:993-994` and `:1231`, settled
+2026-09-07). A Grouped Result run names its folder from the operation
+title, not a timestamp. One further exception.
 Multiple sequence alignments land under `Analyses/Multiple Sequence
 Alignments/` as `.lungfishmsa` bundles (verified by a CLI run on
 2026-09-06). Tree bundles are different. The app writes a `.lungfishtree`
