@@ -3746,7 +3746,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 20 | 03-reads/07-ont-runs | ONT Runs | [import.ont-run, fastq.demultiplex-barcodes, fastq.ont-fluidigm-sample-split] | hg002-long-reads | existing | done |
 | 21 | 03-reads/08-read-processing | Read Processing | [fastq.merge-overlapping-pairs, fastq.repair-paired-end-files, fastq.reverse-complement, fastq.translate, fastq.orient-reads, fastq.correct-sequencing-errors] | hg002-chr20 | existing (add to nav) | done |
 | 22 | 04-alignments/01-mapping-reads-to-a-reference | Mapping Reads to a Reference | [map.minimap2, map.bwa-mem2, map.bowtie2, map.bbmap, import.bam] | hg002-chr20 | existing | done |
-| 23 | 04-alignments/02-reading-an-alignment | Reading an Alignment | [bam.read-display, bam.extract-reads-in-region] | hg002-chr20 | existing | queued |
+| 23 | 04-alignments/02-reading-an-alignment | Reading an Alignment | [bam.read-display, bam.extract-reads-in-region] | hg002-chr20 | existing | done |
 | 24 | 04-alignments/03-primer-trimming | Primer Trimming | [bam.primer-trim] | sarscov2-srr36291587 | existing | done |
 | 25 | 04-alignments/04-alignment-quality | Alignment Quality | [bam.mark-duplicates, bam.filter] | hg002-chr20 | existing | queued |
 | 26 | 04-alignments/05-viral-recon-wizard | Viral Recon Wizard | [workflow.viral-recon] | sarscov2-srr36291587 | existing | queued |

@@ -93,7 +93,10 @@ does, what the default is and why, when to change it. Labels are copied from
 
 When a setting reaches the command line, the flag goes in a final short
 sentence, "On the command line this is `--min-length`." When a setting has
-no flag, say "This setting has no command-line flag."
+no flag, say "This setting has no command-line flag." A group of viewer
+display settings that all lack a flag may say so once in the group's lead
+paragraph instead of once per setting (ruled 2026-09-07 at the chapter 23
+gate).
 
 ## Recurring sentences
 

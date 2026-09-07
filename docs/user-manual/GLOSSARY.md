@@ -28,6 +28,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Amplicon**{#amplicon}. A target region of a genome amplified by PCR, used as the unit of an amplicon-based sequencing protocol such as ARTIC or QIASeqDIRECT. A run produces many overlapping amplicons that together tile the region of interest.
 
+**Amplicon dropout**{#amplicon-dropout}. The failure of one amplicon in a tiled protocol to amplify, so no reads cover the stretch of genome it should have carried and a variant caller reports nothing there, which is indistinguishable from a genuinely unchanged region unless you read the per-amplicon coverage table. See also: amplicon, coverage, mosdepth.
+
 **Annotation track**{#annotation-track}. One named set of features stored together inside a reference bundle and drawn as a single layer in the annotation lane of the sequence viewport, carrying both a display name and a stable track ID, so a GenBank import creates one named Imported Annotations and a bundle can hold several tracks at once. See also: reference bundle, GFF, sequence viewport.
 
 **Assembly bundle**{#assembly-bundle}. A `.lungfishref` bundle that holds a de novo assembly produced inside the project, typically by SPAdes or MEGAHIT, and lives under the project's `Analyses/` folder alongside every other result. The internal structure is identical to a reference bundle; only the folder placement distinguishes the two. See also: reference bundle, bundle.
@@ -100,6 +102,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Conservation**{#conservation}. At one alignment column, the share of the non-gap rows that carry that column's most common residue, so a column where every row agrees scores 1 and a column split evenly between two residues scores 0.5. See also: alignment column, MSA.
 
+**Container**{#container}. A packaged copy of a program together with the libraries and files it needs to run, so the program behaves identically on every machine that runs the package, which is how a published pipeline guarantees that its results do not depend on whose computer produced them. See also: Docker, Nextflow, plugin pack.
+
 **Contig**{#contig}. A contiguous stretch of assembled sequence emitted by an assembler, representing the longest path through the assembly graph that the algorithm could resolve unambiguously; one assembly bundle holds many contigs, ranked by length in the assembly viewport. See also: assembly bundle, N50.
 
 **Contig (in a reference)**{#contig-reference}. One named sequence in a multi-record FASTA; in `.lungfishref` bundles the contig list comes from FASTA headers and matches the BAM, VCF, and GFF3 contig fields.
@@ -123,6 +127,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Demultiplex**{#demultiplex}. Separating a mixed sequencing run into per-sample read sets by their barcode. See also: barcode, barcode kit.
 
 **Depth**{#depth}. Synonym for coverage in this manual. The number of reads stacked at one reference position. See also: coverage.
+
+**Docker**{#docker}. The container software that nf-core pipelines run their tool steps inside, installed on a Mac as the separate Docker Desktop application rather than through the Lungfish Genome Explorer Plugin Manager, and the only execution profile the Viral Recon wizard will accept. See also: container, nf-core, Nextflow.
 
 **Download Center**{#download-center}. An older name for the Operations Panel that survives in some documentation and in the source as an alias. Downloads from NCBI and the SRA report as rows in the Operations Panel, which is the place to look when a download does not appear where you expected it. See also: Operations Panel, SRA.
 
@@ -274,7 +280,11 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **MinKNOW**{#minknow}. The control software that runs an Oxford Nanopore sequencer, calls bases as the run proceeds, and writes the reads out as numbered FASTQ chunks under a `fastq_pass` folder, placing each barcode's reads in its own subfolder when the library was barcoded. See also: basecaller, barcode, unclassified reads.
 
+**mosdepth**{#mosdepth}. A fast coverage-depth calculator that reports how many reads sit over each position of a genome, run inside the nf-core/viralrecon pipeline to produce both a whole-genome depth table and a per-amplicon one, the second of which is what reveals amplicon dropout. See also: coverage, depth, amplicon dropout.
+
 **MSA (Multiple Sequence Alignment)**{#msa}. A rectangular arrangement of two or more related sequences in which each column represents an inferred homologous position, with `-` gap characters padding insertions; in Lungfish stored as a `.lungfishmsa` bundle. See also: MAFFT.
+
+**MultiQC**{#multiqc}. A reporting tool that gathers the quality output of every step of a pipeline run into one browsable HTML page, so a reader checks a whole run in one place instead of opening a report per tool, and the nf-core/viralrecon run writes one that Lungfish Genome Explorer catalogues as Full Run Report. See also: nf-core, FastQC.
 
 ## N
 
@@ -283,6 +293,10 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **NAO-MGS**{#nao-mgs}. A wastewater metagenomic surveillance pipeline from SecureBio that runs externally and whose `virus_hits_final.tsv(.gz)` output Lungfish imports (it does not run the pipeline) through `lungfish nao-mgs import` or the Import Center, presenting one run's viral taxa in a sortable table with a taxon detail pane and BLAST verification workflow. See also: BLAST.
 
 **Newick**{#newick}. A compact parenthesised text format for phylogenetic trees, with branch lengths after colons and optional support values at internal nodes; the lingua franca for moving trees between FigTree, iTOL, ete3, and Lungfish. See also: phylogram.
+
+**Nextflow**{#nextflow}. A language and runner for describing an analysis as a set of steps and the files that flow between them, which then executes those steps in the right order and inside containers, shipped with the Required Setup pack and used by Lungfish Genome Explorer to run the nf-core/viralrecon pipeline. See also: nf-core, container, run bundle.
+
+**nf-core**{#nf-core}. A community that curates, versions, and tests openly published Nextflow pipelines to a common standard, so a pipeline named by release runs the same steps for everyone who runs that release, and Lungfish Genome Explorer supports one of them, nf-core/viralrecon, pinned at release 3.0.0. See also: Nextflow, container.
 
 **NVD (Novel Virus Diagnostics)**{#nvd}. An external Snakemake wastewater-surveillance pipeline that assembles reads into contigs and BLASTs each contig, whose `*_blast_concatenated.csv(.gz)` output Lungfish imports (it does not run the pipeline) through `lungfish nvd import` or the Import Center and presents as a contig-keyed browser of best and secondary BLAST hits. See also: contig, BLAST.
 
@@ -393,6 +407,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 **Rooting**{#rooting}. Choosing which point on a phylogenetic tree stands for the oldest ancestor, which is what turns a statement about who groups with whom into a statement about which lineage came first; IQ-TREE produces unrooted trees, so rooting in Lungfish Genome Explorer is the separate **Re-root Here** step. See also: outgroup, topology, internal node.
 
 **Run accession**{#run-accession}. The identifier naming one pass of one sequencing library through one instrument in a public read archive, written `SRR`, `ERR`, or `DRR` followed by digits according to which INSDC partner took the deposit, and the only accession level that resolves directly to FASTQ files. See also: accession, SRA, INSDC.
+
+**Run bundle**{#run-bundle}. A `.lungfishrun` folder Lungfish Genome Explorer writes before it launches a workflow, recording the pipeline name, the requested release, the executor, the inputs, every parameter, and the outputs that must receive provenance, so the run can be described or repeated without being rerun first. See also: Nextflow, provenance, run record.
 
 **Run record**{#run-record}. The provenance a single Lungfish operation left behind, read in the Inspector's Provenance section as seven blocks (Run Summary, Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON) and stored on disk as one provenance sidecar. See also: provenance sidecar, workflow lineage.
 

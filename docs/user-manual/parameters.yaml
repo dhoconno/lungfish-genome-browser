@@ -3060,10 +3060,10 @@ operations:
         cli_flag: --min-percent-identity
       - label: Name for New Alignment
         control: text
-        default: empty
+        default: Mapped primary alignments (filled in from the selected source track and the shipped filter defaults, and refilled when the source track changes)
         allowed: any text
-        effect: Names the filtered alignment that the run produces. The run refuses to start without a name.
-        when_to_change: Always, since there is no default and the field starts blank.
+        effect: Names the filtered alignment that the run produces. The run refuses to start when the field is emptied.
+        when_to_change: Change it when the derived name would collide with a track already in the bundle, or when you want a shorter label in the sidebar.
         cli_flag: --output-track-name
     cli_only:
       - flag: --bundle
@@ -3138,12 +3138,16 @@ operations:
         effect: Prints the run summary as plain text, JSON, or a tab-separated table.
     notes: >-
       The extraction has no dialog of its own. Selecting a region and choosing the menu
-      item runs it straight away, asking only where to save. Right-clicking a read
+      item runs it straight away with no dialog and no save panel while the track sits
+      inside a project. Right-clicking a read
       instead of a region gives two items, "Copy as FASTA (aligned orientation)", which
       copies the read exactly as it was aligned with its soft clips, and "Extract
       Reads... (original reads)", which pulls the read as originally sequenced out of
-      the source FASTQ. Extractions belong in the project's Extractions folder, never
-      in Imports. Failure surfaces as an alert titled "Extract Selected Region Failed".
+      the source FASTQ. The bundle lands under alignment-read-extractions/ inside the
+      mapping run's folder under Analyses/, or under the project root when the track
+      has no run folder, rather than in the Extractions/ folder the other extraction
+      operations use (settled 2026-09-07). Failure surfaces as an alert titled
+      "Extract Selected Region Failed".
 
   bam.read-display:
     title: Alignment display settings
