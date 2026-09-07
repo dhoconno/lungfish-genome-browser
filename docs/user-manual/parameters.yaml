@@ -4762,3 +4762,572 @@ operations:
       viewport's own controls, from Minimum Exact Reads down, filter the display and do not
       change the stored result, which is why each maps to an export flag rather than a run
       flag.
+
+  assemble.spades:
+    title: SPAdes
+    entry_points:
+      - "Tools > Assembly > SPAdes..."
+      - "CLI: lungfish-cli assemble <fastq-files> --assembler spades"
+    gating: [assembly]
+    sources:
+      - Sources/LungfishApp/Views/Assembly/AssemblyWizardSheet.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyOptionCatalog.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyTool.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyReadType.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyCompatibility.swift
+      - Sources/LungfishWorkflow/Assembly/ManagedAssemblyPipeline.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyRunRequest.swift
+      - Sources/LungfishKit/MultiBundleRunModePicker.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/assemble.txt
+    settings:
+      - label: Assembler
+        control: radio
+        default: SPAdes when the sheet is opened from the SPAdes menu item
+        allowed: SPAdes, MEGAHIT, SKESA, Flye, Hifiasm, narrowed to the assemblers that accept the detected read class
+        effect: Picks which assembler runs the job. Once the sheet has worked out what kind of reads you gave it, the picker lists only the assemblers that accept that kind, so an Illumina bundle offers SPAdes, MEGAHIT, and SKESA while a Nanopore bundle offers Flye and Hifiasm.
+        when_to_change: Switch when you want to compare two assemblers on the same reads without leaving the sheet.
+        cli_flag: --assembler
+      - label: Read Type
+        control: radio
+        default: the class read off the FASTQ headers, shown as a locked label with the caption "Locked from FASTQ header detection."
+        allowed: Illumina short reads, ONT reads, PacBio HiFi/CCS
+        effect: States which sequencing chemistry produced the reads, which is what decides the assembler list. When the headers give a clear answer the row is a locked label, and when they do not the row becomes a picker you must set before Run turns on.
+        when_to_change: Set it by hand when the Detected row says no single read class was found, which happens with headers the app does not recognize.
+        cli_flag: --read-type
+      - label: Profile
+        control: popup
+        default: Isolate
+        allowed: Isolate, Meta, Plasmid
+        effect: Chooses the SPAdes run mode. Isolate assumes one organism at even depth, Meta expects a mixed community at uneven depth, and Plasmid hunts for the small circular molecules in a bacterial prep.
+        when_to_change: Pick Meta for a metagenome or an enrichment that carries more than one organism, and Plasmid when the plasmid rather than the chromosome is the point.
+        cli_flag: --profile
+      - label: Threads
+        control: slider
+        default: the smaller of your Mac's core count and 8
+        allowed: 1 to the number of cores your Mac reports
+        effect: Sets how many CPU threads the assembler may use at once. More threads finish sooner up to the point where memory or disk becomes the limit.
+        when_to_change: Lower it when you want to keep cores free for other work while a long assembly runs.
+        cli_flag: --threads
+      - label: Memory Limit
+        control: slider
+        default: three quarters of installed memory, capped at 32
+        allowed: 1 GB to the installed memory your Mac reports, in whole gigabytes
+        effect: Caps how much RAM SPAdes may claim. SPAdes stops with an error rather than swapping when it hits the cap, so the number is a ceiling and not a reservation.
+        when_to_change: Raise it for a large or high-coverage library that fails partway through, and lower it when you need memory for other applications.
+        cli_flag: --memory-gb
+      - label: Min Contig
+        control: number
+        default: "0"
+        allowed: 0 to 1000000 bp, in steps of 100
+        effect: Is meant to drop contigs shorter than this length from the result. With SPAdes chosen the stepper is shown and editable but the value never reaches the run, so it has no effect at all.
+        when_to_change: Leave it at 0 for SPAdes. Screen short contigs afterwards by sorting the assembly viewport's Length (bp) column.
+        cli_flag: --min-contig-length
+      - label: Careful mode
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Turns on SPAdes' --careful flag, which adds a mismatch and short indel correction pass after assembly. The run takes noticeably longer and the contigs carry fewer small errors.
+        when_to_change: Turn it on for a small genome where per-base accuracy matters more than wall time, such as a viral or plasmid assembly.
+        cli_flag: null
+      - label: Skip error correction
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Passes SPAdes' --only-assembler flag, which skips the read-correction stage and goes straight to assembly. It saves a large share of the run time and gives up the correction of sequencing errors before graph building.
+        when_to_change: Turn it on when the reads were already corrected upstream, or when a correction stage is running out of memory.
+        cli_flag: null
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any command line text SPAdes accepts, quoted the way a shell would expect
+        effect: Appends whatever you type to the SPAdes command exactly as written. This is the only way to reach SPAdes options the sheet does not expose, such as --viral or a custom k-mer list.
+        when_to_change: Use it for an option the sheet has no control for. A phrase the parser cannot read blocks Run and prints the reason in the footer.
+        cli_flag: --extra-args
+      - label: Project Name
+        control: text
+        default: the input file stem with _R1, _R2, _1, _2, and .lungfishfastq stripped, plus _assembly, or the literal assembly when no input name can be read
+        allowed: any non-empty text
+        effect: Names the assembly bundle the run produces. An empty name blocks Run.
+        when_to_change: Rename it when you are assembling the same reads more than once and want to tell the results apart.
+        cli_flag: --project-name
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle only. Combine all inputs, run once is shown but locked.
+        effect: Says how a selection of more than one bundle is handled. Each bundle assembles on its own and produces its own result.
+        when_to_change: Never in this version. The combined option is locked with the reason "Combining multiple bundles into one assembly run is not yet supported; each bundle assembles separately."
+        cli_flag: null
+    cli_only:
+      - flag: --paired
+        default: "false"
+        effect: Treats the two input files as the forward and reverse mates of one library. The sheet works this out from the file names instead.
+      - flag: --output
+        default: the project's Analyses folder
+        effect: Writes the run somewhere other than the default. Aliases are -o and --output-dir.
+      - flag: --extra-arg
+        default: none
+        effect: Adds one extra assembler argument, and may be repeated, as an alternative to the single --extra-args string.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as text, json, or tsv.
+    notes: >-
+      The Inputs section at the top of the sheet is three read-only rows, Dataset, Read
+      Layout, and Detected. There is no input picker, so you choose the reads in the
+      sidebar before opening the menu item. Output Folder is likewise a read-only row
+      showing the resolved path. The sheet is 620 by 640 points and results land in
+      Analyses/spades-<timestamp>/. Careful mode and Skip error correction live inside
+      the "Curated extra arguments" disclosure under Advanced Settings, and neither has
+      a CLI flag of its own, so on the command line you pass them through --extra-args.
+      Min Contig is a defect worth flagging. AssemblyOptionCatalog maps Minimum Contig
+      Length to SPAdes with the summary "Lungfish post-filter", which is what makes the
+      wizard show the stepper, but ManagedAssemblyPipeline.buildSpadesCommand never
+      reads the value and AssemblyOutputNormalizer computes statistics from the
+      unfiltered contigs.fasta. The setting is silently ignored.
+
+  assemble.megahit:
+    title: MEGAHIT
+    entry_points:
+      - "Tools > Assembly > MEGAHIT..."
+      - "CLI: lungfish-cli assemble <fastq-files> --assembler megahit"
+    gating: [assembly]
+    sources:
+      - Sources/LungfishApp/Views/Assembly/AssemblyWizardSheet.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyOptionCatalog.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyCompatibility.swift
+      - Sources/LungfishWorkflow/Assembly/ManagedAssemblyPipeline.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyRunRequest.swift
+      - Sources/LungfishKit/MultiBundleRunModePicker.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/assemble.txt
+    settings:
+      - label: Assembler
+        control: radio
+        default: MEGAHIT when the sheet is opened from the MEGAHIT menu item
+        allowed: SPAdes, MEGAHIT, SKESA, Flye, Hifiasm, narrowed to the assemblers that accept the detected read class
+        effect: Picks which assembler runs the job. MEGAHIT is offered for Illumina short reads only.
+        when_to_change: Switch to SPAdes when you want the more thorough short-read assembly and have the memory for it.
+        cli_flag: --assembler
+      - label: Read Type
+        control: radio
+        default: the class read off the FASTQ headers, shown as a locked label
+        allowed: Illumina short reads, ONT reads, PacBio HiFi/CCS
+        effect: States which sequencing chemistry produced the reads. MEGAHIT appears in the Assembler picker only while this reads Illumina short reads.
+        when_to_change: Set it by hand when the Detected row says no single read class was found.
+        cli_flag: --read-type
+      - label: Profile
+        control: popup
+        default: Default
+        allowed: Default, Meta Sensitive, Meta Large
+        effect: Chooses a MEGAHIT preset. Default is the balanced setting, Meta Sensitive spends more time recovering low-abundance members of a community, and Meta Large is tuned for large complex metagenomes.
+        when_to_change: Move to Meta Sensitive when rare organisms in a mixed sample are the point, and Meta Large for a soil or gut community.
+        cli_flag: --profile
+      - label: Threads
+        control: slider
+        default: the smaller of your Mac's core count and 8, then capped at 2 on Apple Silicon
+        allowed: 1 to the number of cores your Mac reports
+        effect: Sets how many CPU threads MEGAHIT may use. On Apple Silicon the app lowers whatever you pick to 2 and adds --no-hw-accel, because MEGAHIT 1.2.9 crashes above that on arm64.
+        when_to_change: Rarely, since the Apple Silicon cap overrides the slider anyway.
+        cli_flag: --threads
+      - label: Memory Limit
+        control: slider
+        default: three quarters of installed memory, capped at 32
+        allowed: 1 GB to the installed memory your Mac reports, in whole gigabytes
+        effect: Caps how much RAM MEGAHIT may claim. MEGAHIT counts its budget in bytes, so the app converts your gigabyte figure before passing it.
+        when_to_change: Lower it when you need memory for other applications during a long run.
+        cli_flag: --memory-gb
+      - label: Min Contig
+        control: number
+        default: "0"
+        allowed: 0 to 1000000 bp, in steps of 100
+        effect: Drops contigs shorter than this length from MEGAHIT's output. MEGAHIT receives the value as --min-contig-len, so the short pieces never reach the result at all.
+        when_to_change: Raise it to something like 500 when a metagenome produces thousands of fragments too short to identify.
+        cli_flag: --min-contig-length
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any command line text MEGAHIT accepts
+        effect: Appends whatever you type to the MEGAHIT command exactly as written, which is the only route to options the sheet does not expose, such as a custom k-mer list.
+        when_to_change: Use it for an option with no control. Text the parser cannot read blocks Run and prints the reason in the footer.
+        cli_flag: --extra-args
+      - label: Project Name
+        control: text
+        default: the input file stem with mate suffixes stripped, plus _assembly
+        allowed: any non-empty text
+        effect: Names the assembly bundle the run produces. An empty name blocks Run.
+        when_to_change: Rename it when you assemble the same reads more than once and want to tell the results apart.
+        cli_flag: --project-name
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle only. Combine all inputs, run once is shown but locked.
+        effect: Says how a selection of more than one bundle is handled. Each bundle assembles on its own.
+        when_to_change: Never in this version, since the combined option is locked.
+        cli_flag: null
+    cli_only:
+      - flag: --paired
+        default: "false"
+        effect: Treats the two input files as the forward and reverse mates of one library.
+      - flag: --output
+        default: the project's Analyses folder
+        effect: Writes the run somewhere other than the default. Aliases are -o and --output-dir.
+      - flag: --extra-arg
+        default: none
+        effect: Adds one extra assembler argument, and may be repeated.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as text, json, or tsv.
+    notes: >-
+      MEGAHIT has no toggles inside the "Curated extra arguments" disclosure, so that
+      disclosure holds only the catalog's read-only option descriptions and the Extra
+      arguments field. The Default profile is not a value you pass. Its id is the empty
+      string, and an empty id makes the app omit --presets entirely, so only
+      meta-sensitive and meta-large are ever named on the command line. Version 1.2.9 is
+      pinned by the tool lock, and results land in Analyses/megahit-<timestamp>/.
+
+  assemble.skesa:
+    title: SKESA
+    entry_points:
+      - "Tools > Assembly > SKESA..."
+      - "CLI: lungfish-cli assemble <fastq-files> --assembler skesa"
+    gating: [assembly]
+    sources:
+      - Sources/LungfishApp/Views/Assembly/AssemblyWizardSheet.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyOptionCatalog.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyCompatibility.swift
+      - Sources/LungfishWorkflow/Assembly/ManagedAssemblyPipeline.swift
+      - Sources/LungfishKit/MultiBundleRunModePicker.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/assemble.txt
+    settings:
+      - label: Assembler
+        control: radio
+        default: SKESA when the sheet is opened from the SKESA menu item
+        allowed: SPAdes, MEGAHIT, SKESA, Flye, Hifiasm, narrowed to the assemblers that accept the detected read class
+        effect: Picks which assembler runs the job. SKESA is offered for Illumina short reads only.
+        when_to_change: Switch to SPAdes when you want a profile control and a more exhaustive graph traversal.
+        cli_flag: --assembler
+      - label: Read Type
+        control: radio
+        default: the class read off the FASTQ headers, shown as a locked label
+        allowed: Illumina short reads, ONT reads, PacBio HiFi/CCS
+        effect: States which sequencing chemistry produced the reads. SKESA appears in the Assembler picker only while this reads Illumina short reads.
+        when_to_change: Set it by hand when the Detected row says no single read class was found.
+        cli_flag: --read-type
+      - label: Threads
+        control: slider
+        default: the smaller of your Mac's core count and 8
+        allowed: 1 to the number of cores your Mac reports
+        effect: Sets how many CPU threads SKESA may use at once, passed as --cores.
+        when_to_change: Lower it to keep cores free for other work.
+        cli_flag: --threads
+      - label: Memory Limit
+        control: slider
+        default: three quarters of installed memory, capped at 32
+        allowed: 1 GB to the installed memory your Mac reports, in whole gigabytes
+        effect: Caps how much RAM SKESA may claim, passed as --memory in gigabytes.
+        when_to_change: Raise it for a deep bacterial library that runs out of memory.
+        cli_flag: --memory-gb
+      - label: Min Contig
+        control: number
+        default: "0"
+        allowed: 0 to 1000000 bp, in steps of 100
+        effect: Drops contigs shorter than this length from SKESA's output, passed as --min_contig.
+        when_to_change: Raise it when short fragments crowd the contig table and you only care about the long scaffolds.
+        cli_flag: --min-contig-length
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any command line text SKESA accepts
+        effect: Appends whatever you type to the SKESA command exactly as written. Passing your own --min_count here replaces the value the app would otherwise pin.
+        when_to_change: Use it for an option with no control, such as a different k-mer step.
+        cli_flag: --extra-args
+      - label: Project Name
+        control: text
+        default: the input file stem with mate suffixes stripped, plus _assembly
+        allowed: any non-empty text
+        effect: Names the assembly bundle the run produces. An empty name blocks Run.
+        when_to_change: Rename it when you assemble the same reads more than once.
+        cli_flag: --project-name
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle only. Combine all inputs, run once is shown but locked.
+        effect: Says how a selection of more than one bundle is handled. Each bundle assembles on its own.
+        when_to_change: Never in this version, since the combined option is locked.
+        cli_flag: null
+    cli_only:
+      - flag: --paired
+        default: "false"
+        effect: Treats the two input files as the forward and reverse mates of one library.
+      - flag: --output
+        default: the project's Analyses folder
+        effect: Writes the run somewhere other than the default. Aliases are -o and --output-dir.
+      - flag: --profile
+        default: none
+        effect: Accepted by the command but ignored for SKESA, which has no profiles.
+      - flag: --extra-arg
+        default: none
+        effect: Adds one extra assembler argument, and may be repeated.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as text, json, or tsv.
+    notes: >-
+      SKESA has no Profile control. Its profile list is empty, and the sheet hides the
+      whole Profile row when the list is empty. It also has no toggles in the "Curated
+      extra arguments" disclosure. The app pins --min_count 2 on every SKESA run unless
+      you supply your own, because SKESA's high-coverage auto-escalation can otherwise
+      return an empty assembly from a small or subsetted library. SKESA writes its
+      contigs to standard output, so the app redirects them into contigs.fasta itself.
+      Version 2.5.1 is pinned by the tool lock, and results land in
+      Analyses/skesa-<timestamp>/.
+
+  assemble.flye:
+    title: Flye
+    entry_points:
+      - "Tools > Assembly > Flye..."
+      - "CLI: lungfish-cli assemble <fastq-file> --assembler flye"
+    gating: [assembly]
+    sources:
+      - Sources/LungfishApp/Views/Assembly/AssemblyWizardSheet.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyOptionCatalog.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyCompatibility.swift
+      - Sources/LungfishWorkflow/Assembly/ManagedAssemblyPipeline.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyOutputNormalizer.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/assemble.txt
+    settings:
+      - label: Assembler
+        control: radio
+        default: Flye when the sheet is opened from the Flye menu item
+        allowed: SPAdes, MEGAHIT, SKESA, Flye, Hifiasm, narrowed to the assemblers that accept the detected read class
+        effect: Picks which assembler runs the job. Flye is offered for Oxford Nanopore reads only, so an ONT bundle shows Flye beside Hifiasm and nothing else.
+        when_to_change: Switch to Hifiasm when you want its haplotype-aware assembly of the same Nanopore reads.
+        cli_flag: --assembler
+      - label: Read Type
+        control: radio
+        default: the class read off the FASTQ headers, shown as a locked label
+        allowed: Illumina short reads, ONT reads, PacBio HiFi/CCS
+        effect: States which sequencing chemistry produced the reads. Flye appears in the Assembler picker only while this reads ONT reads.
+        when_to_change: Set it by hand for a PacBio CLR library, which has no read class of its own and so comes back as no single read class detected.
+        cli_flag: --read-type
+      - label: Profile
+        control: popup
+        default: Nano HQ
+        allowed: Nano HQ, Nano Raw, Nano Corrected
+        effect: Tells Flye how accurate the individual reads are, which changes how aggressively it corrects them. Nano HQ suits modern high-accuracy basecalls, Nano Raw suits older or fast-mode basecalls, and Nano Corrected suits reads already polished upstream.
+        when_to_change: Move to Nano Raw for reads basecalled before the high-accuracy models, or Nano Corrected when another tool already corrected them.
+        cli_flag: --profile
+      - label: Threads
+        control: slider
+        default: the smaller of your Mac's core count and 8
+        allowed: 1 to the number of cores your Mac reports
+        effect: Sets how many CPU threads Flye may use at once, passed as --threads.
+        when_to_change: Lower it to keep cores free while a long assembly runs.
+        cli_flag: --threads
+      - label: Metagenome mode
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Turns on Flye's --meta flag, which expects a mixed community at uneven depth rather than one organism at even depth.
+        when_to_change: Turn it on when the sample is a community rather than a single isolate.
+        cli_flag: null
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any command line text Flye accepts
+        effect: Appends whatever you type to the Flye command exactly as written. This is the only way to give Flye a genome-size hint, for example --genome-size 30k, since the sheet has no such field.
+        when_to_change: Use it for a genome-size hint or a polishing-iteration count, neither of which has a control.
+        cli_flag: --extra-args
+      - label: Project Name
+        control: text
+        default: the input file stem with mate suffixes stripped, plus _assembly
+        allowed: any non-empty text
+        effect: Names the assembly bundle the run produces. An empty name blocks Run.
+        when_to_change: Rename it when you assemble the same reads more than once.
+        cli_flag: --project-name
+    cli_only:
+      - flag: --output
+        default: the project's Analyses folder
+        effect: Writes the run somewhere other than the default. Aliases are -o and --output-dir.
+      - flag: --memory-gb
+        default: none
+        effect: Accepted by the command but ignored for Flye, which takes no memory budget. The sheet hides the Memory Limit slider for the same reason.
+      - flag: --min-contig-length
+        default: none
+        effect: Accepted by the command but ignored for Flye. The sheet hides the Min Contig stepper for the same reason.
+      - flag: --extra-arg
+        default: none
+        effect: Adds one extra assembler argument, and may be repeated.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as text, json, or tsv.
+    notes: >-
+      Flye takes exactly one input file. A selection of two or more is refused before Run
+      with the message "ONT reads assembly expects a single FASTQ input in v1.", and the
+      Run Mode picker never appears for long-read tools. Memory Limit and Min Contig are
+      both hidden, since neither maps to Flye in the option catalog. Metagenome mode
+      lives inside the "Curated extra arguments" disclosure under Advanced Settings and
+      has no CLI flag of its own, so on the command line you pass --extra-args "--meta".
+      Flye keeps its assembly graph as assembly_graph.gfa in the run folder. Version
+      2.9.6 is pinned by the tool lock, and results land in Analyses/flye-<timestamp>/.
+
+  assemble.hifiasm:
+    title: Hifiasm
+    entry_points:
+      - "Tools > Assembly > Hifiasm..."
+      - "CLI: lungfish-cli assemble <fastq-file> --assembler hifiasm"
+    gating: [assembly]
+    sources:
+      - Sources/LungfishApp/Views/Assembly/AssemblyWizardSheet.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyOptionCatalog.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyCompatibility.swift
+      - Sources/LungfishWorkflow/Assembly/ManagedAssemblyPipeline.swift
+      - Sources/LungfishWorkflow/Assembly/AssemblyOutputNormalizer.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/assemble.txt
+    settings:
+      - label: Assembler
+        control: radio
+        default: Hifiasm when the sheet is opened from the Hifiasm menu item
+        allowed: SPAdes, MEGAHIT, SKESA, Flye, Hifiasm, narrowed to the assemblers that accept the detected read class
+        effect: Picks which assembler runs the job. Hifiasm accepts both PacBio HiFi and Nanopore reads, so a HiFi bundle shows Hifiasm alone in the picker.
+        when_to_change: Switch to Flye when the reads are Nanopore and you want Flye's repeat-graph approach instead.
+        cli_flag: --assembler
+      - label: Read Type
+        control: radio
+        default: the class read off the FASTQ headers, shown as a locked label
+        allowed: Illumina short reads, ONT reads, PacBio HiFi/CCS
+        effect: States which sequencing chemistry produced the reads. When it reads ONT reads the app adds hifiasm's --ont flag, and when it reads PacBio HiFi/CCS it does not.
+        when_to_change: Set it by hand when the Detected row says no single read class was found.
+        cli_flag: --read-type
+      - label: Profile
+        control: popup
+        default: Diploid
+        allowed: Diploid, Haploid/Viral
+        effect: Says how many haplotypes to expect. Diploid keeps the two copies of a chromosome apart, and Haploid/Viral also passes --n-hap 1, -l0, and -f0, which tells hifiasm to expect one haplotype and to skip both purging and the bloom filter.
+        when_to_change: Pick Haploid/Viral for a virus, a haploid genome, or any small target where the purging step wastes time.
+        cli_flag: --profile
+      - label: Threads
+        control: slider
+        default: the smaller of your Mac's core count and 8
+        allowed: 1 to the number of cores your Mac reports
+        effect: Sets how many CPU threads hifiasm may use at once, passed as -t.
+        when_to_change: Lower it to keep cores free while a long assembly runs.
+        cli_flag: --threads
+      - label: Primary contigs only
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Adds hifiasm's --primary flag so it writes only the primary assembly rather than the alternate haplotigs as well. The app loads the primary contigs into the viewport either way, so this mostly saves disk and time.
+        when_to_change: Turn it on when you have no use for the alternate haplotype and want the run to finish sooner.
+        cli_flag: null
+      - label: Extra arguments
+        control: text
+        default: empty
+        allowed: any command line text hifiasm accepts
+        effect: Appends whatever you type to the hifiasm command exactly as written. Anything you pass here that the Haploid/Viral profile would also add wins, since the profile only fills in arguments you did not supply.
+        when_to_change: Use it for an option with no control, such as a purge level other than the profile's.
+        cli_flag: --extra-args
+      - label: Project Name
+        control: text
+        default: the input file stem with mate suffixes stripped, plus _assembly
+        allowed: any non-empty text
+        effect: Names the assembly bundle and, for hifiasm alone, also becomes the -o output prefix, so every file the run writes carries this name.
+        when_to_change: Rename it when you assemble the same reads more than once.
+        cli_flag: --project-name
+    cli_only:
+      - flag: --output
+        default: the project's Analyses folder
+        effect: Writes the run somewhere other than the default. Aliases are -o and --output-dir.
+      - flag: --memory-gb
+        default: none
+        effect: Accepted by the command but ignored for hifiasm, which takes no memory budget. The sheet hides the Memory Limit slider for the same reason.
+      - flag: --min-contig-length
+        default: none
+        effect: Accepted by the command but ignored for hifiasm. The sheet hides the Min Contig stepper for the same reason.
+      - flag: --extra-arg
+        default: none
+        effect: Adds one extra assembler argument, and may be repeated.
+      - flag: --format
+        default: text
+        effect: Prints the run summary as text, json, or tsv.
+    notes: >-
+      Hifiasm takes exactly one input file, and a selection of two or more is refused
+      before Run, so the Run Mode picker never appears. Memory Limit and Min Contig are
+      both hidden. Primary contigs only lives inside the "Curated extra arguments"
+      disclosure under Advanced Settings and has no CLI flag, so on the command line you
+      pass --extra-args "--primary". Hifiasm writes a GFA graph rather than a FASTA, and
+      the app converts <project name>.bp.p_ctg.gfa into contigs.fasta before the viewport
+      can list anything, so alternate haplotigs stay in the run folder unlisted. There is
+      no genome-size control and no trio-binning control. Version 0.25.0 is pinned by the
+      tool lock, and results land in Analyses/hifiasm-<timestamp>/.
+
+  assemble.extract-contigs:
+    title: Create Bundle
+    entry_points:
+      - "Assembly viewport action bar: Create Bundle"
+      - "Assembly viewport contig table context menu: Create Bundle"
+      - "CLI: lungfish-cli extract contigs --assembly <run folder> --contig <name> --bundle"
+    gating: []
+    sources:
+      - Sources/LungfishAssemblyUI/AssemblyActionBar.swift
+      - Sources/LungfishAssemblyUI/AssemblyContigMaterializationAction.swift
+      - Sources/LungfishAssemblyUI/AssemblyContigTableView.swift
+      - Sources/LungfishAssemblyUI/AssemblyResultViewController.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController+Assembly.swift
+      - Sources/LungfishCLI/Commands/ExtractContigsCommand.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/extract.txt
+    settings:
+      - label: Contig selection
+        control: text
+        default: nothing selected, and the action bar reads "Select contigs to materialize"
+        allowed: one or more rows of the contig table
+        effect: Chooses which contigs go into the new bundle. Every button in the action bar stays disabled until at least one row is selected, and the bar then reads the count back to you.
+        when_to_change: Select the contigs you actually want as a mapping or variant-calling target rather than every fragment the assembler emitted.
+        cli_flag: --contig
+      - label: Bundle name
+        control: text
+        default: the contig's own identifier for a single selection, or <run folder name>-selected-contigs for several
+        allowed: any name, with a counter appended when the name is already taken
+        effect: Names the reference bundle the extraction writes into the project's Reference Sequences folder. A name already in use gets a counter, so nothing is overwritten.
+        when_to_change: Rename it when the suggested name is a long assembler-generated identifier you would rather not see in the sidebar.
+        cli_flag: --bundle-name
+    cli_only:
+      - flag: --assembly
+        default: none
+        effect: Points at the managed assembly run folder under Analyses that holds assembly-result.json, not at the .lungfishref bundle inside it.
+      - flag: --contigs
+        default: none
+        effect: Reads the source contigs from a plain FASTA instead of from an assembly run folder.
+      - flag: --contig-file
+        default: none
+        effect: Reads contig names from a text file, one per line, and may be repeated.
+      - flag: --output
+        default: standard output
+        effect: Writes the selected contigs to a plain FASTA at this path instead of building a bundle. Omitting it prints the FASTA to standard output.
+      - flag: --bundle
+        default: "false"
+        effect: Builds a .lungfishref bundle in the project instead of writing a plain FASTA. Requires --project-root.
+      - flag: --project-root
+        default: none
+        effect: Names the project the new bundle belongs to, which is required in --bundle mode.
+      - flag: --line-width
+        default: "60"
+        effect: Sets how many bases go on each line of the FASTA the command writes.
+      - flag: --format
+        default: text
+        effect: Prints the result summary as text, json, or tsv.
+    notes: >-
+      There is no dialog. Extraction is driven entirely by which rows of the contig table
+      are selected, so the only two things you decide are the selection and the name. The
+      contig table columns are #, Contig, Length (bp), GC %, Share of Assembly (%), and
+      Sequence Preview. There is no coverage column and no Nx plot anywhere in the
+      assembly viewport, and the CLI has no length or coverage filter either, so
+      selecting by depth means reading the depth off a SPAdes contig name such as
+      NODE_1_length_29812_cov_412.7. In the app the button starts an operation named
+      "Create Reference Bundle" that appears in the Operations Panel and can be
+      cancelled. The same action bar also offers BLAST Contigs, Copy FASTA, and Export
+      FASTA on the current selection, and the first of those retitles itself to BLAST
+      Contig when exactly one contig is selected. The bundle's FASTA is not
+      bgzip-compressed, unlike an assembly bundle's.
