@@ -1,139 +1,148 @@
 ---
-title: Consensus and Lineage
+title: Extracting a Consensus Sequence
 chapter_id: 05-variants/05-consensus-and-lineage
 audience: bench-scientist
-prereqs: [05-variants/01-calling-variants-from-amplicons]
-estimated_reading_min: 9
-task: Produce a consensus FASTA from reads or an alignment and hand it to external tools for lineage assignment.
-tags: [variants, consensus, lineage, pangolin, nextclade, freyja, viralrecon]
-tools: [ivar, bcftools, samtools, freyja]
+prereqs: [04-alignments/02-reading-an-alignment, 05-variants/01-calling-variants-from-amplicons]
+estimated_reading_min: 28
+task: Read one sequence out of an alignment's read pile and save it as a FASTA record or a reference bundle.
+tags: [variants, consensus, alignment, samtools, fasta]
+tools: [samtools]
+parameters_refs: [bam.extract-consensus]
 entry_points:
-  - "Tools > Mapping > Mapping… > Viral Recon tool row"
-  - "CLI: lungfish msa consensus"
-  - "Inspector consensus mode on an alignment track"
-shots: []
-planned_shots:
-  - id: viralrecon-consensus-picker
-    caption: "The Viral Recon wizard with the Consensus caller picker set for the end-to-end surveillance consensus path."
-  - id: inspector-consensus-mode
-    caption: "The Inspector consensus controls on an alignment track: consensus mode, IUPAC ambiguity, gap masking, and the depth and quality minimums."
-  - id: msa-consensus-cli
-    caption: "A lungfish msa consensus run writing a consensus FASTA from an aligned bundle with an explicit threshold."
+  - "Inspector > Analysis > Consensus > Extract Consensus..."
+shots:
+  - id: analysis-consensus-tab
+    caption: "The Inspector's Consensus tab, showing Show consensus track in viewer, the Consensus Mode and Consensus scope pickers, the two toggles, the three evidence sliders, and the Extract Consensus... button beneath the divider."
+  - id: consensus-masking-sliders
+    caption: "The Consensus tab with Hide high-gap sites turned on, revealing the Gap threshold and Masking minimum depth sliders between Consensus minimum depth and Consensus minimum MAPQ."
+  - id: consensus-destination-dialog
+    caption: "The Extract Sequence dialog showing its four Destination choices, with Save as Bundle selected by default above Save to File..., Copy to Clipboard, and Share..., and the Name field prefilled with the suggested consensus name."
 illustrations: []
-glossary_refs: [VCF, allele-frequency, consensus-fasta, lineage, freyja]
-# This chapter documents consensus and lineage, not the variant caller, so it
-# carries no variants.call ref. features.yaml has no consensus/viralrecon/msa/
-# freyja entry yet; once the cartographer adds one, point features_refs here.
+glossary_refs: [alignment-track, benchmark-vcf, blast, consensus-sequence, contig-reference, depth, flag, homozygous, iupac-ambiguity-code, mapq, phred-score, pileup, provenance, provenance-sidecar, read-group, reference-bundle, samtools, variant-caller]
 features_refs: []
-fixtures_refs: []
-brand_reviewed: false
-lead_approved: false
+fixtures_refs: [hg002-chr20]
+brand_reviewed: true
+lead_approved: true
 ---
 
 ## What it is
 
-A consensus FASTA is the reference sequence with your sample's high-confidence variants applied in place. Where the reads call a confident base, the consensus carries it; where the reads do not give a confident call (low coverage, mixed signal, or no read at all), the consensus carries an `N` mask. The result is a single sequence, the same length as the reference, that represents what your sample looks like as a genome rather than as a list of differences.
+A [consensus sequence](../../GLOSSARY.md#consensus-sequence) is what you get when you read an alignment downward instead of across. Picture the alignment as a grid. Each read is one row, each reference position is one column, and the stack of bases filling a single column is the [pileup](../../GLOSSARY.md#pileup) for that position. Reading across a row gives you one read. Reading down one column and asking which base most of the reads agree on, then doing that for every column in order, gives you one sequence that stands in for the sample as a whole. This chapter covers only that sequence. Naming the lineage or variant a sample belongs to is a separate job that lives in other chapters, and the last paragraph of this section says where.
 
-Consensus is the format that downstream lineage and clade tools expect. Pangolin assigns SARS-CoV-2 Pango lineages from a consensus FASTA. Nextclade assigns Nextstrain clades and flags amino-acid changes from a consensus FASTA. GISAID and NCBI both accept a consensus FASTA as the surveillance deposit format. None of these tools accept a VCF directly, which is why the consensus step exists between variant calling and lineage reporting.
+Lungfish Genome Explorer (LGE) builds that sequence in the Inspector's Consensus tab and writes it out with a button named **Extract Consensus...**. The result is the same length as the stretch of reference you asked about, one letter per position. Where the reads gave enough evidence, the letter is the base the reads carried. That letter is free to disagree with the reference, because the consensus describes your sample and not the reference it was mapped against. Where the evidence fell short, the letter is `N`, a placeholder meaning the position is unknown rather than confirmed, and a position can land there either because too few reads covered it or because the reads that did cover it disagreed too sharply to settle. Positions the reads call deleted also come back as `N`, so the output holds only `A`, `C`, `G`, `T`, and `N`, which is the alphabet every downstream program expects.
 
-It is worth being precise about where consensus comes from in Lungfish, because it is easy to assume the variant caller produces it. It does not. The iVar Variant Calling step from [Calling Variants from Amplicon Reads](01-calling-variants-from-amplicons.md) writes a VCF, a tabix index, and a SQLite store; it does not write a consensus FASTA, and the dialog's consensus allele-frequency field controls how iVar merges adjacent codon SNPs into one VCF row, not where a base is masked as `N`. Lungfish produces a consensus FASTA on three other surfaces: the Viral Recon wizard (end to end from reads), `lungfish msa consensus` (from an alignment of sequences), and the Inspector's consensus mode (a quick region preview over a BAM). In practice, pick the surface that matches your inputs, produce the consensus FASTA there, then hand that file to Pangolin or Nextclade for lineage, because Lungfish does not assign lineages itself.
+The word "enough" is where all the judgement lives, and the Consensus tab is a set of dials for it. You decide how many reads have to cover a position before LGE is willing to call anything there. You decide whether to ignore reads the mapper placed without confidence, and whether to ignore individual bases the sequencer reported without confidence. You decide whether disagreement between reads gets resolved into one winner or written as a letter standing for both possibilities. Reads disagree for two ordinary reasons, because the two copies of a chromosome genuinely carry different bases at that position, or because the sequencer misread one of them. Every one of those choices trades completeness against trust. A permissive setting gives you a sequence with few `N` characters and some of them wrong, and a strict setting gives you a sequence with more `N` characters and higher confidence in the letters that survive.
 
-## What you will learn
+Under the surface LGE runs [samtools](../../GLOSSARY.md#samtools), the program that does the actual counting down each column. You never open it, type at it, or install it, because LGE ships it and hands it exactly the settings you chose. The single habit worth carrying out of this section is to treat the consensus as a summary you have to configure rather than a fact you can read off, and to set the depth floor before you look at the sequence.
 
-By the end of this chapter you will know which of the three consensus surfaces fits your inputs, be able to set a consensus threshold with an understanding of what it means biologically, produce a consensus FASTA from reads with the Viral Recon wizard or from an alignment with `lungfish msa consensus`, run that consensus through Pangolin or Nextclade, and (for mixed wastewater samples) reach for `lungfish freyja demix` instead of a single-consensus call.
+This chapter stops at the FASTA record. LGE's own consensus surfaces do not assign a lineage name, and this one is no exception. Lineage assignment happens inside the [Viral Recon Wizard](../04-alignments/05-viral-recon-wizard.md), where the nf-core pipeline runs Pangolin and Nextclade as stages of its own, and lineage abundances in a mixed sample belong to [Running Freyja](../06-classification/07-running-freyja.md).
+
+## Why you would do this
+
+The most common reason is that the next program you want to use reads sequences and not alignments. [BLAST](../../GLOSSARY.md#blast), the search service that finds which known sequences resemble yours, takes a FASTA record and nothing else. So do tree-building programs, sequence-comparison programs, and the portals that accept public database deposits. An alignment plus a variant list carries the same information, but almost nothing downstream will accept it in that shape, so consensus extraction is the conversion step between the two worlds.
+
+The second reason is that a sequence is readable in a way a variant list is not. The HG002 chromosome 20 slice used in this chapter is a 500,001-base stretch of human chromosome 20 from HG002, a standard human sample that laboratories worldwide sequence over and over to check their methods. Because it is standard, it comes with a [benchmark call set](../../GLOSSARY.md#benchmark-vcf), an answer key of variants established independently of your reads, and that answer key holds 961 variants inside this stretch. You already downloaded it with the fixture, so there is nothing further to obtain. Reading 961 rows tells you what changed. Reading the consensus tells you what the sample is, including the long runs where nothing changed at all, which is the part a variant list leaves out by design.
+
+The third reason is that consensus extraction reports its own uncertainty. A [variant caller](../../GLOSSARY.md#variant-caller) that finds nothing at a position is silent, and silence means either that the sample matched the reference or that no reads were there to say. The consensus tells those two apart, because a matching position holds a base and a position with no reads over it holds an `N`. Counting `N` characters is a quick honest measure of how much of your sample you actually observed.
 
 ## Before you start
 
-Each consensus surface starts from a different artefact, so the input you need depends on the path you take. Note that a VCF is not one of them: a consensus is built from reads or aligned bases, not from a variant list, so arriving here from [Calling Variants from Amplicon Reads](01-calling-variants-from-amplicons.md) with only a VCF is not enough on its own.
+You need a project open. If you do not have one, choose **File > New Project** (Cmd-N), or click Create Project on the Welcome window, and pick a folder. This chapter uses the HG002 chromosome 20 slice. Download all three of the files `GRCh38.chr20.10.0-10.5Mb.fasta`, `HG002.chr20.10.0-10.5Mb_R1.fastq.gz`, and `HG002.chr20.10.0-10.5Mb_R2.fastq.gz` from the manual's fixtures on GitHub at https://github.com/dhoconno/lungfish-genome-explorer/tree/main/docs/user-manual/fixtures/hg002-chr20 and remember where you saved them. The chapter needs all three together, the FASTA as the reference and the two FASTQ files as the reads mapped against it.
 
-- Viral Recon wizard: raw reads (FASTQ) plus the reference and primer scheme for the run.
-- `lungfish msa consensus`: an aligned `.lungfishmsa` bundle.
-- Inspector consensus mode: a BAM alignment track in a reference bundle.
+You also need an alignment inside a [reference bundle](../../GLOSSARY.md#reference-bundle), because the **Extract Consensus...** button stays disabled until the open bundle holds at least one [alignment track](../../GLOSSARY.md#alignment-track). You have one when the sidebar shows the reference by name under **Reference Sequences** with a disclosure arrow beside it, and expanding that arrow lists the alignment tracks attached to it. If you have not mapped the fixture reads yet, [Mapping Reads to a Reference](../04-alignments/01-mapping-reads-to-a-reference.md) does that, and the run behind every number quoted in this chapter is the fixture's own mapping of those reads against that reference. Map the fixture the way that chapter describes and your own counts should match the ones printed here exactly, since the reads, the reference, and the settings are all fixed. Nothing has to be installed first, and no download happens on your first run. Some LGE operations ask you to add an optional tool pack or to start the container software Docker Desktop, and consensus extraction asks for neither, because the samtools it runs arrives with the app.
 
-## The three consensus surfaces
+## Procedure
 
-The surface you use depends on what you are starting from. The table names each one, its scope, and where its threshold lives.
+1. Click the alignment track in the sidebar. It sits nested beneath the reference bundle that holds it, carrying the name the mapping run gave it, which is "minimap2 Mapping" by default. The alignment viewport opens, showing the reads stacked over the reference with a coverage curve above them that rises and falls with the number of reads at each position, and the Inspector fills with the alignment's summary. If the Inspector is not showing, open it with **View > Show Inspector** (Cmd-Option-I).
+2. Switch the Inspector to its **Analysis** tab. Analysis holds a row of six tabs of its own, and **Consensus** is the third. Click it. The tab opens with a note reading "Adjust consensus evidence settings here. Consensus controls are intentionally separate from View so display settings stay lighter." <!-- SHOT: analysis-consensus-tab -->
+3. Leave **Show consensus track in viewer** on, so a consensus row draws above the read stack and you can watch the sequence change as you move the sliders. Then set **Consensus scope** to `Whole contig` for the entire 500,001-base slice, a [contig](../../GLOSSARY.md#contig-reference) being one named sequence inside the reference, of which this fixture holds just the one. Choosing `Selected region` instead reads only the stretch you have highlighted by dragging across the ruler at the top of the viewport, and with nothing highlighted the **Extract Consensus...** button greys out and the line "Select a region in the viewer first" appears beneath it, so the run never starts.
+4. Set the evidence controls. For a first pass on the fixture, leave every one of them at its default, which means **Consensus Mode** on `Bayesian`, **Consensus minimum depth** at 8, both quality floors at 0, and **Hide high-gap sites** off. `Bayesian` is the mode that reads each base's own quality number instead of counting votes, and it is the safer choice on real sequencing data. Leave **Hide high-gap sites** off for this fixture. The screenshot below shows what turning it on would do, which is to reveal two more sliders between the depth slider and the MAPQ slider, and the Settings section explains when that is worth doing. <!-- SHOT: consensus-masking-sliders -->
+5. Click **Extract Consensus...** below the divider. A row titled "Generate Alignment Consensus" appears in the Operations panel, which you open with **Operations > Show Operations Panel** (Cmd-Shift-P), and a dialog headed Extract Sequence asks where the sequence should go. <!-- SHOT: consensus-destination-dialog --> Its Destination control is a column of four choices, all four visible at once, with `Save as Bundle` already selected. Take that default on a first run, because a `.lungfishref` bundle reopens in LGE without any further step. The other three are `Save to File...` for a plain FASTA, `Copy to Clipboard` to paste the sequence somewhere else, and `Share...` to hand it to another app. The button at the bottom reads Create Bundle while `Save as Bundle` is chosen, and renames itself Save, Copy, or Share as you pick a different destination. Click it.
 
-| Surface | Start from | Threshold control | When to use |
-|---|---|---|---|
-| Viral Recon wizard | Raw reads (FASTQ) | The wizard's `Consensus` caller picker (iVar or bcftools) | The end-to-end amplicon surveillance workflow that maps reads and emits consensus FASTA outputs |
-| `lungfish msa consensus` | An aligned `.lungfishmsa` bundle | `--threshold` (minimum non-gap residue fraction) and `--gap-policy` | A reproducible CLI consensus a technician can run identically each time |
-| Inspector consensus mode | A BAM alignment region | Consensus minimum depth, minimum MAPQ, and minimum base quality sliders | A quick look at the consensus over one region, not a deposit-grade whole-genome FASTA |
+If every position in the scope falls below your depth floor, an alert headed "Consensus Contains Only N" appears before the destination dialog and asks whether to continue. That alert is the app telling you the settings and the data disagree, and the usual answer is Cancel followed by a lower depth floor. Try 4 next, and 1 after that if 4 still returns nothing, since a floor of 1 accepts any position a single read reached.
 
-The Viral Recon wizard is the natural primary choice for the surveillance workflow this chapter targets, because it runs the whole pipeline from reads and emits a consensus FASTA at the end. The `lungfish msa consensus` command is the reproducible scripted path. The Inspector consensus mode is for inspection, not submission.
+## Settings
 
-## Consensus threshold choices
+Every control below sits in the Consensus tab, and all of them do double duty. They steer both the consensus row drawn in the viewport and the sequence that **Extract Consensus...** writes out, so what you see on screen is what you get in the file. Throughout this section, the reads covering a position and the reads spanning it mean the same thing, the reads whose alignment overlaps that column. None of these settings has a command-line flag. If you never plan to use a terminal that fact costs you nothing, and On the command line at the end of the chapter explains what it means for the people who do.
 
-Whichever surface you use, the threshold is the same biological decision: the minimum fraction of reads (or aligned rows) that must agree before the consensus carries the alternate base. Below the threshold, the position is masked. The right value depends on what biological situation your sample represents.
+**Show consensus track in viewer.** Draws the consensus sequence as its own row above the reads in the viewport. The default is on, which lets you judge a setting by looking at it rather than by extracting a file and reading it. Turning it off hides the row when the viewport is crowded, and it changes nothing about what extraction produces.
 
-| Threshold | What gets called as consensus | Use this when |
+**Consensus Mode.** Chooses how the base at each position is decided from the pile of reads covering it. The default is `Bayesian`, a name that here means only that the calculation reads each base's own [quality score](../../GLOSSARY.md#phred-score) and lets a confident base count for more than a doubtful one, which makes it the safer choice on real sequencing data. Switch to `Simple`, which takes whichever base appears most often and ignores quality, when you want a plain majority call that is easy to explain and to reproduce by hand. The difference shows at a column where two reads say `A` and one says `T`. `Simple` calls `A` on the two-to-one count alone, while `Bayesian` can still call `T` when the two `A` bases carry poor quality scores and the single `T` carries a high one.
+
+**Consensus scope.** Decides whether the extracted sequence covers the entire contig or only the stretch you highlighted in the viewport. The default is `Whole contig`, which is the scope a whole-genome deposit or a tree-building input needs. Switch to `Selected region` when you want the consensus of one gene or one amplicon, and highlight the stretch in the viewport first, because with no selection to read the **Extract Consensus...** button greys out above the line "Select a region in the viewer first".
+
+**Use IUPAC ambiguity codes.** Writes a single letter standing for two or more possible bases wherever the reads disagree, instead of picking one winner. The default is off, because most downstream tools expect plain `A`, `C`, `G`, and `T`, and an unexpected `R`, meaning `A` or `G`, or `Y`, meaning `C` or `T`, can confuse them. Turn it on when the mixture at a position is itself the finding you want visible, which on a human sample means the positions where the two copies of a chromosome carry different bases, and see [IUPAC ambiguity code](../../GLOSSARY.md#iupac-ambiguity-code) for what each letter means.
+
+**Hide high-gap sites.** Masks columns where most of the reads spanning the position carry a gap rather than a base, since those columns are usually alignment artifacts rather than real deletions. The default is off, which suits the short accurate reads in this fixture. Turn it on when a noisy alignment is filling the consensus row with gap-heavy columns you do not believe, and note that turning it on reveals the two masking sliders described next.
+
+**Consensus minimum depth.** Sets how many reads must cover a position before LGE is willing to call a base there, with anything thinner written as `N`. [Depth](../../GLOSSARY.md#depth) is the number of reads stacked over one position, and the default of 8 is a floor low enough to keep most of a well-covered genome while still refusing the thinnest evidence. Raise it when you would rather carry an `N` than a guess, and the range runs from 1 to 50. A floor of 20 is the common choice for a sequence going into a publication or a public deposit, and on this fixture it costs 1.1 percent of the slice instead of the default's 0.2 percent, which is the trade the table further down makes concrete.
+
+**Gap threshold.** Sets what share of the spanning reads must carry a gap before the column is masked. The default is 90 percent, high enough that only a column the reads almost unanimously call empty gets masked, and the slider runs from 50 to 99 percent. Lower it when obvious artifact columns are surviving at the default. This slider appears only while **Hide high-gap sites** is on.
+
+**Masking minimum depth.** Sets how many reads must span a position before gap masking is allowed to act on it, so that a thin pile is never masked on the evidence of two reads. The default is 8, matching the depth floor above, and the range runs from 1 to 50. This one is rarely worth changing, and it too appears only while **Hide high-gap sites** is on.
+
+**Consensus minimum MAPQ.** Ignores reads the mapper was not confident it placed. [MAPQ](../../GLOSSARY.md#mapq) is the mapper's own confidence score for one read's position, running from 0 for a read that fits several places equally well up to 60 for a placement well clear of any alternative, and it is a different scale from the Phred score that grades individual bases. The default is 0 because most alignments need no such filter, and a setting of 0 means the filter is switched off rather than meaning the reads themselves score 0. Raise it to about 20 when repeated sequence is dragging misplaced reads into the consensus, which on a cleanly mapped short-read alignment like this fixture removes only a small fraction of the reads, enough to add 80 `N` positions to the slice. The viewport's own alignment-confidence filter can raise this floor on its own, because the larger of the two settings wins.
+
+**Consensus minimum base quality.** Ignores individual bases the sequencer called with low confidence, judged by the same Phred scale the FASTQ file carries, where 20 means a one-in-a-hundred chance the base is wrong. The default is 0, which uses every base, and the range runs to 60. Raise it to about 20 when the run's tail-end quality is poor, which the FASTQ bundle's own quality panel will show you before you decide. Raising it while `Consensus Mode` is on `Bayesian` sets a hard cutoff on top of whatever weighting that mode applies, so the two settings stack rather than cancel.
+
+Two further filters reach the consensus without living in this tab. To reach them, switch the Inspector from **Analysis** to **View Settings** and click its **Alignment** tab, the same two-level move that brought you to Consensus. The read inclusion settings there decide which [read groups](../../GLOSSARY.md#read-group) and which flagged records are visible, a flagged record being a read the aligner marked with a [FLAG](../../GLOSSARY.md#flag) such as duplicate or secondary alignment, and the consensus is built from exactly the reads that survive them. Filter duplicates or secondary alignments out of the view and they are filtered out of the consensus too.
+
+## Reading the results
+
+Running the fixture's alignment at the defaults, with `Whole contig` scope, `Bayesian` mode, a depth floor of 8, and both quality floors at 0, produces a sequence 500,001 letters long. That length is the first thing to check, because it should match the reference exactly. The 500,001 counts both ends of the 10.0 to 10.5 megabase range, and 10,500,000 minus 10,000,000 plus 1 is 500,001, which is why it is not the round 500,000 the file name suggests. Every number in this section comes from that run, and mapping the fixture yourself as [Mapping Reads to a Reference](../04-alignments/01-mapping-reads-to-a-reference.md) describes should reproduce each one exactly.
+
+Within that sequence, 498,974 positions carry a plain `A`, `C`, `G`, or `T` and 1,027 carry `N`. Those two counts sum to the 500,001 total, because the output holds nothing else. The `N` count is the number the fixture's reads left unresolved, whether because fewer than eight reads covered the position, because the pileup there was too conflicted to settle, or because the reads agreed the position is deleted in this sample. That third cause is worth holding onto, since it means an `N` count is not purely a measure of how much of the sample you observed. As a share of the slice it is 0.205 percent, so a little under 99.8 percent of the region came back as a called base.
+
+Comparing the consensus letter by letter against `GRCh38.chr20.10.0-10.5Mb.fasta` finds 337 positions where a called letter differs from the reference, ignoring the `N` positions where no comparison is possible. That figure sits below the 961 variants the benchmark call set holds for the same stretch, and the two are not measuring the same thing. A consensus carries one letter per reference position, so it can only ever show a differing letter, while every position the run masked as `N` and every variant that changes the sequence's length go uncounted here. Treat 337 as the number of visible single-letter differences rather than as a variant count. The first difference is at position 2,078, where the reference carries `G` and the consensus carries `A`. That is the same position the [Reading an Alignment](../04-alignments/02-reading-an-alignment.md) chapter uses as its worked example, and the consensus and the alignment agree about it. The pileup there holds 51 read bases and every one of them is `A`, with a total depth of 63 counting the reads samtools sets aside as unusable. **Consensus minimum depth** is applied twice, once by the caller against the usable bases and once again against the total depth, so a position survives only when both numbers clear the floor. Here 51 and 63 both clear 8 comfortably. A position where every read carries the alternate, meaning the base that differs from the reference, is a [homozygous](../../GLOSSARY.md#homozygous) change in which both copies of the chromosome carry it, and it is exactly the kind of position a consensus should call without hesitation.
+
+The settings that move those numbers most are worth seeing side by side. Each row below is a real run of the fixture alignment with one setting changed from the defaults.
+
+| Setting changed | `N` count | Share of the slice |
 |---|---|---|
-| `0.5` | Any base supported by more than half the reads. Mixtures pull the consensus toward the majority allele. | The sample is genuinely a mixed population (wastewater, co-infection) and you want a majority-rule view. Expect more masking and a noisier sequence. |
-| `0.75` (common default) | The alternate base is called only when about three-quarters of reads agree. Borderline positions are masked. | Most clinical isolates and surveillance samples. This is the iVar paper's default and what Pangolin and Nextclade have been benchmarked against. |
-| `0.9` | The alternate base is called only when at least 90 percent of reads agree. Anything near a 50/50 split is masked. | High-confidence reference deposits for GISAID or NCBI, where you would rather mask a position than risk encoding a sequencing artefact. |
+| None, the defaults described above | 1,027 | 0.205 percent |
+| **Consensus minimum depth** raised to 20 | 5,646 | 1.129 percent |
+| **Consensus Mode** set to `Simple` | 1,176 | 0.235 percent |
+| **Use IUPAC ambiguity codes** turned on, a relabeling and not new data | 361 | 0.072 percent |
+| **Consensus minimum MAPQ** raised to 20 | 1,107 | 0.221 percent |
 
-If you do not know which to pick, `0.75` is the safe default for a clinical isolate. Note that the `lungfish msa consensus` default is `0.6` and measures the non-gap residue fraction across aligned rows rather than read allele frequency; set `--threshold` explicitly when you need a specific value.
+Raising the depth floor from 8 to 20 turns 4,619 more positions into `N`, and 5,646 against 1,027 is a little over five times as much masking bought with no change to the data at all. Switching to `Simple` mode masks 149 more positions than `Bayesian`, because dropping the quality weighting leaves more columns without a clear winner. Turning on ambiguity codes goes the other way and masks 666 fewer, since a column that would have been `N` for lack of agreement can now be written as one of the ambiguity letters instead. Read that fourth row as a change of notation rather than a gain. The same conflicted columns are there either way, and a lower `N` count is not by itself a better sequence.
 
-## Procedure: reads to consensus with Viral Recon
+Those ambiguity letters were `R` 182 times and `Y` 191 times, which are the two purine and pyrimidine pairs, with `M`, `W`, `K`, and `S` making up the remaining 176. The three figures sum to the run's 549 ambiguity letters in total. All six letters are defined in the [IUPAC ambiguity code](../../GLOSSARY.md#iupac-ambiguity-code) entry. Every one of those choices was already available in the reads, and the setting only decides how the sequence reports them.
 
-The Viral Recon wizard runs the nf-core/viralrecon pipeline end to end and is the only path that takes reads all the way to a consensus FASTA inside Lungfish.
+Whichever destination you chose, the settings behind the run are written down somewhere you can read them later. Copying to the clipboard logs a summary block onto the Operations panel row, naming the scope, the region in `contig:start-end` form, the consensus mode, the three evidence floors as one `depth/MAPQ/base quality` line, the excluded flags, the read groups, and two fixed policies. Saving to a file or a bundle records the same settings in the provenance sidecar instead. Those two policies read `Low-depth policy: N` and `Reference-fill policy: never`, and neither can be changed from anywhere in LGE, which is the point of them. The danger they rule out is a consensus that quietly borrows the reference base wherever your sample went thin, which would read as confirmation of the reference when it is really an absence of evidence. LGE never does that, so an `N` in the output is genuinely an absence of evidence.
 
-1. Choose `Tools > Mapping > Mapping…`, then select the `Viral Recon` tool row in the Mapping category. The wizard appears in the dialog.
-2. Set the platform, the reference, and the primer scheme to match your run, exactly as you would for mapping.
-3. In the wizard's caller row, set `Variants` to your variant caller and set `Consensus` to `iVar` or `bcftools`. The `Consensus` picker is what produces the consensus FASTA; the threshold biology in the table above applies here. <!-- planned: viralrecon-consensus-picker -->
-4. Choose the executor and click to run. The pipeline maps, calls variants, and builds a per-sample consensus FASTA as one of its outputs.
+The FASTA record's own header names the sample, the contig, and the word consensus, so a file opened months later still says what it is. A selected-region consensus adds the coordinates and the word selected. Saving as a bundle writes a `.lungfishref` bundle you can open in LGE directly, and saving as a file writes the FASTA alongside a [provenance sidecar](../../GLOSSARY.md#provenance-sidecar), a small separate file to keep with the FASTA. The bundle carries the same [provenance](../../GLOSSARY.md#provenance) record inside it.
 
-The consensus FASTA the pipeline writes is the file you hand to Pangolin or Nextclade.
+## What good looks like
 
-## Procedure: alignment to consensus with the CLI
+First, check the length against the reference. A whole-contig consensus should be exactly as long as the contig, and the fixture's 500,001 matches its reference. A shorter sequence means the scope was `Selected region` when you meant `Whole contig`.
 
-When you already have an alignment of sequences as a `.lungfishmsa` bundle, `lungfish msa consensus` builds a consensus FASTA from the aligned rows. This is the reproducible path: the same command and the same inputs produce the same file every time, which is what a printed SOP needs.
+Second, count the `N` characters and decide whether that share is acceptable for what you plan to do next. The fixture's 0.205 percent at the defaults is comfortable for a well-covered human slice, and on a first analysis, with no runs of your own to compare against, that is the yardstick to use. Raising the depth floor to 20 on the same fixture reaches 1.129 percent, so those two figures bracket what the settings alone can do to a well-covered sample. A share far above them points at the sequencing rather than at a slider. When the count climbs after you raise the depth floor, that is the setting working as designed.
 
-```bash
-lungfish msa consensus my-alignment.lungfishmsa \
-    --output consensus.fa \
-    --name "sample01 consensus" \
-    --threshold 0.75 \
-    --gap-policy omit
-```
+Third, look at where the `N` characters sit rather than only how many there are. Scattered single `N` positions across a slice are the ordinary noise of a real alignment. A single unbroken run of hundreds of `N` characters is a stretch with no usable reads at all, and the coverage curve above the read stack in the alignment viewport will show the same gap. That is a sequencing question, and no consensus setting fixes it.
 
-The `--threshold` flag is the minimum non-gap residue fraction required to call a consensus base; `--gap-policy omit` drops gap-only columns rather than emitting them. The command writes a plain FASTA with one record. The same consensus action is available in the app from the multiple-sequence-alignment viewport as `Create Consensus Sequence`. <!-- planned: msa-consensus-cli -->
+Fourth, spot-check one position you already know. On this fixture that position is 2,078, where the reference reads `G` and every covering read reads `A`. On your own data the check still works whenever you have a variant call or a Sanger trace for one position. If a position you have independent evidence for comes back as `N` or as the reference base, the evidence filters are stricter than the data can support, and the depth floor is the first one to loosen.
 
-For a quick consensus over one region of a BAM without leaving the alignment view, select an alignment track and turn on the Inspector's consensus mode. The controls there (`Consensus Mode`, `Use IUPAC ambiguity codes`, `Hide high-gap sites`, and sliders for consensus minimum depth, minimum MAPQ, and minimum base quality) drive the preview. `Extract Consensus…` exports the selected bases when there is an active base selection; otherwise it exports the visible viewport. <!-- planned: inspector-consensus-mode --> This is for inspection. For a whole-genome deposit, use Viral Recon or `lungfish msa consensus`.
+Fifth, read the recorded settings rather than trusting your memory of the sliders. The provenance sidecar next to a saved file, or the Operations panel summary after a clipboard copy, records the exact floors the run used, and it is the only durable record of what produced a given file once the file has left the app.
 
-## Wastewater: lineage abundances with Freyja
+## On the command line
 
-A consensus FASTA assumes one dominant sequence, so the single-consensus-to-Pangolin path is the wrong tool for a genuinely mixed sample. Wastewater is the canonical case: one sample contains many lineages at once, and the question is not "which lineage is this" but "what is the abundance of each lineage in the mixture."
+If you work only in the app, you can stop reading here. Nothing in this section is needed to finish the procedure, and it describes a different feature rather than another route to the one you just used.
 
-For that, Lungfish provides `lungfish freyja demix`, which constructs and runs a Freyja demixing plan from a variant table and a depth table:
+There is no `lungfish-cli` equivalent for this operation. The Consensus tab is the only surface in LGE that builds a consensus from an alignment, and the command the operation history records for it is written as `Lungfish.app alignment consensus`. That string names the app rather than a command, and you never type it anywhere. Two related commands exist and neither replaces it. `lungfish-cli msa consensus` builds a consensus from a multiple sequence alignment bundle rather than from reads, and the Viral Recon pipeline produces a consensus genome as one stage of a much larger run.
+
+The multiple-sequence-alignment command is worth knowing because it is the scriptable consensus path for aligned sequences. It is a genuinely different feature from the Consensus tab, working on finished sequences rather than on a pile of reads, so the two never do the same job.
 
 ```bash
-lungfish freyja demix \
-    --variants sample.variants.tsv \
-    --depths sample.depths.tsv \
-    --output-dir freyja_out \
-    --sample "WW-2026-06-01" \
-    --execute
+lungfish-cli msa consensus my-alignment.lungfishmsa \
+  --output consensus.fa \
+  --name "HG002 consensus" \
+  --threshold 0.75 \
+  --gap-policy omit
 ```
 
-Freyja demixes the lineage abundances from the mixed sample's variant profile; it is the mixed-population analogue of single-consensus Pangolin assignment. Use `--dry-run` instead of `--execute` to write and print the command plan without running Freyja. Running Freyja requires the `wastewater-surveillance` tool pack.
-
-## Interpretation
-
-Open the consensus FASTA you produced (in the viewport, or any FASTA viewer) and spot-check it. A clean SARS-CoV-2 consensus from amplicon data typically shows a small handful of base differences from the Wuhan-Hu-1 reference and a few short `N` runs at amplicon dropouts. Long stretches of `N` (more than a few hundred bases at a time) usually mean an amplicon failed and the sample needs re-sequencing or re-pooling before it is fit for lineage assignment. Pangolin will accept a sequence with substantial `N` content, but call quality drops sharply as masking rises past roughly 10 percent.
-
-To assign a lineage, hand the consensus to an external tool. In a web browser, open the Pangolin web interface at `https://pangolin.cog-uk.io`, drop in the FASTA, and read off the lineage, the confidence, and the pangolin-data version it used. The same FASTA goes to Nextclade unchanged at `https://clades.nextstrain.org`: choose the SARS-CoV-2 dataset, drop in the file, and read the Nextstrain clade and any flagged QC issues. Record the lineage call and the designation-set version in your sample sheet; that one piece of metadata is the part Lungfish cannot produce on its own.
-
-## What Lungfish does not do
-
-Lungfish produces a consensus FASTA and stops. Lineage assignment is deliberately left to external software:
-
-- **Pangolin** assigns SARS-CoV-2 Pango lineages. It updates its designation database often (sometimes weekly during a wave) and runs online at `pangolin.cog-uk.io` or locally as a separate conda package. Bundling it inside Lungfish would mean shipping a stale database.
-- **Nextclade** assigns Nextstrain clades and reports amino-acid substitutions. It runs in the browser at `clades.nextstrain.org` or as a CLI, and likewise pins to a dataset version that updates outside Lungfish's release cycle.
-- **GISAID and NCBI submission** require an account, metadata forms, and (for GISAID) a per-submitter agreement. Both portals accept the consensus FASTA without modification, but the credentials and forms belong to the depositor, not the analysis tool.
-
-The boundary is intentional. A consensus FASTA is a stable file format; lineage nomenclature is a moving target. Keeping the two on separate update cycles means you can re-run a lineage call with a fresher database six months from now without re-running the consensus.
+`--threshold` is the minimum share of non-gap rows that must agree before a consensus base is written, and its default is 0.6. A row here is one whole aligned sequence in the bundle, the counterpart of a read in the rest of this chapter, so this threshold counts finished sequences while every floor in Settings counts reads. `--gap-policy` takes `omit` or `include` and decides whether gap-only columns are dropped or kept, with `omit` the default. `--output-kind reference` writes a `.lungfishref` bundle instead of a bare FASTA, `--rows` restricts the consensus to named rows, and `--force` overwrites an existing output file. The same action appears in the app on the multiple-sequence-alignment viewport as **Create Consensus Sequence**.
 
 ## Next
 
-Continue to [Importing Existing VCFs](06-importing-existing-vcfs.md) if you have a VCF from an external pipeline you want to view in Lungfish.
+Continue to [Importing Existing VCFs](06-importing-existing-vcfs.md) if you have variant calls from an external pipeline you want to read in LGE. For a consensus genome produced end to end from reads, with Pangolin and Nextclade lineage calls attached, see the [Viral Recon Wizard](../04-alignments/05-viral-recon-wizard.md). For a mixed sample where a single consensus would hide the mixture, see [Running Freyja](../06-classification/07-running-freyja.md).

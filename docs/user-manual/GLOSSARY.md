@@ -498,6 +498,8 @@ Terms appear in alphabetical order. Each entry is a one-sentence definition, fol
 
 **Sparkline**{#sparkline}. A small chart drawn without axes or labels, sized to sit inside a strip rather than to be read precisely, of which Lungfish draws three under a FASTQ bundle's summary cards, labelled Length Dist., Q / Position, and Q Score Dist., with a click on any one opening the full-size chart in a popover. See also: quality control, FASTQ.
 
+**Spike-in control**{#spike-in-control}. A known sequence added deliberately to a sequencing library so that its behaviour in the results reports on how the run itself performed, the commonest being the bacteriophage phiX genome that Illumina protocols add to improve the instrument's base calling. A handful of phiX reads turning up in a classification report is expected rather than a sign of contamination. See also: read classification, Kraken 2.
+
 **SRA (Sequence Read Archive)**{#sra}. The NCBI public archive of raw sequencing reads, identified by accession numbers that start with `SRR` for runs and `SRP` for projects. Lungfish downloads SRA reads via the ENA mirror first and falls back to the SRA Toolkit if ENA refuses. See also: ENA.
 
 **Strand**{#strand}. Whether a read aligned to the reference as sequenced (forward) or as its reverse complement (reverse); recorded as a flag bit in every BAM row. See also: strand bias.

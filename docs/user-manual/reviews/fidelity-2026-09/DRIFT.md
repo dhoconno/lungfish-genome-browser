@@ -3753,7 +3753,7 @@ Status column values: queued, authored, reviewed, edited, gated, committed.
 | 27 | 05-variants/01-calling-variants-from-amplicons | Calling Variants | [variants.call-lofreq, variants.call-ivar, variants.call-bcftools] | hg002-chr20 | existing (retitled) | done |
 | 28 | 05-variants/02-reading-the-variant-browser | Reading the Variants Table | [variants.filter-table, variants.query] | hg002-chr20 | existing (retitled; absorbs the comparison paragraph) | done |
 | 29 | 05-variants/04-nanopore-variant-calling | Nanopore Variant Calling | [variants.call-medaka, variants.call-clair3] | hg002-long-reads | existing | done |
-| 30 | 05-variants/05-consensus-and-lineage | Extracting a Consensus Sequence | [bam.extract-consensus] | hg002-chr20 | existing (retitled) | queued |
+| 30 | 05-variants/05-consensus-and-lineage | Extracting a Consensus Sequence | [bam.extract-consensus] | hg002-chr20 | existing (retitled) | done |
 | 31 | 05-variants/06-importing-existing-vcfs | Importing Existing VCFs | [import.vcf] | hg002-chr20 | existing | queued |
 | 32 | 06-classification/01-what-is-classification | What Is Classification | [] | sarscov2-srr36291587 | existing | queued |
 | 33 | 06-classification/02-running-kraken2 | Running Kraken 2 | [classify.kraken2, classify.install-database, classify.taxonomy-browser, classify.extract-reads-by-taxon] | sarscov2-srr36291587 | existing | queued |

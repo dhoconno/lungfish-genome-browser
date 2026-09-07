@@ -99,7 +99,7 @@ nav:
     - Calling Variants: chapters/05-variants/01-calling-variants-from-amplicons.md
     - Reading the Variants Table: chapters/05-variants/02-reading-the-variant-browser.md
     - Nanopore Variant Calling: chapters/05-variants/04-nanopore-variant-calling.md
-    - Consensus and Lineage: chapters/05-variants/05-consensus-and-lineage.md
+    - Extracting a Consensus Sequence: chapters/05-variants/05-consensus-and-lineage.md
     - Importing Existing VCFs: chapters/05-variants/06-importing-existing-vcfs.md
 
   - Classification:
