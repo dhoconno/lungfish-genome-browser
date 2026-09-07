@@ -67,14 +67,13 @@ Total well under the 50 MB fixture-set cap.
 
 ## Internal consistency
 
-Reads align end-to-end to the reference with zero unaligned contigs: the
-reference is the genome the reads came from. All variants in
-`variants.vcf.gz` were called from `alignments.bam`; each REF allele matches
-the base at that position in `reference.fasta`. Genotype fields are
-diploid-style `0/1` or `1/1` by convention, appropriate for a single-isolate
-clinical sample (near-100% allele frequencies). The chromosome name is the
-GenBank accession `MT192765.1`, not `chrCOV19` or other aliases. Alignment
-BAM, VCF, and FASTA all agree on this name.
+Reads align end-to-end to the reference with zero unaligned contigs.
+The reference is the genome the reads came from.
+All variants in `variants.vcf.gz` were called from `alignments.bam`.
+Each REF allele matches the base at that position in `reference.fasta`.
+Genotype fields are diploid-style `0/1` or `1/1` by convention, appropriate for a single-isolate clinical sample (near-100% allele frequencies).
+The chromosome name is the GenBank accession `MT192765.1`, not `chrCOV19` or other aliases.
+Alignment BAM, VCF, and FASTA all agree on this name.
 
 ## How to re-derive
 
@@ -97,8 +96,8 @@ bcftools mpileup -Ou -f reference.fasta alignments.bam \
 tabix -p vcf variants.vcf.gz
 ```
 
-`fetch.sh` in this directory is a stub for reviewers who want to verify
-provenance; the canonical artifacts are the committed files.
+`fetch.sh` in this directory is a stub for reviewers who want to verify provenance.
+The canonical artifacts are the committed files.
 
 ## Used by
 
