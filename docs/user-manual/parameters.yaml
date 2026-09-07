@@ -5331,3 +5331,492 @@ operations:
       FASTA on the current selection, and the first of those retitles itself to BLAST
       Contig when exactly one contig is selected. The bundle's FASTA is not
       bgzip-compressed, unlike an assembly bundle's.
+
+  msa.mafft:
+    title: MAFFT
+    entry_points:
+      - "Tools > Multiple Sequence Alignment > MAFFT..."
+      - "Right-click a FASTA selection > Align with MAFFT..."
+      - "CLI: lungfish-cli align mafft <input-files> --project <project>"
+    gating: [multiple-sequence-alignment]
+    sources:
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift
+      - Sources/LungfishApp/App/ToolsMenuModel.swift
+      - Sources/LungfishApp/App/AppDelegate+ToolsMenu.swift
+      - Sources/LungfishApp/Services/CLIMSAAlignmentRunner.swift
+      - Sources/LungfishKit/MSASequenceScopePicker.swift
+      - Sources/LungfishKit/FASTASequenceActionMenuBuilder.swift
+      - Sources/LungfishWorkflow/MSA/MAFFTAlignmentPipeline.swift
+      - Sources/LungfishWorkflow/MSA/MSAAlignmentRunRequest.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/align.txt
+    settings:
+      - label: Sequences to align
+        control: radio
+        default: All sequences (N)
+        allowed: "All sequences (N), Selected sequences (M)"
+        effect: Chooses whether the run covers every sequence in the source file or only the sequences you highlighted in the viewport. The row counts appear in the labels, so All sequences (12) and Selected sequences (4) tell you the size of each choice.
+        when_to_change: Pick the selected scope when the file holds sequences you do not want in the alignment, such as an unrelated outgroup or a failed sample.
+        cli_flag: --sequence
+      - label: Batch Output
+        control: radio
+        default: Combine into one run, and the row is locked with the reason "Alignment requires all sequences in one run"
+        allowed: Combine into one run
+        effect: States that every selected input file is pooled into a single alignment. An alignment of N sequences has no meaning file by file, so the per-file option is not offered.
+        when_to_change: rarely
+        cli_flag: null
+      - label: Strategy
+        control: popup
+        default: Automatic
+        allowed: "Automatic, L-INS-i, G-INS-i, E-INS-i, FFT-NS-2, PartTree"
+        effect: Picks how hard MAFFT works to place gaps. Automatic lets MAFFT choose from the number and length of your sequences, the three INS-i settings are slow and accurate for a few hundred sequences, FFT-NS-2 is the fast progressive setting, and PartTree is for many thousands of sequences.
+        when_to_change: Move to L-INS-i when you have under about 200 sequences of similar length and the automatic alignment leaves ragged gap columns.
+        cli_flag: --strategy
+      - label: Sequence Type
+        control: radio
+        default: Auto
+        allowed: "Auto, Nucleotide, Protein"
+        effect: Tells MAFFT whether the letters are DNA or amino acids, which decides the scoring table it uses. Auto lets MAFFT guess from the residues it sees.
+        when_to_change: Set it by hand when a short or ambiguous sequence makes the guess wrong, which shows up as a protein alignment scored as DNA.
+        cli_flag: --sequence-type
+      - label: Output Order
+        control: radio
+        default: Input Order
+        allowed: "Input Order, Aligned Order"
+        effect: Chooses the order of rows in the finished alignment. Input Order keeps the order of your source file, and Aligned Order groups similar sequences together the way MAFFT's guide tree found them.
+        when_to_change: Switch to Aligned Order when you want related sequences adjacent so that shared differences line up in the viewport.
+        cli_flag: --output-order
+      - label: Direction Adjustment
+        control: popup
+        default: "Off"
+        allowed: "Off, Adjust Direction, Adjust Direction Accurately"
+        effect: Lets MAFFT reverse-complement a sequence that was submitted on the wrong strand. Off trusts the strand you gave, and the accurate setting spends more time checking each sequence against the others.
+        when_to_change: Turn it on when some inputs came from a sequencer or database that does not enforce a strand, and one row in the alignment is nearly all gaps.
+        cli_flag: --adjust-direction
+      - label: Symbol Policy
+        control: popup
+        default: Strict Alphabet
+        allowed: "Strict Alphabet, Allow Any Symbol"
+        effect: Decides what MAFFT does with letters outside the standard DNA or protein alphabet. Strict Alphabet stops on an unexpected character, and Allow Any Symbol carries it through the alignment unchanged.
+        when_to_change: Choose Allow Any Symbol when your sequences carry selenocysteine, stop codons, or other characters MAFFT would otherwise reject.
+        cli_flag: --symbols
+      - label: Threads
+        control: text
+        default: blank, meaning the app picks a thread count
+        allowed: blank, or an integer of 1 or more
+        effect: How many processor cores MAFFT may use. Leaving it blank lets the app choose a count that suits the machine.
+        when_to_change: Set a small number when you want to run another job at the same time and keep the machine responsive.
+        cli_flag: --threads
+      - label: Deterministic threading
+        control: checkbox
+        default: "true"
+        allowed: "true, false"
+        effect: Keeps MAFFT's iterative refinement single-threaded so that the same input always produces the same alignment. Clearing it lets refinement run on several threads, which is faster but can shift a few gaps between runs.
+        when_to_change: Clear it only when a large alignment is too slow and you do not need a byte-identical result on a rerun.
+        cli_flag: "--allow-nondeterministic-threads, sent when the box is cleared"
+      - label: Treat FASTQ records as assembled or consensus sequences
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Lets you feed FASTQ files to MAFFT by converting each record to FASTA first. Without it the dialog refuses FASTQ input, because aligning raw sequencing reads to each other is almost never what you want.
+        when_to_change: Tick it when the FASTQ actually holds finished consensus or assembled sequences rather than raw reads.
+        cli_flag: --allow-fastq-assembly-inputs
+      - label: MAFFT Parameters
+        control: text
+        default: empty
+        allowed: any text MAFFT accepts on its command line
+        effect: Passes text straight to MAFFT after the chosen strategy. The dialog checks that the text parses as command-line arguments and refuses to run until it does.
+        when_to_change: Use it for a MAFFT option the dialog does not expose, such as a custom gap-opening penalty.
+        cli_flag: --extra-mafft-options
+    cli_only:
+      - flag: --output
+        default: derived from the project directory and the input name
+        effect: Writes the .lungfishmsa bundle to an explicit path instead of letting the project choose one.
+      - flag: --name
+        default: derived from the first input file name
+        effect: Sets the display name of the alignment bundle.
+      - flag: --extra-args
+        default: empty
+        effect: Passes further arguments to MAFFT verbatim, in addition to the ones from --extra-mafft-options.
+    notes: >-
+      MAFFT is the only aligner in Lungfish Genome Explorer, so the dialog has
+      no aligner picker. The "Sequences to align" radio group is replaced by a
+      single summary line when there is no choice to make, that is when nothing
+      is selected or the selection is the whole file. Direction Adjustment,
+      Symbol Policy, Threads, Deterministic threading, the FASTQ toggle, and
+      MAFFT Parameters sit inside the collapsed Advanced Options group.
+
+  msa.view:
+    title: Alignment viewport display controls
+    entry_points:
+      - "Open a .lungfishmsa bundle from the sidebar"
+      - "Inspector > View tab"
+      - "Right-click a row in the alignment"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Viewer/MultipleSequenceAlignmentViewController.swift
+      - Sources/LungfishApp/Views/Viewer/MSAAlignmentNumberingMode.swift
+      - Sources/LungfishApp/Views/Inspector/Sections/ReadStyleSection.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController.swift
+    settings:
+      - label: All Sites / Variable Sites
+        control: radio
+        default: All Sites
+        allowed: "All Sites, Variable Sites"
+        effect: Chooses whether the viewport shows every alignment column or only the columns where the sequences disagree. Variable Sites hides the columns that are identical in every row, which pulls the differences together on one screen.
+        when_to_change: Switch to Variable Sites on a long alignment of close relatives, where the differences would otherwise be thousands of columns apart.
+        cli_flag: null
+      - label: Nucleotide / Conservation
+        control: radio
+        default: Nucleotide
+        allowed: "Nucleotide, Conservation"
+        effect: Chooses the residue coloring. Nucleotide gives each base its own color, and Conservation shades each column by how many rows share its most common residue.
+        when_to_change: Switch to Conservation when you care about which regions are constant rather than which base sits in a given cell.
+        cli_flag: null
+      - label: Numbering
+        control: popup
+        default: Alignment + Source
+        allowed: "Alignment + Source, Alignment Columns, Source Coordinates, Hidden"
+        effect: Chooses which coordinates the viewport labels. Alignment columns count gapped positions from the left edge of the alignment, and source coordinates count ungapped positions along each original sequence, so the two disagree wherever a gap sits.
+        when_to_change: Choose Source Coordinates when you need a position you can look up in the original record, and Hidden when the numbers crowd a narrow window.
+        cli_flag: null
+      - label: Low support (of non-gap residues)
+        control: slider
+        default: 50
+        allowed: 0 to 100 percent in steps of 5
+        effect: The share of non-gap residues that must agree before a consensus position is drawn as a called base. Below the threshold the position is masked instead.
+        when_to_change: Raise it when you want a consensus that only shows positions where the sequences strongly agree.
+        cli_flag: null
+      - label: High gap
+        control: slider
+        default: 50
+        allowed: 0 to 100 percent in steps of 5
+        effect: The share of rows that may be gaps before the consensus masks that column. At 50 a column with more than half its rows gapped is masked.
+        when_to_change: Lower it when partial sequences are letting sparse columns into the consensus.
+        cli_flag: null
+      - label: Mask
+        control: popup
+        default: Auto
+        allowed: "Auto, N, X"
+        effect: Picks the character that stands in for a masked consensus position. Auto writes X for protein alignments and N for everything else.
+        when_to_change: Set it by hand when the alignment alphabet is ambiguous and the automatic choice picks the wrong letter.
+        cli_flag: null
+      - label: Reference
+        control: popup
+        default: Consensus
+        allowed: "Consensus, or any row name in the alignment"
+        effect: Names the sequence every other row is compared against. The right-click items Use Consensus and Use as Reference set this same value from the alignment itself.
+        when_to_change: Point it at a published reference or a wild-type sample when you want every difference reported relative to that sequence.
+        cli_flag: null
+      - label: Display
+        control: popup
+        default: Letters
+        allowed: "Letters, Dots to Consensus, Dots to Reference"
+        effect: Chooses whether matching residues are spelled out or replaced by dots. Dots leave only the differences as letters, so a wall of identical sequence collapses into a few visible changes.
+        when_to_change: Switch to a dots mode as soon as the alignment is mostly identical, because the differences are then the only letters on screen. Dots to Reference stays disabled until a Reference row is chosen.
+        cli_flag: null
+      - label: Name gutter width
+        control: slider
+        default: the shipped gutter width, restored from the last session
+        allowed: 160 to 640 points
+        effect: Sets how much room the sequence names get on the left of the alignment. You change it by dragging the handle between the names and the residues, and the width is remembered for the next session.
+        when_to_change: Widen it when long accession names are cut off, and narrow it to give the residues more room.
+        cli_flag: null
+    cli_only:
+      - flag: "msa consensus --threshold"
+        default: "0.6"
+        effect: The command-line equivalent of the low-support control, as the minimum non-gap residue fraction required for a consensus base.
+      - flag: "msa consensus --gap-policy"
+        default: omit
+        effect: Chooses whether gap columns are omitted from the written consensus or included as gaps.
+      - flag: "msa distance --model"
+        default: identity
+        effect: Computes a pairwise matrix as identity or as p-distance, which is the arithmetic behind the conservation shading made explicit.
+    notes: >-
+      These controls change what the reader sees and never change the bundle on
+      disk. Numbering, the consensus sliders, Mask, Reference, and Display live
+      in the Inspector View tab, while All Sites, the color scheme, the zoom
+      buttons, and the fit-to-width button live on the viewport toolbar. Zoom
+      in, zoom out, fit columns, Previous Variable, and Next Variable are
+      buttons rather than settings, so they carry no stored value.
+
+  msa.export:
+    title: Export Alignment
+    entry_points:
+      - "Right-click in the alignment viewport > Export Alignment..."
+      - "CLI: lungfish-cli msa export <bundle-path> --output <output>"
+      - "CLI: lungfish-cli msa extract <bundle-path> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Viewer/MSAAlignmentExportSheet.swift
+      - Sources/LungfishApp/Views/Viewer/MultipleSequenceAlignmentViewController.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/msa.txt
+    settings:
+      - label: Destination
+        control: radio
+        default: Save to File...
+        allowed: "Save as Bundle, Save to File..., Copy to Clipboard"
+        effect: Chooses where the exported alignment goes. Save as Bundle creates a new bundle inside the project, Save to File writes a plain file anywhere, and Copy to Clipboard puts the text on the pasteboard.
+        when_to_change: Choose Save as Bundle when the subset is the input to another Lungfish step, and Save to File when an outside program will read it.
+        cli_flag: null
+      - label: Sequences
+        control: popup
+        default: Aligned FASTA (keep gaps)
+        allowed: "Aligned FASTA (keep gaps), Unaligned FASTA (remove gaps)"
+        effect: Decides whether the export keeps the gap characters. Keeping gaps preserves the alignment as a grid, and removing them leaves you with the plain sequences at their original lengths.
+        when_to_change: Remove gaps when the destination wants raw sequences, such as a BLAST search or a primer design tool.
+        cli_flag: "--output-format for a file export, --output-kind for a bundle export"
+      - label: Format
+        control: popup
+        default: aligned-fasta
+        allowed: "aligned-fasta, phylip, nexus, clustal, stockholm, a2m, a3m, and only fasta when gaps are removed"
+        effect: Picks the file format of a file export. PHYLIP and NEXUS are what most tree-building programs read, Clustal and Stockholm are readable alignment text, and a2m and a3m are the profile formats HMMER uses.
+        when_to_change: Change it to match the program that will read the file, since a tree builder that wants PHYLIP will not accept FASTA.
+        cli_flag: --output-format
+      - label: Scope
+        control: radio
+        default: Selected subalignment (N rows) when rows are selected, otherwise Entire alignment (N)
+        allowed: "Entire alignment (N), Selected subalignment (N rows)"
+        effect: Chooses whether the export covers the whole alignment or only the rows and columns you selected. The row counts appear in the labels.
+        when_to_change: Keep the selected scope when you highlighted a clade or a gene region and want only that piece in the output file.
+        cli_flag: "--rows and --columns"
+      - label: Bundle name
+        control: text
+        default: the current alignment name
+        allowed: any text that is not blank
+        effect: Names the new bundle when the destination is Save as Bundle. The Create Bundle button stays disabled until the field holds something.
+        when_to_change: Set it whenever the export is a subset, so the bundle name says what the subset is.
+        cli_flag: --name
+    cli_only:
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file or bundle instead of stopping.
+      - flag: "msa consensus --output-kind"
+        default: fasta
+        effect: Writes a consensus as a plain FASTA file or as a .lungfishref reference bundle.
+      - flag: "msa mask columns --ranges"
+        default: none
+        effect: Marks the listed 1-based column ranges as masked in a derived bundle without deleting them.
+      - flag: "msa trim columns --gap-threshold"
+        default: none
+        effect: Deletes columns whose gap fraction is above the given value in a derived bundle.
+      - flag: "msa annotate add --columns"
+        default: none
+        effect: Records a named feature over the listed aligned columns of one row.
+    notes: >-
+      The Format row appears only for the file destination, because bundle and
+      clipboard exports are always FASTA. Copy to Clipboard is disabled and
+      explains itself when the alignment text would exceed 5 MB. The Scope row
+      appears only when a selection exists, and the Bundle name row only for
+      Save as Bundle. Under the hood a bundle export runs msa extract and a file
+      or clipboard export runs msa export.
+
+  tree.iqtree:
+    title: Build Tree with IQ-TREE
+    entry_points:
+      - "Right-click in the alignment viewport > Build Tree with IQ-TREE..."
+      - "CLI: lungfish-cli tree infer iqtree <msa-bundle-path> --project <project> --output <output>"
+    gating: [phylogenetics]
+    sources:
+      - Sources/LungfishApp/Views/Phylogenetics/IQTreeInferenceDialog.swift
+      - Sources/LungfishApp/Views/Viewer/MultipleSequenceAlignmentViewController.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/tree.txt
+    settings:
+      - label: Output Name
+        control: text
+        default: the alignment bundle name, with any .lungfishtree suffix removed
+        allowed: any text that is not blank
+        effect: Names the .lungfishtree bundle the run writes into the project's Phylogenetic Trees folder. Run stays disabled while the field is empty.
+        when_to_change: Change it when the tree is one of several from the same alignment and the names would otherwise collide.
+        cli_flag: --name
+      - label: Model
+        control: text
+        default: MFP
+        allowed: "MFP, or any IQ-TREE model string such as GTR+G or HKY+I+G"
+        effect: Names the substitution model, which is the set of assumptions about how one base turns into another. MFP is not a model but an instruction to test many models on your data and use the one that fits best.
+        when_to_change: Name a model directly when a reviewer or a published method requires that exact model, or when model testing takes too long on a large alignment.
+        cli_flag: --model
+      - label: Sequence Type
+        control: radio
+        default: Auto
+        allowed: "Auto, DNA, Amino Acid, Codon, Binary, Morphological, NT to AA"
+        effect: Tells IQ-TREE what the alignment characters are. Auto lets IQ-TREE decide from the residues, and NT to AA translates a nucleotide alignment before inferring the tree.
+        when_to_change: Set it by hand when the alignment is a codon alignment or when you want a protein tree from nucleotide input.
+        cli_flag: --sequence-type
+      - label: Ultrafast Bootstrap
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Turns on branch support values from resampled alignments. A branch labelled 95 means that branch appeared in 95 percent of the resampled trees, and values at or above 95 are usually treated as well supported.
+        when_to_change: Turn it on for any tree you plan to interpret or publish, because a tree without support values cannot be read for confidence.
+        cli_flag: --bootstrap
+      - label: Replicates (Ultrafast Bootstrap)
+        control: text
+        default: 1000
+        allowed: integers of 1 or more
+        effect: How many resampled alignments the ultrafast bootstrap builds. More replicates make the support numbers steadier and the run slower.
+        when_to_change: rarely, because 1000 is the value IQ-TREE's authors recommend for the ultrafast method.
+        cli_flag: --bootstrap
+      - label: SH-aLRT
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Turns on a second, faster branch support test that compares each branch against the alternatives around it. It reports on the same 0 to 100 scale but is calculated differently from the bootstrap.
+        when_to_change: Turn it on alongside the bootstrap when you want two independent support measures per branch.
+        cli_flag: --alrt
+      - label: Replicates (SH-aLRT)
+        control: text
+        default: 1000
+        allowed: integers of 1 or more
+        effect: How many replicates the SH-aLRT test uses. As with the bootstrap, more replicates cost time and steady the numbers.
+        when_to_change: rarely
+        cli_flag: --alrt
+      - label: Seed
+        control: text
+        default: 1
+        allowed: blank, or an integer of 1 or more
+        effect: Fixes the starting point of the random choices IQ-TREE makes, so the same alignment and the same seed give the same tree. Leaving it blank lets IQ-TREE pick one.
+        when_to_change: Change it when you want to check that a different random start reaches the same tree.
+        cli_flag: --seed
+      - label: Threads
+        control: text
+        default: blank, meaning the app picks a thread count
+        allowed: blank, or an integer of 1 or more
+        effect: How many processor cores IQ-TREE may use. Leaving it blank lets the app choose.
+        when_to_change: Set a small number to keep the machine responsive while a long inference runs.
+        cli_flag: --threads
+      - label: Safe numerical mode
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Makes IQ-TREE use slower arithmetic that avoids numerical underflow. Underflow shows up as a run that stops with a likelihood error rather than a tree.
+        when_to_change: Turn it on after a run fails with a numerical error, which happens most often on very long alignments.
+        cli_flag: --safe
+      - label: Keep identical sequences
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Keeps sequences that are identical to another sequence in the analysis. By default IQ-TREE removes the duplicates and puts them back on the finished tree, which is faster and gives the same topology.
+        when_to_change: Turn it on when you need every input name to appear as its own tip with its own branch length.
+        cli_flag: --keep-identical
+      - label: IQ-TREE Executable
+        control: text
+        default: empty, meaning the iqtree3 binary from the Phylogenetics pack
+        allowed: a path to an iqtree3 executable
+        effect: Points the run at a specific IQ-TREE binary instead of the one the app manages.
+        when_to_change: Set it when you must reproduce a result with a particular IQ-TREE version.
+        cli_flag: --iqtree-path
+      - label: IQ-TREE Parameters
+        control: text
+        default: empty
+        allowed: any text IQ-TREE accepts on its command line
+        effect: Passes text straight to IQ-TREE after the settings above. The dialog checks that the text parses as command-line arguments before it lets the run start.
+        when_to_change: Use it for an IQ-TREE option the dialog does not expose, such as a partition file or an outgroup constraint.
+        cli_flag: --extra-iqtree-options
+    cli_only:
+      - flag: --rows
+        default: every row in the alignment
+        effect: Restricts the inference to the named rows, which is what the GUI does with the rows you selected before opening the dialog.
+      - flag: --columns
+        default: every column in the alignment
+        effect: Restricts the inference to the given 1-based column ranges, which is what the GUI does with a column selection.
+      - flag: --extra-args
+        default: empty
+        effect: Passes further arguments to IQ-TREE verbatim, in addition to those from --extra-iqtree-options.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output bundle instead of stopping.
+    notes: >-
+      The menu item stays disabled until at least two rows are selected in the
+      alignment, and the row and column selection carries into the run as the
+      Scope line in the dialog's Inputs section. The dialog has no outgroup
+      field, so rooting is done afterwards with Re-root Here in the tree
+      viewport. IQ-TREE Executable and IQ-TREE Parameters sit inside the
+      collapsed Advanced Options group.
+
+  tree.reroot:
+    title: Re-root Here
+    entry_points:
+      - "Right-click a tip or internal node in the tree viewport > Re-root Here"
+      - "CLI: lungfish-cli tree reroot --bundle <bundle> --on <node> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishPhylogeneticsUI/PhylogeneticTreeViewController.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController+AlignmentTreeBundles.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/tree.txt
+    settings:
+      - label: Node to root on
+        control: text
+        default: the node you right-clicked
+        allowed: any tip or internal node in the open tree
+        effect: Sets which node becomes the base of the tree, so every branch is redrawn as leading away from it. Re-rooting changes what the picture says about ancestry and descent while leaving the branch lengths and the groupings untouched.
+        when_to_change: Root on a known outgroup, that is a sequence you are confident falls outside the group you are studying, because an unrooted tree cannot tell you which lineage came first.
+        cli_flag: --on
+      - label: Output bundle name
+        control: text
+        default: the source bundle name with -rerooted appended
+        allowed: set by the app, not editable in the viewport
+        effect: Names the new .lungfishtree bundle written into the project's Phylogenetic Trees folder. The original tree is never modified.
+        when_to_change: rarely, because the viewport does not offer the field and the CLI takes the path directly.
+        cli_flag: --output
+    cli_only: []
+    notes: >-
+      There is no dialog. The command runs on the node you right-clicked and
+      writes a new bundle beside the original, so the number after -rerooted
+      grows if you re-root more than once. Related items in the same context
+      menu are Collapse Clade, Copy Subtree as Newick, Copy Node Label, Center
+      Node, and Reveal Provenance.
+
+  tree.extract-subtree:
+    title: Extract Subtree as New Bundle
+    entry_points:
+      - "Right-click a node in the tree viewport > Extract Subtree as New Bundle..."
+      - "Right-click a node in the tree viewport > Export Subtree..."
+      - "CLI: lungfish-cli tree extract-subtree --bundle <bundle> --node <node> --output <output>"
+      - "CLI: lungfish-cli tree export subtree <bundle-path> --output <output>"
+    gating: []
+    sources:
+      - Sources/LungfishPhylogeneticsUI/PhylogeneticTreeViewController.swift
+      - Sources/LungfishApp/Views/Viewer/ViewerViewController.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/tree.txt
+    settings:
+      - label: Node to extract
+        control: text
+        default: the node you right-clicked
+        allowed: any tip or internal node in the open tree
+        effect: Chooses the clade that becomes the new tree, meaning that node and everything descended from it. Everything outside the clade is left behind.
+        when_to_change: Pick the node whose descendants are the group you want to look at on its own, such as one well supported lineage inside a large tree.
+        cli_flag: --node
+      - label: Output bundle name
+        control: text
+        default: the node label with -subtree appended
+        allowed: set by the app, not editable in the viewport
+        effect: Names the new .lungfishtree bundle written into the project's Phylogenetic Trees folder.
+        when_to_change: rarely, because the viewport does not offer the field and the CLI takes the path directly.
+        cli_flag: --output
+      - label: Export file name
+        control: file
+        default: the node label with .nwk appended
+        allowed: any writable path
+        effect: Names the plain Newick file that Export Subtree writes through a save panel. Newick is the one-line bracketed text format that nearly every tree program reads.
+        when_to_change: Change it in the save panel when another program expects a particular file name.
+        cli_flag: --output
+    cli_only:
+      - flag: --label
+        default: none
+        effect: Selects the node to export by its unique display label instead of its node ID, on tree export subtree.
+      - flag: --output-format
+        default: newick
+        effect: Names the export format for tree export subtree, and newick is currently the only one supported.
+      - flag: --force
+        default: "false"
+        effect: Overwrites an existing output file instead of stopping.
+    notes: >-
+      Two related items sit next to each other in the node context menu.
+      Extract Subtree as New Bundle writes a .lungfishtree bundle into the
+      project with provenance, while Export Subtree writes a plain .nwk file
+      through a save panel. Neither shows a settings dialog, so the node comes
+      from the right-click and the names come from the node label.
