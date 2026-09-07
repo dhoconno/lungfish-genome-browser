@@ -131,9 +131,11 @@ a bad value looks like.
 
 ## Fixture references
 
-When a chapter uses a fixture, it cites the fixture's `README.md` citation
-block via `{{ fixtures_refs[] | cite }}`. Chapters do not reproduce licenses
-or accessions inline.
+When a chapter uses a fixture, it names the fixture by its consistency-sheet
+name and links the fixture folder on GitHub in the Before you start section,
+which is where the `README.md` with the source, license, and citation lives.
+Chapters do not reproduce licenses or citation blocks inline, and the build
+has no citation macro, so never write `{{ fixtures_refs[] | cite }}`.
 
 ## Audience tiers
 

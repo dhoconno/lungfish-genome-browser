@@ -3,12 +3,15 @@ title: Amplicons and Shotgun Sequencing
 chapter_id: 01-foundations/03-amplicon-vs-shotgun
 audience: bench-scientist
 prereqs: [01-foundations/01-what-is-a-genome, 01-foundations/02-sequencing-reads]
-estimated_reading_min: 8
+estimated_reading_min: 9
 task: Understand the difference between amplicon and shotgun sequencing and why amplicon data needs primer trimming.
 tags: [foundations, amplicon, shotgun, primers, primer-scheme, artic, qiaseq]
 tools: []
+parameters_refs: []
 entry_points: []
-shots: []
+shots:
+  - id: primer-scheme-picker-built-in
+    caption: "The Primer Scheme menu in the primer-trim dialog, open on its Built-in section listing the eight schemes LGE ships."
 illustrations:
   - id: amplicon-vs-shotgun
     brief: "Top row: shotgun sequencing schematic showing a genome with reads scattered randomly across it, each read starting and ending at arbitrary positions. Bottom row: amplicon sequencing showing the same genome with reads starting and ending at fixed primer positions, with about 8-10 overlapping amplicons covering the genome. Use Lungfish Creamsicle for read positions, Peach for primer positions."
@@ -16,124 +19,151 @@ illustrations:
     brief: "A 2000-base region of a genome backbone in Deep Ink, with three primer pairs marked above the backbone (forward primers as right-pointing Creamsicle arrows, reverse primers as left-pointing arrows), creating three overlapping amplicons. Below the backbone, a small table showing the BED-style start/end coordinates of each primer."
   - id: primer-trim-soft-clip
     brief: "A single read shown twice. Top: untrimmed read, with the leftmost ~20 bases highlighted in Peach (primer-derived) and the body of the read in Lungfish Creamsicle (sample-derived). Bottom: same read after primer trim, with primer-derived bases shown lightened/struck-through to indicate soft-clipping, body unchanged. Annotate 'Primer bases ignored by the variant caller'."
-glossary_refs: [amplicon, shotgun, primer, primer-scheme, primer-trim, soft-clip]
+glossary_refs: [amplicon, shotgun, primer, primer-scheme, primer-trim, soft-clip, target-enrichment, tiling, library-prep, mhc, coverage, depth]
 features_refs: []
-fixtures_refs: []
-brand_reviewed: false
-lead_approved: false
+fixtures_refs: [hg002-chr20, demo-assets]
+brand_reviewed: true
+lead_approved: true
 ---
 
-Sample DNA reaches the sequencer by one of three main routes. It can be chopped at random into small fragments before reading ([shotgun](../../GLOSSARY.md#shotgun) sequencing), copied at fixed positions across the genome by PCR with carefully chosen primers ([amplicon](../../GLOSSARY.md#amplicon) sequencing), or fished out by hybridisation to oligonucleotide probes that pull target sequences from a crowded background (target-enrichment sequencing, also called capture-based sequencing). All three produce FASTQ files that look identical on disk: the same four-line records, the same Phred scores, the same paired-end conventions. What sets them apart is how the reads land on the genome, and that difference changes how you must analyse them.
+## What it is
 
-This chapter lays out what amplicon protocols are, why they dominate viral surveillance ([SARS-CoV-2 ARTIC](https://artic.network/ncov-2019) and [QIAseq Direct](https://www.qiagen.com/), [dengue PrimalSeq](https://github.com/grubaughlab), monkeypox amplicon panels), and what a primer scheme looks like as a file. It also explains why amplicon data needs primer trimming before variant calling, and how skipping that step conjures phantom variants that look real but are not. A short section at the end introduces target-enrichment sequencing, a third approach that often rescues harder samples.
+Sequencing reads do not simply appear. Somebody first turned a tube of extracted nucleic acid into a form the instrument can read, and that preparation is called the [library prep](../../GLOSSARY.md#library-prep). The library prep decides where on the genome your reads will land, and that single fact changes how the rest of the analysis has to work.
+
+Two preparations cover most of what you will meet. In [shotgun](../../GLOSSARY.md#shotgun) sequencing the sample is chopped into short pieces at essentially random places, and every read starts wherever a break happened to fall. In [amplicon](../../GLOSSARY.md#amplicon) sequencing a chosen stretch of the genome is copied many times by PCR before sequencing, using short synthetic pieces of DNA called [primers](../../GLOSSARY.md#primer) that stick to two known positions and mark out what gets copied. Every read from an amplicon library starts and ends at those same designed positions.
+
+Both preparations produce FASTQ files that look identical on disk. A FASTQ file stores one read in four lines, a header naming the read, the bases themselves, a separator line, and a quality string with one character per base. Both preparations write those same four lines, and a paired-end run splits them across two files, read 1 in one and read 2 in the other. Nothing inside the file announces which preparation made it. You have to know, or find out, because one of the two needs a cleanup step that the other does not.
+
+That step is primer trimming, and this chapter explains why it exists. The short version is that the first and last stretch of every amplicon read is primer, not sample, and a variant caller that is not told so will report the primer as a mutation. A variant caller is the program that compares your reads to a reference and decides where the sample genuinely differs from it. Lungfish Genome Explorer (LGE) can do the trim in either of two places in a workflow, and this chapter says which to prefer. What this asks of you is one habit. Find out which library prep made your sample before you call a single variant, and if the answer is amplicon, find the matching primer scheme too.
+
+## Why you would do this
+
+Two real datasets in this manual sit on opposite sides of this line, and comparing them makes the difference concrete.
+
+The HG002 chromosome 20 slice is shotgun. HG002 is a reference human sample sequenced many times over by many groups, which is why it is used to benchmark methods. The slice holds 45,574 Illumina read pairs, covering a 500,001 base stretch of chromosome 20. A read pair is the two reads that came from opposite ends of one fragment, so 45,574 pairs means 91,148 reads split across the two files.
+
+Mapped back to its own reference those reads reach a mean [depth](../../GLOSSARY.md#depth) of 44.7 reads per position and cover 99.99% of the slice. Depth is the number of reads stacked at one position. Around 30 or more is comfortable for calling variants on a human sample, 10 to 20 is thin, and under 10 is too thin to trust, so 44.7 is a healthy working depth. Coverage breadth is the share of positions that got any reads at all. Above 99% is routine for a shotgun run on an easy region, and a figure in the 80s or 90s would point at reads lost to repeats or to a mismatched reference. Shotgun coverage in general is smooth, because no one chose where the fragments would break, and it climbs and falls gently with the local base composition rather than jumping at fixed points.
+
+The Williams MiSeq genotyping project is amplicon. It is a laboratory dataset named for the group that produced it, and it holds 30 macaque samples prepared by PCR against the [MHC](../../GLOSSARY.md#mhc), the immune-system gene region, and sequenced on an Illumina MiSeq. One of its samples, WD28, holds 32,740 reads, every one of them exactly 251 bases long. That uniformity is the giveaway. Amplicon coverage in general does not spread across a chromosome at all. It piles onto the set of targets the primers were designed to reach.
+
+The reference this project is genotyped against is worth a moment, because it is not a chromosome. It is a database of 970 short allele sequences, a catalogue of the MHC variants already known in this species, and reads are matched against that catalogue rather than against a position on a genome. Some references are lists of known alleles in this way. The 970 records come in several lengths, because the panel amplifies several different loci and each one has its own target length. The two commonest lengths are 156 bases with 577 records and 244 bases with 198 records. The remaining 195 records sit at other lengths.
+
+The two datasets ask different questions, and each preparation answers its own question well. The sections that follow set out what each one is good for, so you can place your own sample against them.
+
+## Shotgun sequencing
+
+In a shotgun prep the nucleic acid in the tube is broken into short pieces, by an enzyme or by physical shearing, and sequencing adapters are attached to both ends of every piece. Adapters are short synthetic sequences the instrument needs in order to read a fragment at all. Where any given read lands is a matter of where the break happened, and for every purpose in this manual that placement is random.
 
 ![Shotgun reads scattered randomly compared with tiled overlapping amplicons at fixed positions](../../assets/illustrations-imagegen/01-foundations/03-amplicon-vs-shotgun/amplicon-vs-shotgun.png)
 
-Before you start any variant analysis in LGE, find out which library prep made your sample. If the protocol name carries "ARTIC", "QIAseq", "PrimalSeq", or any panel name with a version number tied to a virus, the data is amplicon and you will need a [primer scheme](../../GLOSSARY.md#primer-scheme). If it reads "Nextera XT", "TruSeq DNA", "NEBNext Ultra", or the like, the data is shotgun and primer trimming does not apply. If it names a "capture" or "panel" product such as Twist Comprehensive Viral or IDT xGen, the data is target-enriched and behaves like shotgun for primer-trimming purposes.
+The gain is that shotgun sees whatever was in the tube. It carries no assumption about what sequence you expect to find, so an unexpected organism, a rearranged genome, or a stretch that has drifted far from anything in a database all still produce reads. The cost is that shotgun spends reads in proportion to what is present. If your target is one part in ten thousand of the material, then roughly one read in ten thousand is on target, and you have to sequence very deeply to collect enough of them.
 
-## Shotgun sequencing: random fragments
+Shotgun data needs no primer trimming, because no primers were used. Adapters do get removed, but adapter trimming is a different step with a different tool, and the sequencing instrument's own software often does it before you ever see the file. LGE never removes adapters on its own. Adapter Removal is a separate operation you run deliberately, so if you did not run it, it did not happen.
 
-In shotgun prep, the total nucleic acid in a sample is broken into short pieces, by enzyme or by shearing, sequencing adapters are ligated to both ends, and the library is sequenced. Where any given read lands on the genome is essentially random. Its position turns on wherever the fragmentation enzyme happened to cut, a matter of physics and chemistry rather than design.
+## Amplicon sequencing
 
-The payoff is that shotgun captures whatever DNA is in the tube, with no bias toward sequence anyone already knows. If your sample harbours an unknown pathogen, a recombinant, or a wildly diverged variant, shotgun will see it, provided enough template is present. The price is sensitivity when template is scarce, because most reads come from the dominant background (host, microbiome, contaminants) and only a sliver reach the target.
+An amplicon prep uses PCR instead of shearing. Two primers, each usually 18 to 30 bases long, bind at two known positions on the target, and a polymerase copies everything between them. The copied piece is the amplicon. Its two ends are the two primer sites, exactly, in every copy.
 
-A quick back-of-the-envelope makes the price concrete. Say viral reads are 0.01% of the reads in a shotgun library. Then on average one read in 10,000 is viral. A 30 kb viral genome needs roughly 200 perfectly placed 150 bp reads to reach 1x nominal coverage. Put those two figures together and you would need about 2 million total reads just to catch ~200 viral ones, before the usual losses to host depletion, duplicates, mapping failures, uneven coverage, and quality filters. In practice, plan for several million to tens of millions of total reads to reach usable coverage at this fraction. That is why shotgun viral sequencing usually demands either a high-titre clinical isolate or a sample physically enriched for the target.
+One primer pair covers one stretch. To cover something larger, a protocol uses many pairs at once so that their amplicons overlap end to end, which is called [tiling](../../GLOSSARY.md#tiling). The SARS-CoV-2 schemes LGE ships are tiling schemes of this kind. The Williams project works differently, because the MHC targets it amplifies are separate genes rather than one continuous region, so its amplicons sit on chosen loci rather than tiling a chromosome. A locus is one specific place on the genome, and loci is its plural.
 
-Shotgun reads need no primer trimming, because there are no fixed primers to trim. The adapter sequences added during library prep are stripped by the sequencer's basecaller or by a tool such as [fastp](https://github.com/OpenGene/fastp) before alignment, and that adapter trim is a separate matter from primer trim.
+The gain is sensitivity. PCR multiplies the target by orders of magnitude before sequencing, so a sample with very little starting material can still yield a usable result, and the reads that come back are nearly all on target. Coverage becomes predictable as well. Every amplicon is supposed to produce reads at its own coordinates, so a missing amplicon is a specific and diagnosable event rather than bad luck.
 
-## Amplicon sequencing: fixed PCR products
-
-Amplicon prep skips the fragmentation and reaches for PCR instead, copying a defined region of the genome over and over. A pair of [primers](../../GLOSSARY.md#primer), each a short oligonucleotide of 18 to 30 bases, binds to two known positions on the reference, and DNA polymerase fills the gap between them. The product is an [amplicon](../../GLOSSARY.md#amplicon): a double-stranded DNA molecule whose ends are exactly the two primer binding sites and whose middle is the genomic sequence in between.
-
-One primer pair covers just one stretch of the genome, so real surveillance protocols marshal many pairs across two or more pools to tile the whole region of interest. ARTIC v3 for SARS-CoV-2 uses 98 primer pairs in two pools to make 98 overlapping amplicons of about 400 bp each, blanketing the 30 kb genome end to end. After PCR, the amplicons are pooled, given sequencing adapters, and sequenced exactly like a shotgun library.
-
-The payoff is sensitivity at low template input. PCR amplifies the target by orders of magnitude, so amplicon protocols routinely pull usable viral genomes from clinical samples with cycle-threshold (Ct) values as high as 32 or 33. (Ct is the qPCR cycle number at which a positive signal first appears; lower values mean higher viral load. Ct 32 to 33 corresponds to roughly 10^3 viral copies per microlitre for many SARS-CoV-2 assays, though the exact figure varies by assay.) Coverage is predictable too: every amplicon should produce reads at its assigned coordinates, so a drop tells you something specific (a primer failure, a deletion, a mutation lurking under one of the primer-binding sites). The price is that amplicon protocols see only what the primers were designed to amplify. A novel virus, or a variant that mutates a primer-binding site, may be invisible or under-represented.
-
-PCR also breeds artifacts that shotgun does not: chimeric reads where the polymerase stitched two templates together, jackpot effects where one early molecule dominates an amplicon's read pile, and polymerase errors carried forward through cycles. Most of these surface as low-frequency variants rather than fixed ones, so the default minimum-allele-frequency threshold usually filters them out. The [Variants and VCF Files](05-variants-and-vcf.md) chapter and the variant-calling workflow chapters cover the filter settings in detail.
+The cost is that you only see what the primers were designed to reach. A target that has mutated under a primer site amplifies poorly or not at all, and anything the panel does not target is invisible. PCR also introduces artifacts of its own. The polymerase makes occasional errors that are then copied forward, and it can sometimes join two different templates into one chimeric product. A template is a molecule being copied, and a chimeric product is an artificial hybrid stitched together from two of them, a sequence that never existed in the sample. Most of these show up as low-frequency variants rather than fixed ones, and the minimum allele-frequency setting in the variant-calling dialog, which is pre-filled at 0.05, usually filters them out. That 0.05 is a fraction rather than a percentage, so it means the difference has to appear in at least 5 percent of the reads stacked at that position before the caller will report it. The variant calling chapters document that setting.
 
 ## What an amplicon looks like, end to end
 
-A worked example helps. Picture an amplicon defined by:
+Take one amplicon in the abstract, with round numbers chosen for clarity rather than copied from a real scheme. Every position range in this manual counts both of its ends, so positions 1000 to 1021 is 22 bases and not 21. A 22-base forward primer binds at reference positions 1000 to 1021. A 22-base reverse primer binds at positions 1378 to 1399. The amplicon is everything between and including them, 400 bases running from position 1000 to position 1399.
 
-- A 22 bp forward primer at reference positions 1000 to 1021.
-- A 22 bp reverse primer at reference positions 1378 to 1399.
+Sequence that amplicon on a 150-base paired-end run and you get two reads per molecule. The two reads of a pair start at opposite ends of the molecule and are read inward toward each other, so read 1 begins at the amplicon's left edge and read 2 begins at its right edge. Read 1 covers positions 1000 to 1149. Read 2 covers positions 1250 to 1399, from the other strand. The 100 bases in the middle get no coverage from this amplicon. That gap is expected rather than a fault, because in a tiling scheme the neighbouring amplicons overlap this one and cover it.
 
-The full amplicon runs 400 bp, spanning positions 1000 to 1399. After PCR, every copy starts and ends at exactly those coordinates. Sequence it on a 150 bp paired-end Illumina run and you get two reads per molecule: read 1 covers the first 150 bases (positions 1000 to 1149), read 2 covers the last 150 from the other strand (positions 1250 to 1399). The middle, positions 1150 to 1249, stays uncovered until reads from neighbouring overlapping amplicons fill it in.
+Here is the part that decides everything downstream. The first 22 bases of read 1 are not your sample. They are the primer, which became the physical end of the amplicon during PCR and was then copied into every descendant molecule. Whatever your sample truly reads at positions 1000 to 1021, the read shows the primer sequence there instead. The last 22 bases of read 2 do the same at the other end.
 
-Here is the part that matters for variant calling. The first 22 bases of read 1 are not the sample's DNA. They are the primer sequence, copied into the read because the primer itself became the 5' end of the amplicon during PCR. Whatever the sample truly reads at positions 1000 to 1021, the read at those positions shows the primer sequence instead. The last 22 bases of read 2 do the same with the reverse primer. Across thousands of reads from this amplicon, every one carries the same primer-derived bases at the same positions.
-
-If a variant caller looks at position 1015 and finds the primer base in 100% of reads while the reference says something else, it has no way to know this is a protocol artifact. It reports a high-confidence, high-frequency variant. That variant is not real. It is the primer.
+Now suppose your sample carries a real difference from the reference at position 1015, inside the forward primer site. The primer overwrote it. Every read says primer. Worse, suppose the primer was designed against a slightly different version of the target than the one you have. Then every read reports the primer's base as a variant, at close to 100% frequency, with hundreds of reads behind it. A variant caller has no way to tell that apart from a real fixed mutation, so it reports one. What it found was the primer.
 
 ![Before and after primer trimming, showing soft-clipped primer bases](../../assets/illustrations-imagegen/01-foundations/03-amplicon-vs-shotgun/primer-trim-soft-clip.png)
 
-## Primer trimming and soft-clipping
+## Primer trimming
 
-The fix is [primer trimming](../../GLOSSARY.md#primer-trim). Two approaches exist, and LGE supports both, depending on where in the workflow you want the trim to fall.
+[Primer trimming](../../GLOSSARY.md#primer-trim) is the fix. It marks the primer-derived bases so that nothing downstream counts them as evidence. LGE offers two ways to do it, and they differ in where in the workflow the trim happens.
 
-The first is **read-based primer trimming**. A tool such as `fastp` takes the primer sequences, walks each FASTQ read end, matches primer sequence at the read's 5' edge, strips those bases, and writes a trimmed FASTQ. The trim happens before alignment and needs no reference, but it is easily thrown by mutations under the primer-binding site: if your sample carries a SNP there, the read end no longer matches the canonical primer, and the bases slip through untrimmed. Read-based trimming also throws away the primer information you might want for QC later.
+The first works on the reads, before alignment. LGE's Primer Trimming operation takes the primer sequences, matches them against each FASTQ read, strips those bases, and writes a trimmed FASTQ. On the command line this is `lungfish-cli fastq primer-remove`, and its engine there is `bbduk` by default, with `cutadapt-linked` as the alternative. In the app the engine follows the primer source, `bbduk` for a typed-in primer sequence and linked `cutadapt` for a primer FASTA. You do not pick between them in the app, and the choice it makes suits an ordinary run. Because it matches sequence rather than position, it needs no reference, but it is thrown off when your sample differs from the canonical primer under the primer site. In that case the read end no longer matches and the bases slip through untrimmed.
 
-The second is **alignment-based primer trimming**. A tool such as `ivar trim` or `samtools ampliconclip` takes the primer coordinates from a [BED](../../GLOSSARY.md#primer-scheme) file, walks each aligned read in the BAM, finds where the read's mapped position overlaps a primer footprint, and marks those bases as [soft-clipped](../../GLOSSARY.md#soft-clip). Soft-clipping is the alignment format's way of saying "these bases are still in the record, but ignore them when computing pileup, coverage, or variants" ([Alignment Files](04-alignment-files.md) covers soft-clipping in more detail). Because it works from coordinates rather than sequences, alignment-based trimming shrugs off primer-site mutations, and it keeps the original bases in the BAM for later inspection. It is the ARTIC project's recommended approach, and the LGE default for the iVar variant-calling lane.
+The second works on the alignment, after mapping. `ivar trim` takes the primer coordinates from a BED file, walks each aligned read in the BAM, finds where the read's mapped position overlaps a primer footprint, and marks those bases as [soft-clipped](../../GLOSSARY.md#soft-clip). A BAM is the file that holds your reads after they have been mapped, each read recorded with the reference position it landed on. Soft-clipping means the bases stay in the record but are excluded from coverage, pileup, and variant calling. The pileup is the stack of reads sitting over one reference position, which is the evidence a variant caller weighs there. Because this method works from coordinates rather than sequence, a mutation under the primer site does not confuse it, and the original bases remain in the file for inspection later.
 
-In LGE, the BAM-level primer trim runs `ivar trim` against a chosen primer scheme, after alignment and before variant calling. Most reads pass through with their primer ends soft-clipped, though some `ivar trim` options can drop reads whose remaining aligned span is too short or whose ends match no expected primer. The operation's provenance sidecar records the exact options used, so the run is always recoverable.
+In LGE the alignment-based trim runs after alignment and before variant calling, from the Primer Trim tab of the Inspector. The Inspector is the panel down the right-hand side of the project window, showing details and actions for whatever you have selected. Its provenance sidecar records the exact options used so the run can be repeated. A provenance sidecar is a small file LGE saves beside every result, holding the tool version, the full command, and the checksums of what went in and came out.
+
+Prefer the alignment-based trim whenever you have a primer scheme and a mapped BAM, because coordinates survive a mutated primer site and sequence matching does not. Reach for the read-based trim only when you have no reference to map against, or when you want trimmed FASTQ files to hand on to something outside LGE.
+
+Most reads pass through the trim with their ends soft-clipped and their count unchanged. Some `ivar trim` options can drop a read whose remaining aligned stretch is too short to be useful. Losing a few reads this way is normal rather than a fault, and `ivar trim` writes its own tally of what it kept and dropped into the run's log, which the Operations panel row for the trim links to. This chapter does not cover the settings of either operation. [Trimming and Filtering](../03-reads/04-trimming-and-filtering.md) documents the read-based settings and [Primer Trimming](../04-alignments/03-primer-trimming.md) documents the alignment-based ones.
 
 ## What a primer scheme is, as a file
 
-A [primer scheme](../../GLOSSARY.md#primer-scheme) is, at heart, a coordinate table. For each primer it lists the contig name, the start coordinate, the end coordinate, the primer name (which usually encodes pool and direction, as in `nCoV-2019_1_LEFT` and `nCoV-2019_1_RIGHT`), a score, and a strand. The usual on-disk format is BED, a tab-separated text file where each row is one primer and the six standard columns are chrom, start, end, name, score, strand. Standard BED omits the primer sequence itself; where a scheme provides it, the sequences live in a companion FASTA or TSV file. Some schemes extend BED with extra columns for pool number or sequence, but the six-column form is the baseline.
+A [primer scheme](../../GLOSSARY.md#primer-scheme) is a coordinate table. For each primer it records which sequence the primer sits on, where it starts, where it ends, what it is called, a score, and which strand it binds. The usual on-disk format is BED, a tab-separated text file whose six standard columns are chrom, start, end, name, score, strand. The score column carries no meaning for primer schemes. It is present because BED requires it, it is filled with a placeholder, and nothing in LGE reads it.
 
-A minimal BED row for the forward primer in the example above reads:
+Here is one row in the shape BED uses, with the invented coordinates from the worked example above and a deliberately generic primer name.
 
 ```
-MN908947.3	999	1021	nCoV-2019_1_LEFT	1	+
+MN908947.3	999	1021	scheme_1_LEFT	1	+
 ```
 
-(BED is zero-based half-open, so a primer at one-based positions 1000 to 1021 is written as 999 to 1021.)
+BED counts differently from the rest of this manual, in two separate ways. First, it numbers the very first base of a sequence 0 rather than 1, so every start position is one lower than the number you would say out loud. Second, it treats the end position as the first base past the primer rather than the last base of it, so the end position is not shifted down.
 
-LGE packages primer schemes as `.lungfishprimers` bundles. Each bundle is a folder holding the BED file, the primer sequences as a companion FASTA, and a provenance note naming the source and the reference accession the coordinates apply to. Bundles sit in the project's `Primer Schemes/` folder and show up in the primer picker whenever a workflow needs one. The bundle layout is documented in [Primer Scheme Bundles](../appendices/primer-schemes.md#appendix-primer-schemes).
+Put those two together and the primer this manual calls positions 1000 to 1021 is written `999` and `1021` in a BED file. The convention has a name, zero-based half-open, and you only meet it if you open the BED yourself. LGE converts for you everywhere else.
 
 ![ARTIC-style primer scheme showing forward primers, reverse primers, and overlapping amplicon bands](../../assets/illustrations-imagegen/01-foundations/03-amplicon-vs-shotgun/primer-scheme-diagram.png)
 
-## Amplicon versus shotgun, side by side
+LGE packages a scheme as a `.lungfishprimers` bundle, a folder that macOS shows as one item. Inside sit the BED file, the primer sequences as a companion FASTA where the scheme supplies them, a manifest, and a provenance note naming the source and the reference accession the coordinates belong to. To look inside safely, right-click the bundle in the Finder and choose Show Package Contents, which opens it as the folder it is. Bundles you add yourself live in the project's `Primer Schemes/` folder.
+
+## The schemes LGE ships
+
+Primer schemes in LGE are viral by design, and the eight it bundles are all SARS-CoV-2 schemes. They appear in the Primer Scheme menu under the heading "Built-in", and any scheme you added to your own project is listed separately under "In This Project". A "Choose Scheme…" button beside the menu opens a file chooser for a bundle stored somewhere else on disk.
+
+<!-- SHOT: primer-scheme-picker-built-in -->
+
+Four are from the ARTIC network. **ARTIC SARS-CoV-2 V3** is the original 400-base scheme, 98 amplicons across 218 primer rows, more rows than twice the amplicon count because the scheme includes alternate primers for some positions. **ARTIC SARS-CoV-2 V4** and **ARTIC SARS-CoV-2 V4.1** each hold 99 amplicons, across 198 and 209 primers, and V4.1 adds spike-in primers that restore coverage lost to Omicron mutations. A spike-in primer is an extra primer added to an existing design to bring back an amplicon that stopped working, and the term has nothing to do with the coronavirus spike gene. **ARTIC SARS-CoV-2 V5.3.2** is a redesign rebalanced for coverage uniformity, 96 amplicons across 192 primers.
+
+The other four come from elsewhere. **QIAseq Direct SARS-CoV-2 with Booster A** is a commercial kit built for fragmented RNA, 223 amplicons across 563 primers. **Midnight 1200 bp V1** uses far longer amplicons, 29 of them across 58 primers, suited to Oxford Nanopore reads. **NEB VarSkip Short v1** holds 74 amplicons across 148 primers, and **NEB VarSkip Long v1** holds 29 across 50.
+
+The ARTIC project keeps releasing new versions. Any scheme LGE does not bundle has to come from outside. Without leaving the app, click "Choose Scheme…" beside the Primer Scheme menu and point the file chooser at a `.lungfishprimers` bundle anywhere on disk. To turn a plain BED file into such a bundle, or to file one permanently into the project's `Primer Schemes/` folder, the command line has `lungfish-cli primers import`. Every bundled scheme declares both `MN908947.3` and `NC_045512.2` as accessions for the same SARS-CoV-2 sequence, so a BAM aligned to either name resolves against the scheme without further work.
+
+Picking the wrong scheme is a common source of phantom variants. Trim a V4.1 sample against the V3 coordinates and the trimmer clips the wrong places, so the real primer bases stream into the pileup and the result is a tidy-looking variant list at the V4.1 primer sites. Those calls match no lineage, appear in no database, and track exactly with the protocol rather than with the biology.
+
+## How to tell which prep your sample had
+
+Three places usually hold the answer, in order of reliability. The person who prepared the library is the authoritative record, so ask first. The sequencing submission record names the kit, for a public dataset in the SRA or ENA fields describing library strategy and construction protocol. The SRA is NCBI's Sequence Read Archive and the ENA is the European Nucleotide Archive, the two public archives where raw sequencing reads are deposited, and each run in them carries a metadata page with those fields on it. And the protocol or publication the sample came from names the scheme and version.
+
+Failing all three, the data itself gives a hint. Amplicon coverage steps up and down at fixed coordinates and repeats that shape across every sample prepared the same way. Shotgun coverage is smoother and does not repeat its bumps from sample to sample. Read lengths help too. The Williams sample WD28 has every read at exactly 251 bases, which is what happens when a short amplicon is read to the full length of the run.
+
+A hint is not proof. Guessing at a scheme is worse than not trimming at all, because trimming against the wrong coordinates soft-clips real sample bases along with nothing useful.
+
+## Target enrichment, the third route
+
+A third preparation sits between the two. This manual calls it [target enrichment](../../GLOSSARY.md#target-enrichment) throughout, though you will meet it elsewhere under the names capture and hybridisation capture. Hybridisation is the pairing of two complementary strands of nucleic acid, which is the step the method depends on.
+
+Target enrichment uses probes, which are pieces of DNA or RNA complementary to the regions you want, fixed to something you can physically pull out of the tube. The targeted material comes with them and the rest is washed away. Twist and IDT sell panels of this kind, named here only as examples of commercial vendors rather than as products you need.
+
+Target enrichment borrows from both sides. Like amplicon, it needs the targets chosen in advance and it concentrates the reads onto them. Like shotgun, the fragments are randomly sheared, so reads do not start at fixed coordinates and no primer sequence ends up inside them. It also tolerates a target that has drifted further from the design than PCR does, because a probe can still grab a target that differs from it in places where a primer would fail to bind.
+
+For every workflow in this manual, treat target-enrichment data as shotgun data. Do not trim primers, since there are none. When you inspect coverage, expect the dips to sit at probe boundaries and in regions that drifted away from the probe sequence, rather than at amplicon junctions.
+
+## Side by side
 
 | Property | Shotgun | Amplicon |
 |---|---|---|
-| Where reads start | Random across the genome | At fixed primer coordinates |
-| Sensitivity at low input | Low; needs high titre or enrichment | High; routinely works to Ct ~32 |
-| Sample input required | Often hundreds of ng | A few ng or less |
-| Primer trim required? | No | Yes |
-| Default strand-bias behaviour | Filter useful as a default check | Filter thresholds need adjustment; inspect protocol context |
-| Cost per genome | Higher | Lower |
-| Detects novel sequence? | Yes | Only what primers target |
+| Where reads start | Wherever the fragment broke | At the primer coordinates, every time |
+| Starting material needed | More | Less |
+| Reads that land on target | In proportion to what is present | Nearly all of them |
+| Primer trimming | Not applicable | Required before variant calling |
+| Sees the unexpected | Yes | Only what the primers reach |
 
-Reach for shotgun when you have high-titre cultures, a metagenomic hunt, a sample where you do not yet know what virus you are chasing, or host-depleted clinical material with a substantial viral load. Reach for amplicon for targeted surveillance of a known pathogen, low-titre clinical samples, large batches where cost matters, and any setting that needs uniform coverage to compare variants across samples.
+Reach for shotgun when you do not yet know what is in the sample, when the target is abundant, or when you need an unbiased view. Reach for amplicon when the target is known, the material is scarce, and you want the same regions covered the same way across many samples so their results can be compared.
 
-Which amplicon protocols you choose between depends on what is currently maintained for your target. The next section lists the canonical SARS-CoV-2 options at the time of writing; for any specific run, check the scheme name and version against the wet-lab record or the [ARTIC primer scheme repository](https://github.com/artic-network/primer-schemes).
+## What good looks like
 
-## Common SARS-CoV-2 amplicon protocols
+Four checks are worth running before you trust an amplicon result. Confirm you know the scheme name and version from a record rather than from memory. Confirm the scheme's reference accession matches the reference the reads were mapped to, since the coordinates mean nothing otherwise. Confirm the primer trim actually ran, which the Inspector shows on the trimmed alignment track. And look at the variant list for a cluster of high-frequency calls sitting at primer positions, which is what an untrimmed or mistrimmed run produces.
 
-Most public SARS-CoV-2 sequence in archives such as SRA and ENA came off one of a handful of amplicon protocols. Knowing which one made a sample tells you which primer scheme to pick in LGE.
-
-- **[ARTIC v3](https://github.com/artic-network/artic-ncov2019).** The original 98-amplicon, 400 bp scheme, everywhere in 2020 and 2021. Coordinates target Wuhan-Hu-1 (`MN908947.3`).
-- **[ARTIC v4.1](https://community.artic.network/t/sars-cov-2-version-4-scheme-release/312).** Released in late 2021 to cope with mutations in Alpha, Delta, and early Omicron primer sites. Same 400 bp amplicon size, revised primer positions.
-- **[ARTIC v5.3.2](https://community.artic.network/t/sars-cov-2-version-5-3-2-scheme-release/462) (released January 2023).** A redesigned 400 bp scheme rebalanced for coverage uniformity. The ARTIC project keeps shipping updates (the v5.4.2 scheme, for one, released for JN.1-era mutations), so always check the scheme version against your protocol metadata.
-- **QIAseq Direct SARS-CoV-2.** A commercial enhanced-amplicon kit with shorter (~250 bp) amplicons built for fragmented RNA. Handy for archival and FFPE samples.
-- **[Midnight (1200 bp)](https://github.com/quick-lab/SARS-CoV-2_Midnight_Nanopore).** A coarser, 1200 bp amplicon scheme built for Oxford Nanopore long reads.
-
-Picking the wrong scheme is one of the most common sources of phantom variants in viral surveillance pipelines. Trim a sample made with ARTIC v4.1 against the v3 BED file, and the primers in the BAM will not line up with what the trimmer expects, so the real primer bases stream through into the pileup. The result is a clean-looking VCF listing ten or twenty fixed-frequency "variants" at the v4.1 primer footprints. They appear in no database, match no lineage, and track perfectly with the protocol metadata when you compare across samples.
-
-## So how do you tell which protocol a sample used?
-
-Three places usually hold the answer. The sample's submission record in SRA or ENA names the library prep kit in the `library_strategy` and `library_construction_protocol` fields. The publication or sequencing centre's protocol documentation names the version. And the wet-lab notebook of whoever prepared the sample is the authoritative record. If none of those are within reach, the coverage profile can sometimes give it away: amplicon coverage steps sharply at primer junctions, while shotgun coverage is smoother and rises and falls with GC content rather than at fixed coordinates.
-
-When in doubt, ask the person who prepared the library. Guessing at a primer scheme is worse than running untrimmed, because trimming with the wrong scheme can soft-clip real sample bases wherever they happen to overlap an unrelated primer.
-
-## Target-enrichment sequencing
-
-A third major library-prep approach sits between amplicon and shotgun. Target-enrichment (also called capture-based or hybridisation-capture sequencing) uses biotinylated oligonucleotide probes that latch onto predefined regions of interest, so the targeted nucleic acid can be physically pulled out of a high-background sample before sequencing. The Twist Comprehensive Viral Research Panel, the IDT xGen Pan-Viral panel, and the broader Viral Surveillance Panel 2 (VSP2) family are common examples.
-
-Capture-based libraries straddle amplicon and shotgun on several axes. Like amplicons, they aim at known sequence and need probe panels designed in advance; unlike amplicons, they do not produce reads anchored to fixed coordinates with primer-derived ends, so they need no primer trimming. Like shotgun, they generate randomly sheared inserts and tolerate broad sequence diversity within the probe footprint, some divergence from the probe sequence included; unlike shotgun, they focus on the targets and reach useful viral coverage at far lower template input. Coverage tends to be more uneven than amplicon coverage, with characteristic drops at probe boundaries and in regions that mutated away from probe affinity.
-
-For LGE workflows, treat capture-based data like shotgun data. Skip primer trimming, pick a variant caller suited to the platform, and watch the coverage profile for probe-boundary dropouts rather than amplicon-junction dropouts.
+For a shotgun result the checks are shorter. Confirm that no primer trim was applied, since there is nothing to trim, and read the coverage profile expecting a smooth curve rather than steps.
 
 ## Next
 
-Continue to [Alignment Files](04-alignment-files.md) to learn what happens after FASTQ reads are mapped to the reference, including how soft-clipping is recorded in a BAM file.
+Continue to [Alignment Files](04-alignment-files.md) to see what happens once reads are mapped to a reference, and how soft-clipping is recorded in a BAM.
