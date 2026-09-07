@@ -4095,3 +4095,670 @@ operations:
       builds its plan but never launches it and ends in a "Variant Calling Not Ready"
       alert. Two experimental packs are needed, gatk-core for GATK 4.6.2.0 and phasing
       for WhatsHap 2.3.
+
+  classify.kraken2:
+    title: Kraken2
+    entry_points:
+      - "Tools > Classification > Kraken2..."
+      - "Right-click a FASTQ in the sidebar > Classify with Kraken2..."
+      - "CLI: lungfish-cli conda classify <fastq-files> --db <db> --profile --output-dir <dir>"
+    gating: [metagenomics]
+    sources:
+      - Sources/LungfishApp/Views/Metagenomics/ClassificationWizardSheet.swift
+      - Sources/LungfishWorkflow/Metagenomics/ClassificationConfig.swift
+      - Sources/LungfishWorkflow/Metagenomics/BrackenProfileModels.swift
+      - Sources/LungfishApp/App/ToolsMenuModel.swift
+      - Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift
+      - Sources/LungfishKit/MultiBundleRunModePicker.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/conda.txt
+    settings:
+      - label: Database
+        control: popup
+        default: the first installed database that finished downloading
+        allowed: any installed Kraken2 database, listed with its size on disk
+        effect: Names the reference collection every read is compared against. A read can only be given a name that exists in this database, so a viral-only database will never report a bacterium.
+        when_to_change: Pick a small database like Viral when you already know what family you are looking for, and a Standard or PlusPF database when you want an unbiased survey.
+        cli_flag: --db
+      - label: Sensitivity
+        control: radio
+        default: Balanced
+        allowed: Sensitive, Balanced, Precise
+        effect: Sets the Confidence and Min hit groups values together, trading how many reads get a name against how often that name is right. Sensitive uses confidence 0.0 with 1 hit group, Balanced uses 0.2 with 2, and Precise uses 0.5 with 3.
+        when_to_change: Move to Precise when a false positive would be costly, such as reporting a pathogen, and to Sensitive when you are hunting for something rare and can check the hits by hand.
+        cli_flag: --preset
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle
+        effect: Shows how several selected samples are handled. The choice is locked because pooling reads across samples before classification would mix up the per-sample abundance numbers.
+        when_to_change: rarely
+        cli_flag: null
+      - label: "Confidence:"
+        control: slider
+        default: "0.20"
+        allowed: 0.00 to 1.00 in steps of 0.05
+        effect: Sets how much of a read must match a taxon before Kraken2 will commit to that name. A read that falls short is pushed up to a broader group or left unclassified rather than being named.
+        when_to_change: Raise it when the report is full of implausible species, and lower it when too many reads come back unclassified.
+        cli_flag: --confidence
+      - label: "Min hit groups:"
+        control: number
+        default: "2"
+        allowed: 1 to 10
+        effect: Sets how many separate stretches of a read must match the same taxon before that taxon can be assigned. One long chance match is easier to get than two independent ones.
+        when_to_change: Raise it when short repeated sequence is producing spurious calls, and lower it for very short reads that cannot hold two separate matches.
+        cli_flag: --min-hit-groups
+      - label: "Threads:"
+        control: number
+        default: "4"
+        allowed: 1 up to the number of processor cores on your Mac
+        effect: Sets how many processor cores Kraken2 uses at once. More threads finish sooner and leave less of the machine free for other work.
+        when_to_change: Lower it when you need the machine responsive for something else while the run proceeds.
+        cli_flag: --threads
+      - label: "Memory mapping:"
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Reads the database from disk in pieces instead of loading the whole thing into memory. The run is much slower but it does not need the database to fit in RAM.
+        when_to_change: Turn it on when the wizard warns that the database needs more memory than your Mac has. The wizard turns it on for you when you pick such a database.
+        cli_flag: --memory-mapping
+      - label: "Extra arguments:"
+        control: text
+        default: empty
+        allowed: any shell-style argument list that Kraken2 accepts
+        effect: Passes text straight through to Kraken2 without the app checking it. An unclosed quote blocks the run and the dialog says so.
+        when_to_change: Use it only for a Kraken2 option the wizard does not expose, after reading the Kraken2 documentation.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --profile
+        default: "false"
+        effect: Runs Bracken abundance re-estimation after classification. The wizard always does this, so the CLI needs the flag to match.
+      - flag: --paired
+        default: "false"
+        effect: Treats the two input files as read 1 and read 2 of the same fragments.
+      - flag: --recursive
+        default: "false"
+        effect: When an input is a folder, also picks up eligible FASTQ or FASTA files inside its subfolders.
+      - flag: --quick
+        default: "false"
+        effect: Stops examining a read as soon as one taxon matches, which is faster and less careful.
+      - flag: --bracken-read-length
+        default: "150"
+        effect: Tells Bracken how long the reads are so it can pick the matching precomputed distribution file.
+      - flag: --bracken-level
+        default: automatic for the selected database
+        effect: Sets the rank Bracken reports at, one of D, P, C, O, F, G, or S.
+      - flag: --bracken-threshold
+        default: "10"
+        effect: Drops taxa with fewer than this many reads before Bracken redistributes abundance.
+      - flag: --output-dir
+        default: the current directory
+        effect: Chooses where the report, per-read output, and Bracken profile are written.
+    notes: >-
+      The wizard always runs Bracken after Kraken2, using rank automatic, read length 150,
+      and threshold 10, and it exposes none of those three as controls. Results land in
+      Analyses/kraken2-<timestamp>/ inside the project, never beside the source FASTQ. When
+      the selected database needs more memory than the Mac has, a banner names the required
+      and available gigabytes and the memory mapping box is checked for you.
+
+  classify.esviritu:
+    title: EsViritu
+    entry_points:
+      - "Tools > Classification > EsViritu..."
+      - "CLI: lungfish-cli esviritu detect --input <fastq> --sample <name> --output <dir>"
+    gating: [metagenomics]
+    sources:
+      - Sources/LungfishApp/Views/Metagenomics/EsVirituWizardSheet.swift
+      - Sources/LungfishWorkflow/Metagenomics/EsVirituConfig.swift
+      - Sources/LungfishKit/MultiBundleRunModePicker.swift
+      - Sources/LungfishApp/App/ToolsMenuModel.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/esviritu.txt
+    settings:
+      - label: Sample
+        control: text
+        default: empty, which falls back to the sample name worked out from the file name
+        allowed: any text
+        effect: Names the sample in the output files and in the result viewport. It only appears for a single-sample run.
+        when_to_change: Set it when the file name is not the label you want to see in reports.
+        cli_flag: --sample
+      - label: Run Mode
+        control: radio
+        default: Run separately per bundle
+        allowed: Run separately per bundle
+        effect: Shows how several selected samples are handled. The choice is locked because pooling reads across samples would mix up the per-virus coverage and abundance numbers.
+        when_to_change: rarely
+        cli_flag: null
+      - label: Enable quality filtering (fastp)
+        control: checkbox
+        default: "true"
+        allowed: "true, false"
+        effect: Trims sequencing adapters and drops poor-quality bases before detection. Turning it off feeds the raw reads straight to EsViritu.
+        when_to_change: Turn it off when the reads were already trimmed and filtered by an earlier step, so they are not cleaned twice.
+        cli_flag: --no-qc
+      - label: "Min read length:"
+        control: number
+        default: 100 bp
+        allowed: 50 to 500 bp in steps of 10
+        effect: Discards reads shorter than this after filtering. Very short reads match many viruses by chance and inflate the detection list.
+        when_to_change: Lower it for degraded or heavily trimmed libraries where most reads fall under 100 bases.
+        cli_flag: --min-read-length
+      - label: "Threads:"
+        control: number
+        default: the number of processor cores currently available on your Mac
+        allowed: 1 up to the number of processor cores on your Mac
+        effect: Sets how many processor cores EsViritu uses at once. More threads finish sooner and leave less of the machine free.
+        when_to_change: Lower it when you need the machine responsive for something else.
+        cli_flag: --threads
+      - label: "Extra arguments:"
+        control: text
+        default: empty
+        allowed: any shell-style argument list that EsViritu accepts
+        effect: Passes text straight through to EsViritu without the app checking it. An unclosed quote blocks the run and the dialog says so.
+        when_to_change: Use it only for an EsViritu option the wizard does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --db
+        default: auto-detect
+        effect: Points at a specific EsViritu database folder instead of the installed one the wizard finds for you.
+      - flag: --paired
+        default: "false"
+        effect: Treats the two input files as read 1 and read 2 of the same fragments.
+      - flag: --recursive
+        default: "false"
+        effect: When an input is a folder, also picks up eligible FASTQ files inside its subfolders.
+      - flag: --output
+        default: the current directory
+        effect: Chooses where the detection tables and coverage files are written.
+    notes: >-
+      The database is not a control. EsViritu uses the one curated viral database the app
+      installs, and the wizard shows its version and size instead of a picker, with a
+      Download Database... button when it is missing. Separate CLI subcommands manage it,
+      esviritu download-db and esviritu db-status. Results land in
+      Analyses/esviritu-<timestamp>/ inside the project.
+
+  classify.taxtriage:
+    title: TaxTriage
+    entry_points:
+      - "Tools > Classification > TaxTriage..."
+      - "CLI: lungfish-cli taxtriage run --input <fastq> --sample <name> --output <dir>"
+    gating: [metagenomics, docker]
+    sources:
+      - Sources/LungfishApp/Views/Metagenomics/TaxTriageWizardSheet.swift
+      - Sources/LungfishWorkflow/TaxTriage/TaxTriageConfig.swift
+      - Sources/LungfishWorkflow/TaxTriage/TaxTriagePipeline.swift
+      - Sources/LungfishIO/Formats/FASTQ/FASTQSampleMetadata.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/taxtriage.txt
+    settings:
+      - label: Sample ID
+        control: text
+        default: "Sample_1, then Sample_2 and so on for each row you add"
+        allowed: any text
+        effect: Names one row of the sample list. TaxTriage reports each sample under this label.
+        when_to_change: Change it to the identifier your lab already uses so the report matches your records.
+        cli_flag: --sample
+      - label: Sample role
+        control: popup
+        default: Clinical Sample
+        allowed: Clinical Sample, Negative Control, Positive Control, Environmental Control, Extraction Blank
+        effect: Tells TaxTriage what kind of material a row is, so control samples can be compared against the test samples when confidence is scored.
+        when_to_change: Set it on every control you ran alongside the samples, since a blank labelled as a clinical sample tells the pipeline nothing.
+        cli_flag: null
+      - label: Kraken2 Database
+        control: popup
+        default: the first installed Kraken2 database
+        allowed: any installed Kraken2 database
+        effect: Names the reference collection TaxTriage classifies against. TaxTriage reuses the same databases the Kraken2 tool uses.
+        when_to_change: Match it to the breadth of organism you expect, the same way you would for a plain Kraken2 run.
+        cli_flag: --db
+      - label: Sequencing Platform
+        control: radio
+        default: Illumina
+        allowed: Illumina, Oxford Nanopore, PacBio
+        effect: Tells the pipeline what kind of reads it is handling so it can choose error tolerances and alignment settings that match.
+        when_to_change: Match it to the machine that produced the reads, since long noisy reads and short accurate reads need different handling.
+        cli_flag: --platform
+      - label: Skip assembly (faster)
+        control: checkbox
+        default: "true"
+        allowed: "true, false"
+        effect: Leaves out the assembly stage and runs classification plus confidence scoring only. Turning it off adds de novo assembly, which is much slower but produces genome sequences.
+        when_to_change: Turn it off when you want assembled genomes for the organisms found, and you can spare the extra hours.
+        cli_flag: --no-skip-assembly
+      - label: "K2 Confidence:"
+        control: slider
+        default: "0.20"
+        allowed: 0.00 to 1.00 in steps of 0.05
+        effect: Sets how much of a read must match a taxon before the Kraken2 step inside TaxTriage will commit to that name. Reads that fall short are pushed to a broader group.
+        when_to_change: Raise it when the organism list is full of implausible species, and lower it when too much is left unclassified.
+        cli_flag: --confidence
+      - label: "Top hits:"
+        control: number
+        default: "10"
+        allowed: 1 to 100
+        effect: Sets how many organisms the report lists, ranked by how much evidence supports each one.
+        when_to_change: Raise it when you expect a complex community and the top ten would cut off organisms you care about.
+        cli_flag: --top-hits
+      - label: "Max memory:"
+        control: number
+        default: 16 GB
+        allowed: 2 to 256 GB in steps of 2
+        effect: Caps how much memory the pipeline is allowed to use. Set it above what your Mac has and steps will fail rather than run.
+        when_to_change: Raise it for a large database on a machine with plenty of memory, and lower it to leave room for other work.
+        cli_flag: --max-memory
+      - label: "Max CPUs:"
+        control: number
+        default: the number of processor cores currently available on your Mac
+        allowed: 1 up to the number of processor cores on your Mac
+        effect: Caps how many processor cores the pipeline may use at once.
+        when_to_change: Lower it when you need the machine responsive for something else.
+        cli_flag: --max-cpus
+      - label: Skip Krona visualization
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Leaves out the interactive Krona chart of the community. The tables are unaffected.
+        when_to_change: Turn it on to shorten the run when you only want the tables.
+        cli_flag: --skip-krona
+      - label: "Extra arguments:"
+        control: text
+        default: empty
+        allowed: any shell-style argument list that TaxTriage or Nextflow accepts
+        effect: Passes text straight through to the pipeline without the app checking it. An unclosed quote blocks the run and the dialog says so.
+        when_to_change: Use it only for a pipeline option the wizard does not expose.
+        cli_flag: --extra-args
+    cli_only:
+      - flag: --input2
+        default: none
+        effect: Names the read 2 file of a paired-end sample. The dialog picks R2 up from the file selection instead.
+      - flag: --samplesheet
+        default: none
+        effect: Reads the whole sample list from a CSV file rather than naming samples one at a time.
+      - flag: --recursive
+        default: "false"
+        effect: When the input is a folder, also picks up eligible FASTQ files inside its subfolders.
+      - flag: --rank
+        default: S
+        effect: Sets the taxonomic rank the report is built at, one of D, P, C, O, F, G, or S.
+      - flag: --nf-profile
+        default: docker
+        effect: Chooses the Nextflow execution profile, which decides how the pipeline's containers are run.
+      - flag: --revision
+        default: e10bfebda32a62711f38a4e23ab03b61725a9675
+        effect: Pins which commit of the TaxTriage pipeline to run. Leave it alone unless you are reproducing an older run.
+    notes: >-
+      TaxTriage is the only classifier here that needs more than the metagenomics pack.
+      It runs the jhuapl-bio/taxtriage Nextflow pipeline inside containers, so Nextflow
+      and Docker (or Apple Containerization on macOS 26 and later) must both be present.
+      The wizard checks for both and shows the result before it will let you run. Results
+      land in Analyses/taxtriage-<timestamp>/ inside the project.
+
+  classify.blast-verify:
+    title: BLAST Verify
+    entry_points:
+      - "Taxonomy viewport action bar > BLAST Verify"
+      - "Right-click a taxon in the taxonomy viewport > BLAST Matching Reads..."
+      - "CLI: lungfish-cli blast verify --kreport <kreport> --source <fastq> --kraken-output <kraken> --taxid <taxid>"
+    gating: []
+    sources:
+      - Sources/LungfishKit/BlastConfigPopoverView.swift
+      - Sources/LungfishKit/BlastResultsDrawerTab.swift
+      - Sources/LungfishKit/ClassifierActionBar.swift
+      - Sources/LungfishApp/Views/Metagenomics/TaxonomyViewController.swift
+      - Sources/LungfishApp/Views/Metagenomics/TaxonomyViewController+Blast.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/blast.txt
+    settings:
+      - label: "Reads to submit:"
+        control: slider
+        default: "20"
+        allowed: 1 to 50, capped at the number of reads the taxon actually has
+        effect: Sets how many of the taxon's reads are sent to NCBI to be checked against the whole nucleotide database. More reads give a firmer answer and take longer.
+        when_to_change: Lower it to get a quick sanity check, and raise it when the first answer comes back mixed and you want a clearer verdict.
+        cli_flag: --reads
+    cli_only:
+      - flag: --include-children
+        default: "false"
+        effect: Also submits reads assigned to taxa below the chosen one, such as the species inside a genus.
+      - flag: --max-concurrent
+        default: "1"
+        effect: Caps how many BLAST submissions this process keeps in flight at once, which keeps you inside NCBI's usage limits.
+      - flag: --extra-args
+        default: none
+        effect: Passes extra NCBI URL API parameters as KEY=VALUE tokens, for example WORD_SIZE=11.
+    notes: >-
+      There is nothing else to configure. The database is fixed at NCBI nt, the program at
+      blastn, and the hit list at five hits per read, none of which the popover or the CLI
+      exposes. The popover warns that the reads leave the app for NCBI. When a taxon has
+      fewer than two reads the slider disappears and the popover states the fixed count
+      instead. Results arrive in a drawer under the table with one of four verdicts,
+      Supported, Mixed, Unsupported, or Inconclusive, plus a verification rate.
+
+  classify.extract-reads-by-taxon:
+    title: Extract Reads
+    entry_points:
+      - "Right-click a taxon in the taxonomy viewport > Extract Reads..."
+      - "Taxonomy viewport action bar > Extract FASTQ"
+      - "CLI: lungfish-cli conda extract --kraken-output <kraken> --source <fastq> --output <fastq> --taxid <taxid>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Metagenomics/TaxonomyReadExtractionAction.swift
+      - Sources/LungfishApp/Views/Metagenomics/ClassifierExtractionDialog.swift
+      - Sources/LungfishKit/ClassifierActionBar.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/conda.txt
+    settings:
+      - label: "Format:"
+        control: radio
+        default: FASTQ
+        allowed: FASTQ, FASTA
+        effect: Chooses whether the pulled-out reads keep their per-base quality scores or come out as sequence only. FASTQ keeps the scores, FASTA drops them.
+        when_to_change: Choose FASTA when the next tool only wants sequence, such as a BLAST submission or an alignment.
+        cli_flag: null
+      - label: Include unmapped mates of mapped pairs
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Also pulls out the partner read of any pair where only one of the two was assigned to this taxon. The dialog shows how many extra reads that adds.
+        when_to_change: Turn it on when you plan to assemble or map the extracted reads, since both halves of a pair carry more information than one.
+        cli_flag: null
+      - label: "Destination:"
+        control: radio
+        default: Save as Bundle
+        allowed: Save as Bundle, Save to File..., Copy to Clipboard, Share...
+        effect: Chooses where the extracted reads go. Save as Bundle puts them in your project as a new dataset you can run other tools on.
+        when_to_change: Choose Save to File when the reads are going to another program, and Copy to Clipboard only for a handful of reads to paste somewhere.
+        cli_flag: --output
+      - label: "Name:"
+        control: text
+        default: a name built from the taxon and the run
+        allowed: any text, and it cannot be blank
+        effect: Names the bundle or file that is written. It only appears for the Save as Bundle and Save to File destinations.
+        when_to_change: Change it when the suggested name will not tell you what the reads are six months from now.
+        cli_flag: null
+    cli_only:
+      - flag: --include-children
+        default: "false"
+        effect: Also extracts reads assigned to taxa below the chosen one. This needs --kreport as well, to build the taxonomy tree.
+      - flag: --kreport
+        default: none
+        effect: Names the Kraken2 report file, which is required whenever --include-children is used.
+      - flag: --no-read-pairs
+        default: "false"
+        effect: Extracts only the exact read identifiers listed, without pulling in the /1 and /2 mates.
+      - flag: --taxid
+        default: none
+        effect: Names the taxonomy IDs to extract, comma-separated or repeated. The dialog takes these from the rows you selected.
+    notes: >-
+      Copy to Clipboard is disabled above 10,000 reads, with a tooltip saying to choose
+      another destination. The unmapped-mates checkbox is hidden for Kraken2 results, where
+      it does not apply. Bundles written this way go to the project's Extractions folder,
+      not Imports.
+
+  classify.taxonomy-browser:
+    title: Taxonomy viewport
+    entry_points:
+      - "Select a classification result in the sidebar"
+      - "Analyses > <tool>-<timestamp> in the project sidebar"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/Metagenomics/TaxonomyViewController.swift
+      - Sources/LungfishApp/Views/Metagenomics/TaxonomyTableView.swift
+      - Sources/LungfishApp/Views/Metagenomics/TaxonomySunburstView.swift
+      - Sources/LungfishKit/ClassifierSamplePickerView.swift
+      - Sources/LungfishKit/ClassifierActionBar.swift
+    settings:
+      - label: "Filter taxa…"
+        control: text
+        default: empty
+        allowed: any text
+        effect: Hides every row whose taxon name, rank, or read count does not contain what you type. The count beside the field shows how many rows are left.
+        when_to_change: Use it whenever you are looking for one organism in a report with thousands of rows.
+        cli_flag: null
+      - label: Bracken
+        control: checkbox
+        default: hidden
+        allowed: shown when the result carries Bracken numbers, hidden otherwise
+        effect: Adds a column of read counts that Bracken re-estimated, which corrects Kraken2's habit of parking reads at a broad rank instead of the species below it. The column appears on its own when Bracken ran.
+        when_to_change: You do not control this. It appears when the result has Bracken numbers to show.
+        cli_flag: null
+      - label: Select All
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Ticks or unticks every sample currently visible in the sample picker. The picker only appears for a result covering several samples.
+        when_to_change: Use it to start from all samples and untick a few, rather than ticking twenty by hand.
+        cli_flag: null
+      - label: "Filter…"
+        control: text
+        default: empty
+        allowed: any text
+        effect: Narrows the sample list in the sample picker to names containing what you type. It changes which samples you can tick, not which are already ticked.
+        when_to_change: Use it on a run with many samples when you want to tick only one plate or one collection date.
+        cli_flag: null
+      - label: Column header filter
+        control: text
+        default: no filter on any column
+        allowed: text or a numeric comparison, depending on the column
+        effect: Restricts one column to rows matching a value or a numeric range you set from the column header's own menu. Several column filters apply together.
+        when_to_change: Use it to hold a report to species rank only, or to rows above a read count you consider meaningful.
+        cli_flag: null
+    cli_only: []
+    notes: >-
+      The sunburst chart on the left has no settings. You navigate it by clicking a segment
+      to select it, double-clicking to re-center on it, and right-clicking for Zoom to,
+      Zoom Out to Root, Copy Taxon Name, Copy Taxonomy Path, Look Up on NCBI, and BLAST
+      Matching Reads. Its only right-click item over empty space is Copy Chart as PNG.
+      The table's columns are Sample, Taxon Name, Rank, Reads (the taxon and everything
+      under it), Direct (that taxon alone), Bracken, and the percent column.
+
+  classify.install-database:
+    title: Databases
+    entry_points:
+      - "Tools > Plugin Manager... > Databases"
+      - "Kraken2 wizard > Download Database..."
+      - "CLI: lungfish-cli conda db download <name>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/PluginManager/PluginManagerView.swift
+      - Sources/LungfishApp/Views/PluginManager/PluginManagerViewModel.swift
+      - Sources/LungfishWorkflow/Resources/ManagedTools/third-party-tools-lock.json
+      - Sources/LungfishApp/App/MainMenu.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/conda.txt
+    settings:
+      - label: Download
+        control: file
+        default: no database is installed until you ask for one
+        allowed: "Kraken2 collections Standard, Standard-8, Standard-16, PlusPF, PlusPF-8, PlusPF-16, Viral, MinusB, EuPathDB46, plus the locally built SILVA and Greengenes, plus the EsViritu Viral DB"
+        effect: Fetches one database and unpacks it into the app's managed storage. The row shows the download size, the memory the database wants, and the progress while it runs.
+        when_to_change: Download the one your work needs. The header names the database recommended for your Mac's memory, which is the safe first choice.
+        cli_flag: "conda db download <name>"
+      - label: Remove
+        control: file
+        default: nothing is removed unless you ask
+        allowed: any installed database
+        effect: Deletes an installed database and frees its disk space, after a confirmation sheet that names the database.
+        when_to_change: Remove a database you no longer classify against, since the large ones take tens of gigabytes.
+        cli_flag: "conda db remove <name> --delete-files"
+      - label: Update
+        control: file
+        default: nothing is updated unless you ask
+        allowed: any installed database that has a newer pinned version
+        effect: Replaces an installed database with the version pinned in the app's dependency list. Databases built on your own machine cannot be updated in place and are reported as skipped.
+        when_to_change: Update when the row says an update is available and you want your results to match the current pinned build.
+        cli_flag: "conda db update <name> --yes"
+      - label: Refresh
+        control: file
+        default: the list is loaded when you open the tab
+        allowed: not applicable
+        effect: Re-reads the catalog and the installed set, so a database installed elsewhere shows up.
+        when_to_change: Use it when a download you started outside this window has finished and the list still looks stale.
+        cli_flag: "conda db list"
+      - label: Storage Settings...
+        control: file
+        default: the app's own managed storage folder
+        allowed: any folder you have permission to write
+        effect: Opens the setting that decides where downloaded databases live. The footer shows the current folder and the total space in use.
+        when_to_change: Change it when the startup disk is too small for a Standard database and you want to keep them on an external drive.
+        cli_flag: null
+    cli_only:
+      - flag: "conda db recommend"
+        default: not applicable
+        effect: Prints the database recommended for this machine's memory, the same one the Databases tab highlights.
+      - flag: "conda db info <name>"
+        default: not applicable
+        effect: Prints the installed version of one database and whether an update is available.
+      - flag: "conda db install-managed <id>"
+        default: not applicable
+        effect: Installs a managed helper dataset by identifier, such as the Deacon panhuman host-removal index. Add --list to see the identifiers.
+      - flag: "conda db update --all --yes"
+        default: not applicable
+        effect: Updates every installed database that has an update available, in one command.
+    notes: >-
+      The Kraken2 collection set is closed at nine downloadable collections, and SILVA plus
+      Greengenes are built on your machine rather than downloaded. The tab groups rows by
+      tool, Kraken2 first, then EsViritu, then TaxTriage. There is no control for where a
+      database comes from, since every source is pinned in the app's dependency manifest.
+
+  classify.twelve-s-match:
+    title: 12S Amplicon Matching
+    entry_points:
+      - "Tools > Genotyping > 12S Amplicon Matching..."
+      - "Tools > Workflow Library... > 12S Amplicon Matching"
+      - "CLI: lungfish-cli fastq 12s-match <inputs> --reference <ref> --output-dir <dir> --output-name <name>"
+    gating: []
+    sources:
+      - Sources/LungfishApp/Views/WorkflowOperations/WorkflowOperationsDialog.swift
+      - Sources/LungfishApp/Views/WorkflowOperations/WorkflowOperationDialogState.swift
+      - Sources/LungfishApp/Views/Inspector/Sections/TwelveSResultDisplaySection.swift
+      - Sources/LungfishWorkflow/TwelveS/TwelveSAmpliconReadClassifier.swift
+      - Sources/LungfishWorkflow/TwelveS/TwelveSAbundanceReassigner.swift
+      - Sources/LungfishTwelveSUI/TwelveSResultDisplayState.swift
+      - Sources/LungfishTwelveSUI/TwelveSAmpliconResultViewController.swift
+      - Sources/LungfishApp/Services/WorkflowLibrary.swift
+      - docs/user-manual/reviews/fidelity-2026-09/cli-help/fastq.txt
+    settings:
+      - label: Reference
+        control: file
+        default: none, and the run will not start without one
+        allowed: a deduplicated 12S FASTA, or a .lungfish12sref bundle
+        effect: Names the collection of known 12S sequences every read is matched against. A species missing from this reference can never be reported.
+        when_to_change: Use a reference built for the animal group you are studying, since a fish-only reference will not name the mammals in a gut sample.
+        cli_flag: --reference
+      - label: Analysis Metadata
+        control: file
+        default: "No analysis metadata selected"
+        allowed: a CSV or TSV of per-sample metadata
+        effect: Freezes a table of per-sample information into the result so the viewport can show it as extra columns.
+        when_to_change: Supply it when you want collection site, date, or host recorded alongside the species counts.
+        cli_flag: --sample-metadata
+      - label: Read Platform
+        control: radio
+        default: Illumina exact
+        allowed: Illumina exact, ONT indel-tolerant
+        effect: Chooses how forgiving the match must be. Illumina exact accepts only reads that contain a reference sequence with no substitutions, while ONT indel-tolerant also allows insertions and deletions.
+        when_to_change: Switch to ONT indel-tolerant for Oxford Nanopore reads, whose main error type is the insertion or deletion this mode allows.
+        cli_flag: --matching-mode
+      - label: Result Name
+        control: text
+        default: a name built from the selected read files
+        allowed: any text
+        effect: Names the .lungfish12s result bundle the run writes.
+        when_to_change: Change it when the suggested name will not identify the run later.
+        cli_flag: --output-name
+      - label: Min Soft Clip
+        control: number
+        default: "1"
+        allowed: 0 or more
+        effect: Sets how many of the read's own bases must sit on each side of the matched reference stretch. It rejects reads that only just overlap the target.
+        when_to_change: Raise it when short partial overlaps are producing matches you do not trust.
+        cli_flag: --min-soft-clip
+      - label: Max Indels
+        control: number
+        default: "3"
+        allowed: 0 or more
+        effect: Sets how many inserted or deleted bases a read may carry and still count as a match. The field only takes effect in the ONT indel-tolerant platform setting.
+        when_to_change: Raise it for noisier Nanopore chemistry, and lower it when you want only near-perfect matches.
+        cli_flag: --max-indels
+      - label: Run vsearch chimera review
+        control: checkbox
+        default: "true"
+        allowed: "true, false"
+        effect: Checks the unresolved sequence clusters for chimeras, which are artificial sequences stitched together from two real templates during PCR. Each cluster comes back marked as not detected, candidate, or confirmed.
+        when_to_change: Leave it on. Turn it off only to shorten a run where you will not look at the unresolved clusters.
+        cli_flag: --chimera-review
+      - label: Directory
+        control: file
+        default: the project's 12S amplicon results folder
+        allowed: any folder you have permission to write
+        effect: Chooses where the result bundle is written.
+        when_to_change: Change it only when the result belongs outside the project folder.
+        cli_flag: --output-dir
+      - label: Minimum Exact Reads
+        control: number
+        default: "0"
+        allowed: 0 to 1,000,000
+        effect: Hides species rows in the result viewport with fewer exact-matching reads than this. It filters the display only and does not change the stored result.
+        when_to_change: Raise it to cut the long tail of one-read and two-read hits that are usually noise.
+        cli_flag: --min-exact-reads
+      - label: Exclude Human
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Hides the Homo sapiens row, taxid 9606, from the species table.
+        when_to_change: Turn it on for diet or environmental studies, where human reads are handler contamination rather than a result.
+        cli_flag: --exclude-human
+      - label: Only With Alternates
+        control: checkbox
+        default: "false"
+        allowed: "true, false"
+        effect: Shows only species whose matched sequence is shared with at least one other species, so the name is not certain.
+        when_to_change: Turn it on when you want to review exactly which calls are ambiguous before reporting them.
+        cli_flag: --require-alternate-matches
+      - label: Taxon Groups
+        control: checkbox
+        default: every group shown
+        allowed: the groups present in the reference, for example Mammal, Fish, Bird
+        effect: Includes or excludes whole groups of animals from the species table. Each group's pill cycles through neutral, included, and excluded.
+        when_to_change: Use it to hold a mixed result to one group, such as fish only in a diet study.
+        cli_flag: --taxon-group
+      - label: Minimum Unresolved Reads
+        control: number
+        default: "0"
+        allowed: 0 to 1,000,000
+        effect: Hides unresolved sequence clusters with fewer reads than this. It applies to the Unresolved table and the Excel export.
+        when_to_change: Raise it to skip singleton clusters, which are usually sequencing error rather than a real unknown species.
+        cli_flag: --min-unresolved-reads
+      - label: Chimera
+        control: popup
+        default: All
+        allowed: All, Not Reviewed, Not Detected, Candidate, Confirmed
+        effect: Restricts the unresolved clusters shown to one chimera verdict.
+        when_to_change: Choose Not Detected to look only at clusters that might be genuinely new sequence, rather than PCR artifacts.
+        cli_flag: --chimera-status
+    cli_only:
+      - flag: --ambiguity-resolution
+        default: strict
+        effect: Decides how a read matching several species is assigned. strict gives it to whichever species has any lead elsewhere in the sample, conservative requires the winner to have at least twice the runner-up and at least ten reads.
+      - flag: --reference-metadata
+        default: the metadata inside the reference bundle, when there is one
+        effect: Supplies a target metadata TSV that overrides the one packaged with the reference bundle.
+      - flag: --force
+        default: "false"
+        effect: Replaces an output bundle that already exists at that path.
+      - flag: "fastq 12s-reference-metadata"
+        default: not applicable
+        effect: Builds the target metadata TSV from a deduplicated FASTA plus a MIDORI metadata TSV.
+      - flag: "fastq 12s-reference-bundle"
+        default: not applicable
+        effect: Packages that FASTA and metadata pair into a reusable .lungfish12sref bundle. The dialog's Create 12S Reference button does the same thing.
+      - flag: "fastq 12s-export"
+        default: not applicable
+        effect: Writes the species rows to CSV, TSV, or Excel from the command line, taking the same filters the viewport offers.
+      - flag: "fastq 12s-export-unresolved"
+        default: not applicable
+        effect: Writes unresolved clusters above a read threshold to FASTA, with --min-reads defaulting to 5. The viewport has no FASTA export.
+    notes: >-
+      The workflow expects reads that are already merged. It does not merge Illumina pairs
+      for you, so merge them with a read-processing operation first or the 244 base targets
+      will come back empty. 12S Amplicon Matching is a specialized workflow, so it has to be
+      enabled in the Workflow Library before it appears under Tools > Genotyping. The
+      viewport's own controls, from Minimum Exact Reads down, filter the display and do not
+      change the stored result, which is why each maps to an export flag rather than a run
+      flag.
