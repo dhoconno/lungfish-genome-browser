@@ -1,0 +1,35 @@
+# Captured in Numbers from a Lungfish Preview 2026.9.13 export (2026-09 campaign).
+# App state: Actual Preview build 4673 filtered pivot export opened unmodified in Numbers at 125 percent. Two simulated samples, three public macaque allele targets, 376 retained fragments.
+id: genotype-pivot-workbook
+chapter: 09-genotyping/04-haplotype-definitions-and-export
+caption: 'The pivot sheet of an exported workbook in a spreadsheet application, with samples running across
+  the columns and allele targets down the rows beneath the Total and # Obs. columns.'
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Numbers
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Export SIMULATED-MHC-filtered-pivot.xlsx from the real GUI genotype result to Desktop/lge-docs, then open it in Numbers.
+  # PROSE-ONLY: View the pivot sheet without editing data or formatting. Capture window-relative crop 15,60,790,495, preserving all rows and sample columns.
+crop:
+  mode: region
+  region:
+  - 15
+  - 60
+  - 790
+  - 495
+post:
+  retina: true
+  format: png

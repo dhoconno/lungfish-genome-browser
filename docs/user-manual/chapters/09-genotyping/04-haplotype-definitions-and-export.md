@@ -19,7 +19,7 @@ shots:
   - id: genotype-inspector-export
     caption: "The Export block at the foot of the Inspector's Genotype Display section, showing the Filtered Pivot... button and the caption stating that the copy is one-way."
   - id: genotype-export-save-panel
-    caption: "The Export Genotype View save panel opened by Filtered Pivot..., with the suggested filename ending in -filtered-pivot.xlsx."
+    caption: "The Export Genotype View save panel opened by Filtered Pivot..., with the teaching export filename ending in -filtered-pivot.xlsx."
   - id: genotype-pivot-workbook
     caption: "The pivot sheet of an exported workbook in a spreadsheet application, with samples running across the columns and allele targets down the rows beneath the Total and # Obs. columns."
 illustrations: []

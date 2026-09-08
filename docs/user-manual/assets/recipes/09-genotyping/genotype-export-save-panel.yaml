@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Preview build 4673. Actual simulated MHC result, compact filtered pivot export save panel.
+id: genotype-export-save-panel
+chapter: 09-genotyping/04-haplotype-definitions-and-export
+caption: The Export Genotype View save panel opened by Filtered Pivot..., with the teaching export filename
+  ending in -filtered-pivot.xlsx.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open SIMULATED-MHC-GUI-annotated, choose View, and click Filtered Pivot.
+  # PROSE-ONLY: Collapse the file browser and shorten Save As to SIMULATED-MHC-filtered-pivot.xlsx in Desktop/lge-docs. Capture, then Export.
+crop:
+  mode: region
+  region:
+  - 822
+  - 577
+  - 675
+  - 182
+post:
+  retina: true
+  format: png
