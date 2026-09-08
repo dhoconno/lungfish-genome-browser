@@ -2,8 +2,7 @@
 # App state: the chr20 alignment focused view zoomed to chr20_10.0-10.5Mb:2,055-2,095, centered near position 2,078 where reads disagree with the reference
 id: pileup-zoom
 chapter: 04-alignments/02-reading-an-alignment
-caption: The pileup at position 2,078 of the HG002 chromosome 20 slice, with matching bases drawn as dots
-  and the alternate A drawn as a coloured letter on both strands.
+caption: "The pileup at position 2,078 of the HG002 chromosome 20 slice, with matching bases drawn as dots and the alternate A highlighted as coloured blocks on both strands."
 viewport_class: alignment
 app_state:
   fixture: '{demo_project}'
