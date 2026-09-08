@@ -14,7 +14,7 @@ entry_points:
   - "CLI: lungfish-cli nao-mgs summary <input-path>"
 shots:
   - id: nao-mgs-import-card
-    caption: "The Import Center's Classification Results tab, showing the NAO-MGS Results card with its NM badge and the file hint reading virus_hits_final.tsv.gz or _virus_hits.tsv.gz."
+    caption: "The Import Center's Classification Results tab, showing the NAO-MGS Results card with the file hint reading virus_hits_final.tsv.gz or _virus_hits.tsv.gz."
   - id: nao-mgs-import-sheet
     caption: "The NAO-MGS Import sheet after a file is chosen, showing the read-only path readout beside the Browse... button and the Validation section reporting Valid NAO-MGS results with the source file name."
   - id: nao-mgs-result-viewport
