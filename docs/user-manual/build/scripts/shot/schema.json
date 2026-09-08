@@ -8,7 +8,7 @@
     "chapter": { "type": "string" },
     "caption": { "type": "string" },
     "viewport_class": {
-      "enum": ["sequence", "alignment", "variant", "assembly", "taxonomy", "none"]
+      "enum": ["sequence", "fastq", "alignment", "variant", "assembly", "taxonomy", "tree", "genotype", "none"]
     },
     "app_state": {
       "type": "object",

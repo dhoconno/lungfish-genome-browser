@@ -33,3 +33,11 @@ test("invalid recipe fails schema with specific errors", async () => {
   assert.match(paths, /'id'|required property/);
   assert.match(paths, /viewport_class|enum/);
 });
+
+for (const viewportClass of ["fastq", "tree", "genotype"]) {
+  test(`existing ${viewportClass} recipe metadata passes schema`, async () => {
+    const recipe = await load("valid-recipe.yaml");
+    recipe.viewport_class = viewportClass;
+    assert.equal(validate(recipe), true, JSON.stringify(validate.errors));
+  });
+}
