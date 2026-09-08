@@ -22,7 +22,7 @@ shots:
   - id: genotyping-advanced-options
     caption: "The dialog's Advanced Options disclosure expanded on the miSeq workflow, showing the minimap2 arguments field and the Keep Intermediates checkbox above the Directory group."
   - id: genotyping-operations-row
-    caption: "The Operations panel tracking a running genotyping batch, with its progress message naming the merge, mapping, and filtering stages."
+    caption: "The Operations panel after the simulated two-sample MHC teaching batch completes, with its command, output files, log, and Completed status visible."
   - id: genotyping-full-length-dialog
     caption: "The Workflow Operations dialog on Full-length ONT MHC genotyping, showing the Length Filter group with Min Length and Max Length, the Call Thresholds group with its Locus % field, and the Advanced Options disclosure holding Orient Reference, Forward Primers, and Reverse Primers."
 illustrations: []
