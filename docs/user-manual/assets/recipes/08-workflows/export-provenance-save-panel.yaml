@@ -1,0 +1,33 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Exported by Preview build 4673 from chr20 reference import lineage.
+id: export-provenance-save-panel
+chapter: 08-workflows/02-exporting-as-nextflow-or-snakemake
+caption: The Export Provenance save panel, showing its message and a shortened folder name ending in -provenance-nextflow.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select chr20 reference bundle. File > Export > Provenance > Nextflow Pipeline. Shorten filename to chr20-provenance-nextflow, leave Desktop/lge-docs destination, and capture before Save.
+crop:
+  mode: region
+  region:
+  - 975
+  - 555
+  - 370
+  - 226
+post:
+  retina: true
+  format: png

@@ -16,11 +16,11 @@ shots:
   - id: export-provenance-submenu
     caption: "The File > Export > Provenance submenu, with the six export targets and the separator after the fourth."
   - id: export-provenance-save-panel
-    caption: "The Export Provenance save panel, showing its message and the prefilled folder name ending in -provenance-nextflow."
+    caption: "The Export Provenance save panel, showing its message and a shortened folder name ending in -provenance-nextflow."
   - id: export-provenance-complete-alert
     caption: "The Provenance Export Complete alert, with its OK and Show in Finder buttons."
   - id: nextflow-export-main-nf
-    caption: "The generated main.nf open in a text editor, with one process per recorded step of the HG002 mapping run."
+    caption: "The generated main.nf open in TextEdit, showing the process blocks for the selected chr20 reference bundle's import, bgzip, and samtools steps."
 illustrations: []
 glossary_refs: [checksum, container, methods-export, provenance, provenance-sidecar, reproducibility, snakemake]
 features_refs: []

@@ -1,0 +1,29 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Exported by Preview build 4673 from chr20 reference import lineage.
+id: nextflow-export-main-nf
+chapter: 08-workflows/02-exporting-as-nextflow-or-snakemake
+caption: The generated main.nf open in TextEdit, showing the process blocks for the selected chr20 reference
+  bundle's import, bgzip, and samtools steps.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: TextEdit
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open the exported main.nf in TextEdit without modifying it. Capture the import, bgzip, and samtools process blocks. Native export represents reference import lineage, not the selected variant track.
+crop:
+  mode: window
+post:
+  retina: true
+  format: png
