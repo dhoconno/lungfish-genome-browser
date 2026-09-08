@@ -7,7 +7,7 @@ Capture work is paused at the user’s request for prioritization.
 - 18 remaining rows, all unique.
 - 11 are currently deferred. The other 7 need capture work or prerequisite preparation.
 
-“Captured” means an image and recipe exist and the campaign marked the row captured. It does not certify the underlying workflow as scientifically validated. Most new screenshots remain uncommitted. The full final site/browser verification and Read the Docs check are not complete.
+“Captured” means an image and recipe exist and the campaign marked the row captured. It does not certify the underlying workflow as scientifically validated. All captured screenshots and recipes from this inventory are committed. The full final site/browser verification and Read the Docs check are not complete.
 
 ## Remaining screenshots
 
