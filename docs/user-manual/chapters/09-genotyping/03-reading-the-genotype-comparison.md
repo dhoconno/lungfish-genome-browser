@@ -14,7 +14,7 @@ shots:
   - id: genotype-matrix-reading
     caption: "The genotype result window on the Williams MiSeq result, with allele-target rows named by their reference record down the pinned left columns and one column per sample across the top."
   - id: genotype-call-evidence
-    caption: "The detail pane after selecting one sample column, showing the sample header metrics and the Supported Alleles list of that sample's allele targets and read counts."
+    caption: "The selected sample's header metrics in the detail pane beside the Inspector's Selection panel, which lists the sample's allele targets as Read support and Allele field pairs."
   - id: genotype-inspector-display
     caption: "The Inspector's Genotype Display section with the Alleles and Samples filter fields, the Min reads and Min percent controls, the Percent Basis picker, and the Cell Color choice."
 illustrations: []
@@ -109,7 +109,7 @@ Its header carries four figures. **Selected Sample** names it. **Retained Unique
 
 Applied to the Williams run, those thresholds sort the 30 samples into 23 Meets thresholds and 7 Low support. That matches the run's own recorded `qc_status` split of 23 `ok` and 7 `lowSupport` exactly, which is the reassuring outcome. If the Call-support check and the recorded status ever disagree on a sample, treat the sample as unresolved and check its read count in `genotype list-samples` before reading its column.
 
-Below the header the pane lists **Supported Alleles**, one line per allele target that sample showed, each with the allele name and its retained read count. That list is the same information as the sample's column in the matrix, read as a list instead of as a column of a sparse grid, which is easier when a sample carries a dozen calls spread across 970 rows.
+The Inspector's **Selection** panel lists the supported allele targets for the selected sample as repeated **Read support** and **Allele** field pairs. Each pair gives an allele target and its retained read count. That list is the same information as the sample's column in the matrix, read as a list instead of as a column of a sparse grid, which is easier when a sample carries a dozen calls spread across 970 rows.
 
 ### Step 4. Narrow the matrix
 
@@ -163,7 +163,7 @@ Read a result in the order the window is laid out, which is also the order that 
 
 Start with the depth of the whole run, taken from `genotype list-samples` as step 2 describes. It tells you how many of your samples are in question before you have looked at any biology. In the Williams run that is 7 of 30, and knowing the number in advance changes how you read every column.
 
-Then take the samples one at a time and read the header's Call-support check first, before the Supported Alleles list beneath it. A sample reading Meets thresholds has calls worth reading. A sample reading Low support has produced calls that may be right and may be the handful of reads that happened to match something, and the list below cannot tell you which. A sample reading Review needed has told you nothing at all.
+Then take the samples one at a time and read the header's Call-support check first, before the allele targets in the Inspector's Selection panel. A sample reading Meets thresholds has calls worth reading. A sample reading Low support has produced calls that may be right and may be the handful of reads that happened to match something, and the allele list cannot tell you which. A sample reading Review needed has told you nothing at all.
 
 Then read the calls themselves. Count the loci a sample covers rather than reading the alleles first, because a missing locus is the easiest failure to overlook. The `top_calls_by_locus` field of `genotype list-samples` is where that count is readable, since it names the top call at each locus the sample reached, and counting its entries gives the number directly. In the Williams run the samples that sequenced well cover 11 to 13 of the 13 loci, while the `lowSupport` samples cover as few as 2. A sample with plenty of reads covering only 6 loci is a different problem from a sample with 200 reads covering 6 loci, and the read count is what tells them apart.
 
