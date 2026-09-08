@@ -23,7 +23,7 @@ shots:
   - id: ncbi-results-download-selected
     caption: "The results list with the NC_012920.1 record ticked and the primary button reading Download Selected instead of Search."
   - id: ncbi-bundle-in-sidebar
-    caption: "The downloaded NC_012920.1 reference bundle under the project's Downloads folder in the sidebar, open in the sequence viewport with its NCBI GFF3 Annotations track drawn above the bases."
+    caption: "The downloaded NC_012920 reference bundle under the project's Downloads folder, open with sequence version NC_012920.1 and its NCBI GFF3 Annotations track."
   - id: pathoplexus-pane
     caption: "The Pathoplexus pane after the access and benefit sharing notice is accepted, showing the organism chips above the shared query field."
 illustrations:

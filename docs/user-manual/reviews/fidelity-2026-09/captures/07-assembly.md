@@ -48,3 +48,12 @@ missing recipe 07-assembly/derived-bundle-in-sidebar
 ```
 
 App left on the demo project main window, 1400x900, no sheets or extra windows open.
+
+- 2026-09-07 completion pass `assembly-submenu` captured via authorized System Events menu control. Display crop (380, 0, 430, 490), 860×980px. PNG read back and all named menu entries checked.
+
+- Captured `flye-contig-table`,1600×1028 on local Preview2026.9.13 build4673,candidate9b767d3e4. Fixed unselected table uses full viewer width and Inspector rehydrates canonical source input/provenance. One32,652bp contig at43.0%GC,Flye2.9.6,46.6s. Summary strip still paints only wall-time value,so captions/prose identify table and Inspector metrics instead.
+
+- `assembly-sheet-flye`, `assembly-sheet-curated-arguments`, and `assembly-sheet-hifiasm` captured at 1600 × 1143 pixels from region 570,318,980,700 in Preview build 4673. All captioned settings and Cancel/Run are visible. Public HG002 ONT and HiFi bundles drive the actual compatibility choices. Curated arguments field is empty and shows its existing placeholder. Configuration only.
+
+- `contig-context-menu` captured at 500 × 384 pixels from region 826,352,250,192. All six actions visible.
+- `derived-bundle-in-sidebar` captured at 682 × 440 pixels with window crop 0,345,341,220. Created actual human Flye contig_1 through the selected-row Create Bundle action. Native bundle provenance records final stored FASTA/index/manifest outputs with checksums, sizes, status and timing. The import's upstream source remains a temporary selection.fasta path, so durable reconstruction of that intermediate requires further provenance review. This is documented rather than silently rewriting the native record.

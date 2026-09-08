@@ -1,0 +1,37 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: HBB reference opened through sidebar,Translation Tool sheet opened by restored toolbar button. Local Preview2026.9.13 build4673,candidate commit9b767d3e4. Three forward frames,Standard code,Zappo,stop codons on.
+id: translation-tool-hbb-cds
+chapter: 02-sequences/01-importing-and-viewing
+caption: The translation tool opened from the window toolbar, with its Mode, Genetic Code, and Color Scheme
+  controls above the Apply button.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open Reference Sequences/HBB in the demo project.
+  # PROSE-ONLY: Click Translate in the window toolbar.
+  # PROSE-ONLY: Capture Mode,Genetic Code,Color Scheme,and Cancel/Hide Translation/Apply controls.
+  # PROSE-ONLY: Cancel to leave the overlay unchanged.
+crop:
+  mode: region
+  region:
+  - 850
+  - 428
+  - 420
+  - 480
+post:
+  retina: true
+  format: png

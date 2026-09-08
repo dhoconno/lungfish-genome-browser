@@ -1,0 +1,34 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: A demo FASTQ bundle selected and the named Tools submenu open. HG002-fastpTrim was selected after the authorized trim run.
+id: read-processing-menu
+chapter: 03-reads/08-read-processing
+caption: The Tools > Read Processing submenu open, showing its six operations.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select a demo FASTQ bundle in the sidebar.
+  # PROSE-ONLY: Open Tools and the submenu named in the caption. Capture while it stays open.
+crop:
+  mode: region
+  region:
+  - 380
+  - 0
+  - 530
+  - 490
+post:
+  retina: true
+  format: png

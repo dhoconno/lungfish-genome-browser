@@ -123,3 +123,10 @@ missing recipe 04-alignments/viral-recon-inspector-outputs
 
 All 14 captured shots no longer appear as missing (png or recipe) in the checker output above —
 only the 6 deliberately skipped rows remain.
+
+- 2026-09-07 completion pass `viral-recon-menu-item` captured via authorized System Events menu control. Display crop (380, 0, 460, 490), 920×980px. PNG read back and all named menu entries checked.
+
+- 2026-09-07 completion pass `tools-mapping-submenu` captured via authorized System Events menu control. Display crop (380, 0, 460, 490), 920×980px. PNG read back and all named menu entries checked.
+
+- `primer-trim-scheme-menu` 1080 × 960 pixels, region 790,428,540,480, all eight built-in menu names visible. Shared with foundations. Interface only.
+- `primer-trim-dialog-target` recaptured at 1080 × 960 pixels with no scheme selected, empty output name and disabled Run on human chr20 alignment. Caption corrected. A mismatched viral scheme was briefly selected only to inspect automatic naming, then cleared without running. The accepted screenshot does not present that incompatible configuration. Actual primer-trim result remains deferred.

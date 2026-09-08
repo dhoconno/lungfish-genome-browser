@@ -118,3 +118,17 @@ missing recipe 06-classification/twelve-s-export
 
 - `blast-verify-popover` cropped to the viewport columns after capture because the Inspector still showed the NVD Result summary from the previously selected analysis.
 - The Inspector's Summary tab keeps the previous selection's content when a Kraken2 result is selected (NVD Result fields, or the chr20 reference's Organism and Assembly lines). Product defect noted for follow-up.
+
+- 2026-09-07 completion pass `classification-submenu` captured via authorized System Events menu control. Display crop (380, 0, 430, 490), 860×980px. PNG read back and all named menu entries checked.
+
+- Captured `twelve-s-result-species-table` and `twelve-s-unresolved-clusters`,1600×1028. Sidebar and Inspector hidden and named window resized to1400×900 points so all named columns fit. Human teaching fixture has110 exact reads and56 unresolved clusters. The summary appears above the table, not below as the original caption states.
+
+- Captured `twelve-s-blast-review`,1600×1028, after a real NCBI query of the public human fixture returned100% Homo sapiens hits. Captured `twelve-s-export`,350×200 region810,1135,175,100 showing CSV/TSV/Excel, then dismissed without exporting.
+
+- Captured `nao-mgs-result-viewport` and `nao-mgs-taxon-detail`,1600×1028 with Inspector hidden. Summary does report7 taxa (sample/taxon rows), while overview reports4 unique taxa. Detail uses the6-hit Cressdnaviricota water-sample row with one existing miniBAM panel. Observed stale12S Detail Inspector on navigation, excluded by hiding Inspector and recorded here as a product defect.
+
+- Captured `czid-result-viewport`,1600×1028 with side panels hidden and viewer divider at36% to show table columns. Captured `czid-provenance-popover`,772×692 region2088,557,386,346 with final stored source-file path and imported version metadata.
+
+- `nao-mgs-import-sheet` 1040 × 960 pixels, region 934,226,520,480 in Preview build 4673. Existing test fixture validates. Read-only path, source name and Cancel/Run visible. No duplicate import.
+
+- `czid-import-sheet` 1040 × 920 pixels, region 934,226,520,460 in Preview build 4673. All Preview rows and the complete Project Destination readout require scrolling the fixed-height form. Caption describes that state. Browse section is above the crop's scroll position. Existing test TSV, no duplicate import.

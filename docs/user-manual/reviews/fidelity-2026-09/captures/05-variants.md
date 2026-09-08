@@ -49,3 +49,5 @@ missing recipe 05-variants/name-imported-variant-bundle
 - The Variants table's column widths had been disturbed by header drags during the session (widths are runtime state, only visibility and order persist). After relaunching the app the default layout returned with ID through Source visible at 1400 points, so `variants-tab-twelve-columns`, `variants-tab-two-callers`, and `variants-source-column` were recaptured; the last one at chr20_10.0-10.5Mb:250500-250560 in Region scope, showing the bcftools and LoFreq rows for 250,527.
 - `analysis-consensus-tab` recaptured with the whole Inspector column (the first crop cut the labels).
 - `variants-preset-chips` (fourth group off-frame), `variants-search-builder` (INFO field rule needs the category popup), and the iVar and Medaka rows (no primer-trimmed or nanopore track) are noted for the full-screen pass or a caption change.
+
+- 2026-09-07 completion pass `tools-mapping-submenu` captured via authorized System Events menu control. Display crop (380, 0, 460, 490), 920×980px. PNG read back and all named menu entries checked.

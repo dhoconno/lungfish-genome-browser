@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Preview build 4673. contig_1 created from human Flye assembly through Create Bundle.
+id: derived-bundle-in-sidebar
+chapter: 07-assembly/04-extracting-contigs
+caption: The derived reference bundle in the project sidebar under Reference Sequences, carrying the selected
+  contig's own name because a single contig was selected.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select contig_1 in HG002-chrM-flye and click Create Bundle. The new bundle appears under Reference Sequences.
+  # PROSE-ONLY: Collapse Analyses and Imports, then crop the sidebar around Reference Sequences. Window-relative crop 0,345,341,220.
+crop:
+  mode: region
+  region:
+  - 0
+  - 345
+  - 341
+  - 220
+post:
+  retina: true
+  format: png

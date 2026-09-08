@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Preview build 4673. Actual simulated MHC GUI run failed during workbook creation because imported reference allele metadata was unresolved.
+id: operations-panel-failed-row
+chapter: appendices/troubleshooting
+caption: A failed row in the Operations Panel expanded to show its command and log, with the right-click
+  menu open on Copy Failure Report.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open Operations Panel, expand the failed teaching run, and right-click its row.
+  # PROSE-ONLY: Highlight Copy Failure Report using menu navigation. Capture command, log, failed status, and menu. Dismiss with Escape without opening an issue.
+crop:
+  mode: region
+  region:
+  - 1320
+  - 398
+  - 1200
+  - 470
+post:
+  retina: true
+  format: png

@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Preview build 4673. Existing NAO-MGS fixture selected and validation passed.
+id: nao-mgs-import-sheet
+chapter: 06-classification/05-running-nao-mgs
+caption: The NAO-MGS Import sheet after a file is chosen, showing the read-only path readout beside the
+  Browse... button and the Validation section reporting Valid NAO-MGS results with the source file name.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open Import Center > Classification Results > NAO-MGS Results. Browse to Tests/Fixtures/naomgs/virus_hits_final.tsv.gz and open the file.
+  # PROSE-ONLY: Capture Valid NAO-MGS results, source filename and Cancel/Run. Cancel without importing a duplicate.
+crop:
+  mode: region
+  region:
+  - 934
+  - 226
+  - 520
+  - 480
+post:
+  retina: true
+  format: png

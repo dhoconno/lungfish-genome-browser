@@ -1,0 +1,34 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Primate mitochondrial MSA export sheet, one selected row, Save to File destination.
+id: export-alignment-sheet
+chapter: 02-sequences/04-aligning-sequences
+caption: The Export Alignment sheet, with its Destination choices above the Sequences gap choice and the
+  Format popup.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1572
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1572
+  - 900
+  # PROSE-ONLY: Open the existing Primate-mitochondria MSA bundle. Right-click a residue and choose Export Alignment. Capture without saving. Cancel.
+crop:
+  mode: region
+  region:
+  - 906
+  - 503
+  - 480
+  - 329
+post:
+  retina: true
+  format: png

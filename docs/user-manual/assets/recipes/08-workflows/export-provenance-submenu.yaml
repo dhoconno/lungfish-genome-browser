@@ -1,0 +1,34 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: File > Export > Provenance open on its six targets.
+id: export-provenance-submenu
+chapter: 08-workflows/02-exporting-as-nextflow-or-snakemake
+caption: The File > Export > Provenance submenu, with the six export targets and the separator after the
+  fourth.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select HG002-fastpTrim, then open File > Export > Provenance.
+crop:
+  mode: region
+  region:
+  - 164
+  - 0
+  - 722
+  - 538
+post:
+  retina: true
+  format: png

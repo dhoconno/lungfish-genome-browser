@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Tools > Genotyping with miSeq enabled and 12S and full-length ONT disabled.
+id: genotyping-submenu
+chapter: 09-genotyping/01-what-is-mhc-genotyping
+caption: The Tools menu open on its Genotyping submenu, showing the three specialized workflows it holds,
+  miSeq amplicon MHC genotyping..., Full-length ONT MHC genotyping..., and 12S Amplicon Matching..., with
+  any workflow that is not yet enabled shown in grey followed by (not enabled).
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select a demo FASTQ bundle. Open Tools, then Genotyping.
+crop:
+  mode: region
+  region:
+  - 380
+  - 0
+  - 680
+  - 490
+post:
+  retina: true
+  format: png

@@ -1,0 +1,32 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Cressdnaviricota sp. water sample row selected,3 unique of6 total reads,one accession and miniBAM panel visible.
+id: nao-mgs-taxon-detail
+chapter: 06-classification/05-running-nao-mgs
+caption: The detail pane after a taxon row is selected, showing the taxon name header, the Taxid line
+  with its unique-of-total read counts and accession count, and the miniBAM Panels section with one read-pileup
+  panel per top accession.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open NAO-MGS wastewater fixture with Inspector hidden and window1400×900 points.
+  # PROSE-ONLY: Select the Cressdnaviricota sp. row with6 hits.
+  # PROSE-ONLY: Capture the taxon detail header,counts,accession and read-pileup panel.
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

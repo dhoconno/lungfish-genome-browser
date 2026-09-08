@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Preview build 4673. Human Flye contig_1 context menu.
+id: contig-context-menu
+chapter: 07-assembly/04-extracting-contigs
+caption: The contig table's right-click menu on a selected row, showing Extract Sequence..., BLAST Contig...,
+  Copy FASTA, and Export FASTA... above Extract to New Bundle..., with a separator and Run Operation...
+  below.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open HG002-chrM-flye and right-click contig_1 to display its actual context menu.
+crop:
+  mode: region
+  region:
+  - 826
+  - 352
+  - 250
+  - 192
+post:
+  retina: true
+  format: png

@@ -65,3 +65,16 @@ These 9 rows match the skipped/failed shots above exactly (file-export-menu coun
 ## Notable environment issue encountered
 
 Mid-session, after using `File > Close All` and toggling View > Focus Viewer/Show Sidebar/Restore Side Panes on the original main window (CGWindowID 56443), that window's accessibility tree went empty (sidebar rendered blank, `app_ax_find` returned nothing, `osascript`/System Events reported 0 windows for the process) while screenshots kept rendering its last-known content correctly and `File > Close` stayed disabled. The window was not used further. A fresh main window was reopened via `File > Open Recent > LGE Manual Demo` (new CGWindowID 57503) and all subsequent shots were captured from that healthy window. No project data appears to have been affected; the demo project's own files were not modified by this session.
+
+- 2026-09-07 completion pass `file-export-menu` captured with authorized System Events menu control. Crop dimensions are in the recipe. PNG read back and every named entry verified.
+
+- Captured `provenance-lineage-step-expanded`,1600×1028 on local Preview2026.9.13 build4673,candidate9b767d3e4. Source=HG002 bcftools and step4 expanded,with complete command,inputs,pipe output,exit status,wall time and stderr. Inspector widened to660points. Incomplete badge reflects pre-existing pipe:stdout descriptor without checksum/size,not missing stored variant output. Run Summary and Warnings collapsed for framing.
+
+- `operations-panel-right-click-menu` captured at 350 × 310 pixels from display region 1590,460,175,155 in local Preview build 4673. Verified all five actual completed-row actions. Caption corrected to those actions. The native HG002 fastp trim completed successfully with canonical provenance.
+
+- `provenance-export-folder` 1600 × 675 pixels, Finder window 900 × 380 points, with sidebar hidden. Shows containers, main.nf, nextflow.config and provenance directory from the actual chr20 reference import export in build 4673.
+
+- `empty-project-window` 1600 × 1002 pixels, actual 1366 × 856 point new empty project. Created Desktop/lge-docs/LGE Empty Demo.lungfish through File > New Project and Save. No scientific payload imported.
+- `welcome-window` 1600 × 1055 pixels, actual 1080 × 712 point Welcome window after quitting and launching with no project open. Closing all windows alone did not reopen Welcome. Current UI has Recent Projects as separate navigation, not a list on Get Started. Caption and procedure corrected. Setup status Ready.
+
+- `primer-scheme-picker-built-in` shares the 1080 × 960 pixel actual built-in menu capture from alignment configuration. Eight scheme names visible. No workflow run.

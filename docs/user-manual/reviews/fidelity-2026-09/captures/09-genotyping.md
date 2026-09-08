@@ -140,3 +140,10 @@ missing recipe 09-genotyping/genotype-export-save-panel
 missing png 09-genotyping/genotype-pivot-workbook
 missing recipe 09-genotyping/genotype-pivot-workbook
 ```
+
+- 2026-09-07 completion pass `genotyping-submenu` captured with authorized System Events menu control. Crop dimensions are in the recipe. PNG read back and every named entry verified.
+
+- `genotyping-operations-row` captured at 1600 × 760 pixels in Preview build 4673. Actual two-sample simulated MHC run with annotated reference, Genotype only and Keep Intermediates completed in 2 seconds. Caption now describes the completed row rather than claiming a running-stage screenshot. Initial run against unannotated reference failed during workbook writing and remains preserved. Corrected reference route is independently validated by the fixture builder.
+
+- `genotype-export-save-panel` captured at 1350 × 364 pixels, compact panel region 822,577,675,182. Explicit teaching filename SIMULATED-MHC-filtered-pivot.xlsx avoids a long clipped prefix. Export wrote the workbook, native provenance sidecar, and view-projection JSON to Desktop/lge-docs.
+- `genotype-pivot-workbook` captured at 1580 × 990 pixels in Numbers at 125% with crop 15,60,790,495. Actual unmodified exported workbook, three public macaque targets and two simulated samples. Total 376, per-sample 204 and 172, six expected counts visible. All haplotype rows remain blank. No data or formatting edits in Numbers.

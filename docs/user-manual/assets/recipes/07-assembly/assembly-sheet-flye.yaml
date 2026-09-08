@@ -1,0 +1,36 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Preview build 4673. ONT bundle, Flye, Nano HQ profile.
+id: assembly-sheet-flye
+chapter: 07-assembly/03-running-flye-or-hifiasm
+caption: The assembly sheet opened from Tools > Assembly > Flye..., with the ONT bundle selected in the
+  sidebar beforehand, showing the Inputs section reporting ONT reads under Detected, the Assembler picker
+  offering Flye beside Hifiasm and nothing else, the locked Read Type row, and the Profile picker on Nano
+  HQ.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Select Imports/HG002.chrM.ont and open Tools > Assembly > Flye. Capture the initial settings.
+crop:
+  mode: region
+  region:
+  - 570
+  - 318
+  - 980
+  - 700
+post:
+  retina: true
+  format: png

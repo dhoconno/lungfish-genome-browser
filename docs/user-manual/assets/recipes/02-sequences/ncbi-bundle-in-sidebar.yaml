@@ -1,0 +1,29 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Public human mitochondrial NC_012920.1 downloaded through NCBI with101features, namedNC_012920.
+id: ncbi-bundle-in-sidebar
+chapter: 02-sequences/02-downloading-from-ncbi
+caption: The downloaded NC_012920 reference bundle under the project's Downloads folder, open with sequence
+  version NC_012920.1 and its NCBI GFF3 Annotations track.
+viewport_class: sequence
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Tools > Search Online Databases > Search NCBI. Query NC_012920.1, keep Include GFF3 Annotations checked, select sole human reference result, Download Selected. Filter sidebar to NC_012920 and open new Downloads bundle. Resize1400x900 and capture.
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

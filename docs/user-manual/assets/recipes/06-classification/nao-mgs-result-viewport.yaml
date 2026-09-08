@@ -1,0 +1,32 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Analyses/naomgs-nao-mgs-demo overview,All Samples,5 samples and7 taxa summary,4 unique taxa overview. Inspector hidden.
+id: nao-mgs-result-viewport
+chapter: 06-classification/05-running-nao-mgs
+caption: The NAO-MGS viewport on the imported wastewater fixture, showing the Samples and Taxa summary
+  cards along the top, the sample-filter button reading All Samples above the taxon table, the table's
+  Sample, Taxon, Hits, Unique Reads, and Refs columns, and the overview bar chart filling the detail pane.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open the imported NAO-MGS wastewater fixture from Analyses.
+  # PROSE-ONLY: Hide Inspector and resize the named main window to1400×900 points.
+  # PROSE-ONLY: With no taxon selected,capture all table columns and overview bars.
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

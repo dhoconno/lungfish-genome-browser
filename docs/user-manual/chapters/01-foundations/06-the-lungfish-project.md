@@ -28,7 +28,7 @@ shots:
   - id: file-export-menu
     caption: "The File > Export submenu open, showing the sequence, annotation, FASTQ, metadata, and image export items above the Provenance submenu."
   - id: operations-panel-row
-    caption: "An Operations Panel row mid-run, expanded to show the CLI command, the log buttons, the running log output, and the progress bar."
+    caption: "A completed human-read trimming operation, expanded to show the CLI command, log buttons, log output, and elapsed time."
   - id: operations-panel-right-click-menu
     caption: "The right-click menu on a completed trim operation, showing Copy CLI Command, Copy Log, View Log, Reveal Log in Finder, and Clear."
 illustrations: []

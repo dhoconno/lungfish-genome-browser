@@ -118,3 +118,19 @@ was converted from the `app_screenshot` coordinate frame (1400x858 for this
 passed to `capture-window.sh`, so each region now frames its full dialog
 (Cancel/Run visible, nothing cut on the right) instead of the earlier
 clipped captures.
+
+- 2026-09-07 completion pass `search-subsetting-menu` captured via authorized System Events menu control. Display crop (380, 0, 485, 490), 970×980px. PNG read back and all named menu entries checked.
+
+- 2026-09-07 completion pass `read-processing-menu` captured via authorized System Events menu control. Display crop (380, 0, 530, 490), 1060×980px. PNG read back and all named menu entries checked.
+
+- 2026-09-07 `import-fastq-configuration-sheet` captured at 1120×1040px, display crop 780,523,560,520. Verified mate names, detected Illumina/Paired-end, binning/compression and both buttons. Native sheet window capture includes parent, so used sheet-bounds region capture.
+
+- Captured `ont-import-configuration-sheet` and `ont-barcode-sheet-controls` at 1120×1040 from region780,523,560,520. Correctly selected fastq_pass, yielding one barcode directory and5 MB. The optional recipe uses an illustrative sample/barcode CSV only for controls, disabled before import. Fixed-width sheet lets Barcode Sheet popup overflow and hides Choose, while both named controls and Cancel/Import remain visible.
+
+- Captured `sra-bundle-in-sidebar`,1600×1028 full main window. Imports/SRR32909537 selected with115,776 reads, read table and cached statistics visible.
+
+- Captured `sidebar-after-ont-import`,682×780,window-point crop0,400,341,390. barcode01 is inside ont-run after optional recipe was toggled on then off. Native provenance confirms unprocessed import and final payload paths/checksums. Chapter updated to this observed state.
+
+- Replaced rejected `trim-operation-row` with1600×373 window crop0,1,1200,280 of1200×700 Operations panel. Local Preview build4673 wraps the complete command. Fresh demo fastp run completed7.7s,threshold20,window4,Cut Right,Auto-Detect,Per Input. sips cropOffset0,0 centers its crop,so usedy=1 to preserve the top of the window.
+
+- `remove-duplicates-preset-picker` captured at 1600 × 1143 pixels, region 570,318,980,700 in Preview build 4673. All six choices, checked Exact PCR, and Cancel/Run are visible. Configuration only.

@@ -1,0 +1,34 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Existing NVD teaching report preview, experiment100,3samples,4contigs,10hits.
+id: nvd-import-preview
+chapter: 06-classification/09-novel-virus-detection
+caption: The NVD Import sheet after a successful scan of the NVD demo results, showing the Browse... button,
+  the path readout, and the Preview panel's Experiment, Samples, Contigs, and BLAST hits rows.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Copy existing nvd-demo/results with checksum provenance into Desktop/lge-docs/capture-inputs/nvd-results. Import Center > Classification Results > NVD Results. Browse to copied directory. Capture validated Preview. Cancel without running import.
+crop:
+  mode: region
+  region:
+  - 944
+  - 226
+  - 500
+  - 450
+post:
+  retina: true
+  format: png

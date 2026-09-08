@@ -24,7 +24,7 @@ shots:
   - id: kraken2-drilldown-coronaviridae
     caption: "The sunburst re-centred on Coronaviridae after a double-click, with the breadcrumb bar showing the path back to the root."
   - id: kraken2-extract-reads
-    caption: "Right-click menu on a taxon row, with Extract Reads... selected above Copy Taxon Name and Copy Taxonomy Path."
+    caption: "The right-click menu on a taxon row, with Extract Reads... highlighted above the expansion, BLAST, NCBI lookup, and Copy Taxon Name actions."
 illustrations: []
 glossary_refs: [amplicon, blast, bracken, bundle, capped-database, clade, clade-count, conda, fastq, host-depletion, k-mer, kraken2, kreport, lowest-common-ancestor, metagenomics, minimizer, operations-panel, paired-end, plugin-pack, provenance, read, read-classification, spike-in-control, taxon, taxonomic-rank]
 features_refs: []

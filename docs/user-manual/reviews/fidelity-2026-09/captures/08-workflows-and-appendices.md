@@ -56,3 +56,13 @@ missing recipe appendices/operations-panel-failed-row
 ```
 
 All entries above correspond to rows intentionally skipped for the stated reasons; no unexpected gaps.
+
+- 2026-09-07 completion pass `export-provenance-submenu` captured with authorized System Events menu control. Crop dimensions are in the recipe. PNG read back and every named entry verified.
+
+- `operations-panel-failed-row` captured at 1600 × 626 pixels from region 1320,398,1200,470 in Preview build 4673. Actual simulated MHC GUI failure, expanded command/log and Copy Failure Report highlighted. Native failure report remains in Library/Logs/Lungfish/Operations/Failures. No artificial failure or issue submission was needed.
+
+- `export-provenance-save-panel` 740 × 452 pixels, region 975,555,370,226, with shortened chr20-provenance-nextflow filename. `export-provenance-complete-alert` 520 × 344 pixels, region 1030,582,260,172. Actual export under Desktop/lge-docs.
+- `nextflow-export-main-nf` 1600 × 1029 pixels, unmodified generated file in TextEdit. File export uses the selected reference bundle import lineage, not its mapping or variant track. Caption corrected to import/bgzip/samtools process blocks. Export includes historical temporary paths and duplicate parameter declarations. This capture verifies the actual export UI, not executable replay correctness.
+- Genotype filtered export audit found a historical manifest limitation. The exported XLSX checksum passes. A subsequent workbook update preserves the original workbook bytes but changes genotype-result.json without preserving its historical bytes, so the export's old input manifest checksum cannot be verified from a current snapshot. Recorded as a product provenance defect.
+
+- `shared-projects-read-only-banner` captured at 1600 × 1028 pixels, 1400 × 900 point window. Created LGE Manual Demo Copy.lungfish with a documented copy preserving the live project lock, then explicitly chose Open Read-Only. Title shows (Read Only). No yellow banner was rendered in Preview build 4673, despite the initial alert correctly identifying owner, host, process and lock time. Chapter correction is required so absence of a banner is not misdiagnosed as a missing project store.
