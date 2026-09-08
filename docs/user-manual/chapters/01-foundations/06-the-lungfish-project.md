@@ -16,7 +16,7 @@ entry_points:
   - Operations > Show Operations Panel (Cmd-Shift-P)
 shots:
   - id: welcome-window
-    caption: "The Lungfish Genome Explorer Welcome window, with the Create Project and Open Project cards, the Recent Projects list, and the required-setup panel below them."
+    caption: "The Lungfish Genome Explorer Welcome window, with the Create Project and Open Project cards, Recent Projects navigation, and the Third-Party Tools readiness panel below the cards."
   - id: empty-project-window
     caption: "A new empty project window with the sidebar on the left, an empty viewport in the centre, and the Inspector on the right."
   - id: sidebar-folder-conventions
@@ -69,15 +69,15 @@ One rule about who creates a project is worth knowing before you start. Only the
 
 ## Procedure
 
-1. Launch LGE with no project open. The Welcome window appears. It offers the Create Project and Open Project cards, a Recent Projects list holding your last ten projects, and a setup panel underneath.
+1. Launch LGE with no project open. The Welcome window appears. Its Get Started page offers the Create Project and Open Project cards and a setup panel underneath. Choose Recent Projects in the left navigation to see recent projects.
 
     <!-- SHOT: welcome-window -->
 
 2. Read the setup panel before you go further. It reports whether the Required Setup pack is installed, with one status card per tool behind the Show Details button. You do not need to click Install for this chapter, because nothing here runs an analysis tool. Its Install button runs the setup, and a "Need more space? Choose another storage location…" link opens a sheet that moves the folder where LGE keeps its shared tools and databases somewhere with more room. If an installation or a storage change is already running, the project opens as soon as it finishes.
 
-3. Click Open Project and choose the demo project at `~/Desktop/lge-docs/LGE Manual Demo.lungfish`. To make an empty project instead, click Create Project, pick a folder, type a name, and click Create. Either card has a menu equivalent, so **File > New Project** (Cmd-N) and **File > Open Project Folder...** (Cmd-O) do the same work from an open window. The wording differs between the Welcome window and the menu, and the actions do not.
+3. Click Open Project and choose the demo project at `~/Desktop/lge-docs/LGE Manual Demo.lungfish`. To make an empty project instead, click Create Project, pick a folder, type a name, and click Save. Either card has a menu equivalent, so **File > New Project** (Cmd-N) and **File > Open Project Folder...** (Cmd-O) do the same work from an open window. The wording differs between the Welcome window and the menu, and the actions do not.
 
-4. Look at the window that opens. The sidebar on the left carries the project name at the top and the folder tree below it. The viewport in the centre is empty until you select something. The Inspector on the right is empty for the same reason.
+4. Look at the window that opens. The window title carries the project name. The sidebar on the left shows the folder tree. The viewport in the centre is empty until you select something. The Inspector on the right is empty for the same reason.
 
     <!-- SHOT: empty-project-window -->
 
