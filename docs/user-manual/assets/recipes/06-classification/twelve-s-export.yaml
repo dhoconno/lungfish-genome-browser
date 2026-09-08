@@ -1,0 +1,35 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: 12S viewport Export menu open with CSV,TSV and Excel choices.
+id: twelve-s-export
+chapter: 06-classification/10-twelve-s-metabarcoding
+caption: The viewport's Export menu offering Export as CSV..., Export as TSV..., and Export as Excel...
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open Analyses/HG002-12S.
+  # PROSE-ONLY: Click viewport Export and capture the three menu choices.
+  # PROSE-ONLY: Press Escape to dismiss without exporting.
+crop:
+  mode: region
+  region:
+  - 810
+  - 1135
+  - 175
+  - 100
+post:
+  retina: true
+  format: png

@@ -20,7 +20,7 @@ shots:
   - id: twelve-s-dialog-options
     caption: "The same dialog's Read Platform segmented picker, Result Name field, and Min Soft Clip field, with the Advanced Options disclosure expanded to show Max Indels and Run vsearch chimera review."
   - id: twelve-s-result-species-table
-    caption: "The 12S viewport on its Targets view, showing the Sample, Scientific Name, Common Names, Group, Tax ID, Exact Reads, % of Sample, Refs, and Alternates columns above the summary line."
+    caption: "The 12S viewport on its Targets view, showing the Sample, Scientific Name, Common Names, Group, Tax ID, Exact Reads, % of Sample, Refs, and Alternates columns below the summary line."
   - id: twelve-s-unresolved-clusters
     caption: "The viewport's Unresolved view, showing the Sequence, Reads, Samples, Chimera, and Bases columns for the clusters that matched no reference."
   - id: twelve-s-blast-review
