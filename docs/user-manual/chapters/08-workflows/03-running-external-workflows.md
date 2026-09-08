@@ -117,7 +117,7 @@ The command line uses one flag for both of those pickers, repeating `--input` on
 
 **Cores.** Sets how many processor cores the workflow engine may use, accepting integers of one or more. The default is the app's own thread count, sized to your Mac from the core count Apple menu > About This Mac reports, and most people should leave it alone. Lower it to keep the machine responsive while a long pipeline runs, and raise it on a machine with cores to spare, bearing in mind that Snakemake honours this value as its `--cores` setting while Nextflow only records it and does not limit anything by it. The field is disabled during a Run Again, because a repeat run must reuse the recorded core count. On the command line this is `--cpus`.
 
-**Directory.** Chooses where the run writes its results, accepting any writable directory. The default is a fresh directory under the project. Change it when the results belong on a different volume, for example one with more free space, and note that a Run Again always uses a fresh output directory so the original run stays untouched. On the command line this is `--results-dir`.
+**Directory.** The field in the **Output** section chooses where the run writes its results, accepting any writable directory. The default is a fresh directory under the project. Change it when the results belong on a different volume, for example one with more free space, and note that a Run Again always uses a fresh output directory so the original run stays untouched. On the command line this is `--results-dir`.
 
 ### Command-line only settings
 
