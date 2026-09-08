@@ -16,7 +16,7 @@ entry_points:
   - Operations > Show Operations Panel (Cmd-Shift-P)
 shots:
   - id: welcome-window
-    caption: "The Lungfish Genome Explorer Welcome window, with the Create Project and Open Project cards, Recent Projects navigation, and the Third-Party Tools readiness panel below the cards."
+    caption: "The Lungfish Genome Explorer Welcome window, with the Create Project and Open Project cards, the Recent Projects sidebar item, and the Third-Party Tools readiness panel below the cards."
   - id: empty-project-window
     caption: "A new empty project window with the sidebar on the left, an empty viewport in the centre, and the Inspector on the right."
   - id: sidebar-folder-conventions
@@ -69,7 +69,7 @@ One rule about who creates a project is worth knowing before you start. Only the
 
 ## Procedure
 
-1. Launch LGE with no project open. The Welcome window appears. Its Get Started page offers the Create Project and Open Project cards and a setup panel underneath. Choose Recent Projects in the left navigation to see recent projects.
+1. Launch LGE with no project open. The Welcome window appears. Its Get Started page offers the Create Project and Open Project cards and a setup panel underneath. Choose Recent Projects in the sidebar to see recent projects.
 
     <!-- SHOT: welcome-window -->
 
