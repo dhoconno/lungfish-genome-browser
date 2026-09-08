@@ -257,3 +257,9 @@ to confirm it verifies and skips without starting another scientific run.
 ## Simulated MHC teaching result
 
 The `mhc-simulated` extension creates two explicitly simulated primate MHC read mixtures from accession-verified public reference sequences, then uses native import and genotype-only workflows. See [the fixture README](../mhc-simulated/README.md) for provenance, expected counts, validation, and the GUI capture route. Run this step independently with `python3 extend-demo-fixtures.py mhc-simulated`. The GUI-compatible result is `Analyses/SIMULATED-MHC-bundle-validated`, using `SIMULATED-MHC-annotated-reference`. The raw-FASTA baseline remains at `Analyses/SIMULATED-MHC-native-teaching`.
+
+## Linked Hello World workflow
+
+Run `python3 extend-demo-fixtures.py hello-workflow` to copy the shipped `Examples/WorkflowPackages/hello-world-nextflow.lungfishflowpkg` unchanged to `~/Desktop/lge-docs/hello-world-nextflow.lungfishflowpkg`. Link that package from the Workflow Library for the User Workflows screenshot. Its Nextflow runner, required reference and FASTQ inputs, and declared output satisfy the app's Runnable contract. Linking does not execute the workflow.
+
+The helper verifies the manifest fields and entrypoint, runs the CLI's static workflow validation, and records source/output sizes and checksums, validation output, tool version, runtime, and elapsed time in the copied package's `fixture-copy-provenance.json`. Existing copies are verified without being overwritten or executing Nextflow. This preparation step does not generate scientific output.

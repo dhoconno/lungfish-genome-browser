@@ -262,7 +262,7 @@ step_end
 step "9 additional human and classification documentation fixtures"
 # Only creates missing outputs. Safe to run the helper on an open demo because
 # these CLI import paths do not mutate .project.db. No live project rebuild.
-python3 "$HERE/extend-demo-fixtures.py" ont hifi barcode ont-run flye amplicon nao czid 12s benchmark sra sra-import mhc-simulated
+python3 "$HERE/extend-demo-fixtures.py" ont hifi barcode ont-run flye amplicon nao czid 12s benchmark sra sra-import mhc-simulated hello-workflow
 step_end
 
 echo

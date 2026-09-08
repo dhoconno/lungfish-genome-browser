@@ -2,7 +2,7 @@
 """Add fixture bundles without rebuilding the live demo or changing its project DB.
 Each command retains native CLI provenance and an additional execution audit.
 """
-import argparse, datetime, hashlib, json, os, pathlib, platform, shlex, subprocess, time
+import argparse, datetime, hashlib, json, os, pathlib, platform, shlex, subprocess, sys, time
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[3]
 FX = HERE.parent
@@ -204,3 +204,40 @@ if 'mhc-simulated' in options.steps or 'mhc-gui-reference' in options.steps:
         if not identities: raise ValueError('Missing BBMerge managed runtime identity')
         runtime_target.write_text(json.dumps(identities, indent=2)+'\n')
     subprocess.run(['python3', str(source/'validate.py'), str(output)], check=True)
+
+if 'hello-workflow' in options.steps:
+    source = REPO/'Examples/WorkflowPackages/hello-world-nextflow.lungfishflowpkg'
+    output = ROOT/source.name
+    manifest = json.loads((source/'manifest.json').read_text())
+    assert manifest['schemaVersion'] == 1 and manifest['id'].strip()
+    assert manifest['runner']['kind'] == 'nextflow'
+    assert manifest['runtime']['kind'] == 'none'
+    assert manifest['inputs'] and all(i['bundleTypes'] for i in manifest['inputs'])
+    assert all(any(i.get('required', True) and kind in i['bundleTypes'] for i in manifest['inputs']) for kind in ['lungfishref', 'lungfishfastq'])
+    assert manifest['outputs']
+    entrypoint = (source/manifest['runner']['entrypoint']).resolve()
+    assert entrypoint.is_relative_to(source.resolve()) and entrypoint.is_file()
+    output.mkdir(exist_ok=True)
+    started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    start = time.monotonic()
+    source_files = sorted(p for p in source.rglob('*') if p.is_file())
+    for src in source_files:
+        destination = output/src.relative_to(source)
+        data = src.read_bytes()
+        if destination.exists() and destination.read_bytes() != data:
+            raise ValueError(f'Existing linked workflow differs: {destination}')
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+    audit = output/'fixture-copy-provenance.json'
+    if not audit.exists():
+        command = [str(CLI), 'workflow', 'validate', str(output/manifest['runner']['entrypoint'])]
+        result = subprocess.run(command, capture_output=True, text=True)
+        record = dict(schemaVersion=1, workflowName='copy-manual-hello-world-workflow', workflowVersion='1', toolName='extend-demo-fixtures.py', toolVersion='1', argv=[sys.executable, str(pathlib.Path(__file__).resolve()), 'hello-workflow'], reproducibleCommand=shlex.join([sys.executable, str(pathlib.Path(__file__).resolve()), 'hello-workflow']), options=dict(explicit=dict(step='hello-workflow'), defaults={}, resolvedDefaults=dict(source=str(source), output=str(output), workflowExecuted=False)), runtimeIdentity=dict(python=sys.version, executable=sys.executable, operatingSystemVersion=platform.platform(), architecture=platform.machine()), inputs=files(source_files), outputs=files([output/src.relative_to(source) for src in source_files]), startedAt=started, completedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(), wallTimeSeconds=time.monotonic()-start, exitStatus=result.returncode, stderr=result.stderr, validation=dict(argv=command, stdout=result.stdout, stderr=result.stderr, exitStatus=result.returncode, toolVersion=subprocess.check_output([str(CLI), '--version'], text=True).strip()), sourceManifestVersion=manifest['version'])
+        audit.write_text(json.dumps(record, indent=2)+'\n')
+        if result.returncode: raise RuntimeError('Hello World workflow static validation failed')
+    prior = json.loads(audit.read_text())
+    assert prior['exitStatus'] == 0
+    for f in prior['inputs'] + prior['outputs']:
+        if files([f['path']])[0] != f: raise ValueError('Copied workflow provenance differs')
+    print('Validated Hello World Nextflow package, required reference/FASTQ inputs, declared output, Runnable contract:', output)
