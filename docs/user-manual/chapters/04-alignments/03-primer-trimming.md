@@ -15,7 +15,7 @@ shots:
   - id: primer-trim-scheme-menu
     caption: "The Primer Trim dialog with the Primer Scheme menu open, showing the eight schemes under the Built-in heading."
   - id: primer-trim-dialog-target
-    caption: "The Primer Trim dialog's Target section, showing the Alignment Track menu, the pre-filled Output Track Name field, and the note that reads without matching primers are retained."
+    caption: "The Primer Trim dialog opened on the human demo alignment before choosing a matching scheme, showing the Alignment Track menu, empty Output Track Name field, and note that reads without matching primers are retained."
   - id: primer-trim-track-result
     caption: "The sidebar after the run, showing the new track named minimap2 mapping, a bullet, Primer-trimmed, and the scheme name in parentheses."
 illustrations: []
