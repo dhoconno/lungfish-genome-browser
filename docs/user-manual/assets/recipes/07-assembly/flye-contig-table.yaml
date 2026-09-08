@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: Analyses/HG002-chrM-flye with one32652bp contig,43.0%GC,Flye2.9.6,46.6s; Bundle Inspector Source Data and Assembly Context visible. Local Preview2026.9.13 build4673,candidate9b767d3e4.
+id: flye-contig-table
+chapter: 07-assembly/03-running-flye-or-hifiasm
+caption: The HG002-chrM-flye result with one 32,652 bp contig at 43.0% GC in the table, and the Inspector
+  showing the HG002.chrM.ont.fastq.gz source, Flye 2.9.6, and a wall time of 46.6 seconds.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Reproduce the human Flye fixture through demo builder explicit flye step.
+  # PROSE-ONLY: Open Analyses/HG002-chrM-flye with no contig selected so table uses the available viewer width.
+  # PROSE-ONLY: Select Bundle Inspector and capture the1400×900-point window with source and assembly metrics.
+crop:
+  mode: window
+post:
+  retina: true
+  format: png
