@@ -16,7 +16,7 @@ shots:
   - id: czid-import-card
     caption: "The Import Center on its Classification Results tab with the CZ-ID Results card, whose file hint reads taxon report TSV, .zip, or extracted folder."
   - id: czid-import-sheet
-    caption: "The CZ-ID Import sheet after a successful scan, showing the CZ-ID Export section with its Browse... button, the Preview panel listing Sample, Project, Rows, Source, Report, Pipeline, NT DB, NR DB, and Top taxa, and the Project Destination readout, which must stay visible because it is the defective control this chapter documents."
+    caption: "The CZ-ID Import sheet scrolled after a successful scan, showing the Preview panel with Sample, Project, Rows, Source, Report, Pipeline, NT DB, NR DB, and Top taxa, followed by the Project Destination readout and Cancel and Run buttons."
   - id: czid-result-viewport
     caption: "An imported CZ ID result open in the taxonomy viewport, with the sunburst on the left, the per-taxon table on the right, and the action bar reading Imported CZ-ID result followed by the sample name and taxon count."
   - id: czid-provenance-popover
