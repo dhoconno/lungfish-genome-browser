@@ -22,7 +22,7 @@ shots:
   - id: demultiplex-barcodes-pane
     caption: "The Demultiplex Barcodes pane of the FASTQ/FASTA Operations dialog, showing Barcode Source, Built-In Kit, Engine, Location, the two distance fields, Error Rate, and Trim Barcodes, with Output Strategy at the foot of the pane."
   - id: sidebar-after-ont-import
-    caption: "The sidebar after importing the HG002 long reads as a run folder, showing the barcode01 bundle at the top level of the project."
+    caption: "The sidebar after importing the HG002 long reads as a run folder, showing the unprocessed barcode01 bundle inside the top-level ont-run folder."
 illustrations: []
 glossary_refs: [fastq, read, barcode, barcode-kit, basecaller, demultiplex, single-end, orient-reads, phred-score, minknow, unclassified-reads, cutadapt, barcode-scout, fluidigm-sample-barcode, library-prep, coverage, operations-panel, sparkline]
 features_refs: [fastq.demultiplex]
@@ -83,11 +83,11 @@ This procedure imports the fixture's run folder as one bundle per barcode folder
 
     <!-- SHOT: ont-import-configuration-sheet -->
 
-4. Leave "Apply processing recipe after import" off for this chapter. It is the checkbox that offers the two nanopore demultiplexing recipes, and neither applies to the fixture. The section below explains when they do. The screenshot under this step shows the Barcode Sheet and Demux Folder controls that appear once the checkbox is turned on, so on your own screen, with the checkbox off, that part of the sheet stays empty.
+4. Leave "Apply processing recipe after import" off for this chapter. It is the checkbox that offers the two nanopore demultiplexing recipes, and neither applies to the fixture. The section below explains when they do. The screenshot under this step shows the Barcode Sheet and Demux Folder controls with the checkbox temporarily turned on. It was turned off again before importing, and no processing recipe was run. With the checkbox off, those controls are hidden.
 
     <!-- SHOT: ont-barcode-sheet-controls -->
 
-5. Click Import. When the import finishes, a bundle named `barcode01` appears at the top level of your project in the sidebar, not under `Imports/` where a plain file import would put it. A 24-barcode run would land 24 bundles there, one per barcode folder, with names taken from the folder names. Import a second run into the same project and its bundles are grouped into a folder named after that run, at the top level again, so the two runs stay apart.
+5. Click Import. In the captured import, the recipe checkbox was turned on to show its controls and then turned off before clicking Import. The unprocessed `barcode01` bundle appears inside a top-level folder named `ont-run`, rather than directly at the project root or under `Imports/`. The folder groups this run's imported barcode bundles. The bundle name comes from the input barcode folder, and the retained `ont-run` grouping does not mean a demultiplexing recipe ran.
 
     <!-- SHOT: sidebar-after-ont-import -->
 

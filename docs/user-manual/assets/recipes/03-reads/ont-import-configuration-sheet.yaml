@@ -1,0 +1,36 @@
+# Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
+# App state: ONT Run Folder import of fastq_pass detected one barcode directory, 5 MB. Platform Oxford Nanopore, recipe disabled.
+id: ont-import-configuration-sheet
+chapter: 03-reads/07-ont-runs
+caption: The Import FASTQ configuration sheet as it opens for an Oxford Nanopore run folder, with Platform
+  reading Oxford Nanopore and the recipe checkbox offering the two nanopore demultiplexing recipes.
+viewport_class: none
+app_state:
+  fixture: '{demo_project}'
+  open_files: []
+  window_size:
+  - 1400
+  - 900
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size:
+  - 1400
+  - 900
+  # PROSE-ONLY: Open Import Center and choose Sequencing Reads, ONT Run Folder.
+  # PROSE-ONLY: Select hg002-long-reads/ont-run/fastq_pass in the native file panel and click Open.
+  # PROSE-ONLY: Capture Import FASTQ before enabling a recipe or importing.
+crop:
+  mode: region
+  region:
+  - 780
+  - 523
+  - 560
+  - 520
+post:
+  retina: true
+  format: png
