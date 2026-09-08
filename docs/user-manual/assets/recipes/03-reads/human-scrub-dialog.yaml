@@ -2,8 +2,7 @@
 # App state: The Remove Human Reads pane with HG002 as input. On this profile the managed human database is not installed, so the Database row reads Required before this tool can run with a single Choose... button rather than the installed-database state the chapter describes.
 id: human-scrub-dialog
 chapter: 03-reads/05-decontamination
-caption: The Remove Human Reads pane, with the Database row in the Inputs section holding the managed
-  human database beside Replace... and Clear buttons, and the settings pane below it holding no controls.
+caption: "The Remove Human Reads pane, with the Database row in the Inputs section offering Choose... because no database is selected, and the settings pane below it holding no controls."
 viewport_class: fastq
 app_state:
   fixture: '{demo_project}'

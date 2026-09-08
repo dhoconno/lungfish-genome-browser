@@ -17,7 +17,7 @@ entry_points:
   - "CLI: lungfish-cli fastq scrub-human, deacon-ribo, contaminant-filter, entropy-filter, deduplicate"
 shots:
   - id: human-scrub-dialog
-    caption: "The Remove Human Reads pane, with the Database row in the Inputs section holding the managed human database beside Replace... and Clear buttons, and the settings pane below it holding no controls."
+    caption: "The Remove Human Reads pane, with the Database row in the Inputs section offering Choose... because no database is selected, and the settings pane below it holding no controls."
   - id: low-complexity-pane
     caption: "The Low-Complexity Filter pane, showing the Entropy Threshold slider at 0.60 with the Advanced disclosure open on the Window and K-mer fields."
   - id: remove-duplicates-preset-picker
@@ -90,7 +90,7 @@ The five operations share one dialog and one flow. Select the bundle, choose the
 
 2. Choose **Tools > Decontamination > Remove Human Reads...**. The dialog opens with that operation already chosen, so there is no list to pick from inside it.
 
-3. Look at the Inputs section at the top of the dialog. It holds two rows. **FASTQ Datasets** shows the bundle you selected, and **Database** shows the managed human database, already filled in, with Replace... and Clear buttons beside it. The first button reads Choose... instead while no database is selected. Leave this row alone. Almost everyone does, because the managed index is the one this operation was built around, and Replace... exists for the rare reader who has built their own Deacon index. Clearing the row leaves the operation with nothing to match against, so the Run button will not proceed until a database is set again. Below the Inputs section, the settings pane holds no controls, only a line of text saying so. That is normal and expected for this operation rather than a sign the dialog failed to load.
+3. Look at the Inputs section at the top of the dialog. It holds two rows. **FASTQ Datasets** shows the bundle you selected, and **Database** shows the managed human database when it is available, with Replace... and Clear buttons beside it. When no database is selected, the row offers Choose... instead. If the managed database is already selected, leave this row alone. Almost everyone does, because the managed index is the one this operation was built around, and Replace... exists for the rare reader who has built their own Deacon index. Clearing the row leaves the operation with nothing to match against, so the Run button will not proceed until a database is set again. Below the Inputs section, the settings pane holds no controls, only a line of text saying so. That is normal and expected for this operation rather than a sign the dialog failed to load.
 
     <!-- SHOT: human-scrub-dialog -->
 
