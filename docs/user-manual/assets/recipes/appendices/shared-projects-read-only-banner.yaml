@@ -1,0 +1,31 @@
+# Captured from Lungfish Preview 2026.9.13 build 4673.
+# Existing PNG records the 1400 x 900 point main window after Open Read-Only.
+# The opening lock alert named dho, raven.local, process 24234,
+# and creation time 2026-09-08T02:25:32Z. No yellow banner appeared.
+id: shared-projects-read-only-banner
+chapter: appendices/shared-projects
+caption: "The copied demo project opened with Open Read-Only after the lock alert, with (Read Only) after the project name in the window title. This Preview shows no yellow banner."
+viewport_class: none
+app_state:
+  fixture: '/Users/dho/Desktop/lge-docs/LGE Manual Demo Copy.lungfish'
+  open_files: []
+  window_size: [1400, 900]
+  appearance: light
+steps:
+- action: open_application
+  app: Lungfish Preview
+- action: wait_ready
+  signal: main_window_visible
+- action: resize_window
+  size: [1400, 900]
+  # PROSE-ONLY: Create LGE Manual Demo Copy.lungfish with Python shutil.copytree
+  # while the original LGE Manual Demo.lungfish remains open, preserving its live lock.
+  # PROSE-ONLY: Open the copied project and choose Open Read-Only in the lock alert.
+  # Do not recover or remove the lock for this capture.
+  # PROSE-ONLY: Confirm (Read Only) in the copied project's title and capture the window.
+  # The shot ID is retained for existing chapter links; no yellow banner is visible.
+crop:
+  mode: window
+post:
+  retina: true
+  format: png

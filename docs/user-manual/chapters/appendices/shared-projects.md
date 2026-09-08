@@ -13,7 +13,7 @@ entry_points:
   - "CLI: lungfish-cli project migrate"
 shots:
   - id: shared-projects-read-only-banner
-    caption: "A project window opened read-only, with (Read Only) after the project name in the title bar and the yellow project-lock banner across the top naming the lock's owner, host, process, and creation time."
+    caption: "The copied demo project opened with Open Read-Only after the lock alert, with (Read Only) after the project name in the window title. This Preview shows no yellow banner."
 illustrations: []
 glossary_refs: [advisory-lock, bundle, bundle-migration, checksum, exit-status, host-name, json, manifest, process, process-id, project, project-lock, project-store, provenance-sidecar, schema-version, stale-lock, standard-error, transformer, viewport, wall-time]
 features_refs: []
@@ -30,15 +30,15 @@ LGE handles this with a [project lock](../../GLOSSARY.md#project-lock), a small 
 
 The lock works only because every LGE [process](../../GLOSSARY.md#process), meaning one running copy of a program, agrees to check it. That is what the word [advisory](../../GLOSSARY.md#advisory-lock) means here. LGE never asks macOS to refuse anyone access, so a Finder copy, an rsync job, or a Dropbox or Google Drive sync client is not stopped by the lock at all. It coordinates LGE with LGE and nothing else.
 
-When LGE finds a lock it cannot claim, it opens the project read-only. Read-only means you can look at everything and change nothing. Every [viewport](../../GLOSSARY.md#viewport) opens, every bundle can be inspected, and no operation that writes into the project will start, where an operation is a named piece of work LGE runs and reports in the Operations panel. You see the state two ways, in the words `(Read Only)` after the project name in the window title and in a banner across the top of the window naming who holds the lock.
+When LGE finds a lock it cannot claim, it offers to open the project read-only. Read-only means you can look at everything and change nothing. Every [viewport](../../GLOSSARY.md#viewport) opens, every bundle can be inspected, and no operation that writes into the project will start, where an operation is a named piece of work LGE runs and reports in the Operations panel. The words `(Read Only)` after the project name in the window title confirm the state. The opening lock alert identifies the session that holds the lock. The current Preview may show no banner after the project opens.
 
 The second half of this appendix covers [bundle migration](../../GLOSSARY.md#bundle-migration), a different problem with the same audience. A [bundle](../../GLOSSARY.md#bundle) is a folder Finder shows as one icon, so you normally never open one directly, and you would need Finder's Show Package Contents to look inside. Each bundle carries a [manifest](../../GLOSSARY.md#manifest), a small file at the top level of the bundle folder naming what the bundle holds. Manifests carry a [schema version](../../GLOSSARY.md#schema-version), a number saying which layout the file was written to, currently 1.0 for a reference bundle. A project built by an older LGE can hold manifests written to an older layout, and `project migrate` is the command that reports on them.
 
 ## If a project just opened read-only
 
-This is the situation most readers arrive with, so it comes first. Your project window says `(Read Only)` after its name and carries a yellow banner. LGE has found a lock belonging to another session and is protecting the files rather than letting two writers collide.
+This is the situation most readers arrive with, so it comes first. Your project window says `(Read Only)` after its name. If you chose **Open Read-Only** in the opening lock alert, LGE found a lock belonging to another session and is protecting the files rather than letting two writers collide.
 
-The plain fix needs no terminal. Ask whoever has the project open to close it, then close your own window and open the project again. The lock disappears when their session releases it, and your reopened window is writable. The banner names the person and the machine, so it tells you who to ask.
+The plain fix needs no terminal. Ask whoever has the project open to close it, then close your own window and open the project again. The lock disappears when their session releases it, and your reopened window is writable. The opening lock alert names the person and the machine, so it tells you who to ask.
 
 When the other session is genuinely gone and the lock is still there, the dialog LGE shows on opening offers a **Recover and Open** button that clears the lock for you. That button and its warning are described in the next section. Nothing after that section is required for this case. The command line half of this appendix exists for readers who script maintenance runs, and a reader working in the window can stop once the project reopens.
 
@@ -70,15 +70,15 @@ Recovery is safe when the other session is genuinely gone and dangerous when it 
 
 Recovery does not delete the record it displaces. It moves it into a `lock-recovery` folder under the project's hidden `.lungfish` directory, in a uniquely named subfolder, and writes a `recovery.json` beside it. That file holds the reason, the time, the original path, a [checksum](../../GLOSSARY.md#checksum) of the archived bytes, meaning a short fingerprint that changes if the file changes, and the record for the session that performed the recovery. If you later need to work out who was locked out and when, that pair of files is the evidence.
 
-Once a project is open read-only, two things on screen say so. The title bar carries `(Read Only)` after the project name. A yellow banner sits across the top of the window, titled "Project opened read-only", with a detail line naming the lock's tool, its status, its mode, its owner and host, the process id, and the creation time, ending "Project-writing workflows are blocked to protect shared storage."
+Once a project is open read-only, the title bar carries `(Read Only)` after the project name. In Preview 2026.9.13 build 4673, the copied demo project showed that title without a yellow banner. Its opening alert had identified owner `dho`, host `raven.local`, process `24234`, and creation time `2026-09-08T02:25:32Z`. Use the title to confirm the open window's state and the opening alert to identify the lock. A missing banner does not mean that no lock exists.
 
 <!-- SHOT: shared-projects-read-only-banner -->
 
 Try to run something that writes and a sheet appears titled **Project Is Open Read Only**, naming the workflow you tried and telling you to close the other writer or reopen the project after the lock is released. Running a classifier, calling variants, and importing reads are all writing work and all refused. Opening a bundle and scrolling its viewport are not, and stay available throughout.
 
-A project copied while another copy of LGE still has the original open carries that copy's lock inside it, which is the ordinary case this appendix describes rather than a fault. Open the copy and you get exactly the read-only window above, naming a session that has nothing to do with your copy. Recover the lock, or close the session that holds the original, and the copy opens normally.
+A project copied while another copy of LGE still has the original open carries that copy's lock inside it, which is the ordinary case this appendix describes rather than a fault. Open the copy and its opening alert names the session from the original project. Choosing **Open Read-Only** gives the window shown above. Closing the original session does not remove the lock record already copied into the duplicate. Once that session has ended, use the recovery flow to reopen the copy for writing.
 
-One case has nothing to do with sharing. A folder built only by `lungfish-cli`, never opened by the app, has no [project store](../../GLOSSARY.md#project-store), meaning the app's own hidden index of the project's contents, and the app opens it read-only for that reason instead. The title says `(Read Only)` either way, so the banner is what tells the two apart. No banner means no lock, which means the missing project store is the cause.
+One case has nothing to do with sharing. A folder built only by `lungfish-cli`, never opened by the app, has no [project store](../../GLOSSARY.md#project-store), meaning the app's own hidden index of the project's contents, and the app opens it read-only for that reason instead. The title says `(Read Only)` either way and does not identify the cause. Read the opening alert and its details. The absence of a yellow banner cannot distinguish a lock conflict from a missing project store.
 
 ## Before you type anything
 
@@ -123,7 +123,7 @@ Passing `--format json` prints the record itself instead of those three lines. I
 }
 ```
 
-Two fields deserve a note. `machineIdentifier` is a meaningless code standing for the Mac itself, unrelated to any personal information and stable over time. It exists because `host` is not, since a hostname changes when the network changes and the same Mac can report two different names minutes apart. LGE compares the machine identifier first and falls back to comparing hostnames only for records old enough to lack it, which is how it tells a lock taken on this Mac from a lock taken elsewhere. The practical consequence is that a banner or an error can name a host you do not recognise as your own machine.
+Two fields deserve a note. `machineIdentifier` is a meaningless code standing for the Mac itself, unrelated to any personal information and stable over time. It exists because `host` is not, since a hostname changes when the network changes and the same Mac can report two different names minutes apart. LGE compares the machine identifier first and falls back to comparing hostnames only for records old enough to lack it, which is how it tells a lock taken on this Mac from a lock taken elsewhere. The practical consequence is that an opening alert or a CLI error can name a host you do not recognise as your own machine.
 
 The other is `mode`, set by `--mode` and accepting `exclusive`, which is the default, or `maintenance`. It is a label, not a permission level. Nothing in LGE reads the string and grants or withholds anything on the strength of it, so `exclusive` and `maintenance` block writes in exactly the same way and differ only in what they tell a reader.
 
@@ -238,11 +238,11 @@ The bundle's original creation sidecar is left where it is, so the record of how
 Four checks tell you a shared project is in the state you think it is.
 
 1. The window title shows the project name with no `(Read Only)` after it when you expect to be able to write.
-2. A `(Read Only)` title with a yellow banner means a lock. Without a banner it means no project store, the app's own hidden index of the project.
+2. A `(Read Only)` title confirms the window is read-only. The opening alert explains a lock conflict and identifies its owner. The absence of a banner does not establish the cause.
 3. `project lock` on a free project exits 0 and prints three lines, and a second attempt exits 1 naming the owner only while that owner is still running.
 4. `project migrate --dry-run` reports every bundle as `current`, `unreadable` for alignments and trees, or names exactly the ones it would change.
 
-When one disagrees, suspect the project before the app, and start by closing the project window and opening it again. That clears the commonest cause, a lock your own earlier session left behind. If the banner returns, ask the person it names. A folder built outside LGE and never given a project store, or a bundle copied without its provenance, accounts for most of the rest.
+When one disagrees, close the project window and open it again to read the opening alert. If it reports a lock, ask the person it names or follow the recovery guidance after confirming the owning session has ended. If it reports a missing project store, address that separately. Do not infer either cause from whether a banner appears.
 
 ## Next
 
