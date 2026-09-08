@@ -99,9 +99,11 @@ struct FullLengthONTMHCWorkbookProjectionInputDocument: Codable, Equatable, Send
 
 internal struct FullLengthONTMHCReferenceInputManifest: Decodable {
     let recordStore: RecordStore?
+    let annotations: [Annotation]?
 
     enum CodingKeys: String, CodingKey {
         case recordStore = "record_store"
+        case annotations
     }
 
     struct RecordStore: Decodable {
@@ -111,10 +113,20 @@ internal struct FullLengthONTMHCReferenceInputManifest: Decodable {
             case databasePath = "database_path"
         }
     }
+
+    struct Annotation: Decodable {
+        let id: String
+        let databasePath: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case databasePath = "database_path"
+        }
+    }
 }
 
 struct FullLengthONTMHCReferenceCatalogProjection: Codable, Equatable, Sendable {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     let schemaVersion: Int
     let cdnaThreshold: Int
@@ -159,9 +171,10 @@ internal struct FullLengthONTMHCReferenceCatalogInputs: Sendable, Equatable {
     let fastaURL: URL
     let manifestURL: URL?
     let recordStoreURL: URL?
+    let annotationDatabaseURLs: [URL]
 
     var allURLs: [URL] {
-        [fastaURL, manifestURL, recordStoreURL].compactMap { $0 }
+        [fastaURL, manifestURL, recordStoreURL].compactMap { $0 } + annotationDatabaseURLs
     }
 }
 

@@ -104,23 +104,34 @@ extension FullLengthONTMHCGenotypingPipeline {
                     field: "record_store.database_path"
                 ).standardizedFileURL
             }
+            let annotationDatabaseURLs = try (manifest.annotations ?? []).compactMap { annotation -> URL? in
+                guard let databasePath = annotation.databasePath, !databasePath.isEmpty else { return nil }
+                return try BundleManifest.validatedBundleMemberURL(
+                    for: databasePath,
+                    in: source,
+                    field: "annotations[\(annotation.id)].database_path"
+                ).standardizedFileURL
+            }
             return FullLengthONTMHCReferenceCatalogInputs(
                 fastaURL: fasta,
                 manifestURL: manifestURL,
-                recordStoreURL: recordStoreURL
+                recordStoreURL: recordStoreURL,
+                annotationDatabaseURLs: annotationDatabaseURLs
             )
         }
         if MHCAmpliconReferenceBundle.isBundleURL(source) {
             return FullLengthONTMHCReferenceCatalogInputs(
                 fastaURL: fasta,
                 manifestURL: MHCAmpliconReferenceBundle.manifestURL(in: source).standardizedFileURL,
-                recordStoreURL: nil
+                recordStoreURL: nil,
+                annotationDatabaseURLs: []
             )
         }
         return FullLengthONTMHCReferenceCatalogInputs(
             fastaURL: fasta,
             manifestURL: nil,
-            recordStoreURL: nil
+            recordStoreURL: nil,
+            annotationDatabaseURLs: []
         )
     }
 
@@ -140,6 +151,9 @@ extension FullLengthONTMHCGenotypingPipeline {
         }
         if let recordStoreURL = inputs.recordStoreURL {
             argv += ["--record-store", recordStoreURL.path]
+        }
+        for annotationDatabaseURL in inputs.annotationDatabaseURLs {
+            argv += ["--annotation-database", annotationDatabaseURL.path]
         }
         argv += [
             "--cdna-threshold", String(cdnaThreshold),
@@ -168,6 +182,7 @@ extension FullLengthONTMHCGenotypingPipeline {
                 from: Data(contentsOf: outputURL)
             )
             let completedAt = Date()
+            let completenessCounts = Dictionary(grouping: projection.records, by: \.completeness.status)
             return (
                 projection.records,
                 FullLengthONTMHCProvenanceStep(
@@ -178,6 +193,12 @@ extension FullLengthONTMHCGenotypingPipeline {
                         "recordCount": .integer(projection.records.count),
                         "cdnaThreshold": .integer(cdnaThreshold),
                         "moleculeClassSource": .string("reference-metadata-with-length-fallback"),
+                        "referenceCompletenessPolicy": .string(
+                            MHCReferenceCompletenessAssessment.topologyPolicyDescription
+                        ),
+                        "completeReferenceCount": .integer(completenessCounts[.complete]?.count ?? 0),
+                        "incompleteReferenceCount": .integer(completenessCounts[.incomplete]?.count ?? 0),
+                        "unknownReferenceCompletenessCount": .integer(completenessCounts[.unknown]?.count ?? 0),
                     ],
                     inputs: inputs.allURLs,
                     outputs: [outputURL],

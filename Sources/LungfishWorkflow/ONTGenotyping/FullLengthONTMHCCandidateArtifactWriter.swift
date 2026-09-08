@@ -34,6 +34,7 @@ struct FullLengthONTMHCCandidateArtifactWriteRequest: Sendable, Equatable {
     let referenceAlleleFASTAURL: URL
     let rawUnmatchedConsensusesFASTAURL: URL
     let referenceBundleURL: URL?
+    let referenceCatalogProjectionURL: URL?
     let referenceAnnotationInputURLs: [URL]
     let referenceRecords: [MHCReferenceRecord]
     let genotypingEvidence: ONTMHCBAMArtifactPair?
@@ -50,6 +51,7 @@ struct FullLengthONTMHCCandidateArtifactWriteRequest: Sendable, Equatable {
         referenceAlleleFASTAURL: URL,
         rawUnmatchedConsensusesFASTAURL: URL? = nil,
         referenceBundleURL: URL? = nil,
+        referenceCatalogProjectionURL: URL? = nil,
         referenceAnnotationInputURLs: [URL] = [],
         referenceRecords: [MHCReferenceRecord],
         genotypingEvidence: ONTMHCBAMArtifactPair?,
@@ -70,6 +72,7 @@ struct FullLengthONTMHCCandidateArtifactWriteRequest: Sendable, Equatable {
                 )
         ).standardizedFileURL
         self.referenceBundleURL = referenceBundleURL?.standardizedFileURL
+        self.referenceCatalogProjectionURL = referenceCatalogProjectionURL?.standardizedFileURL
         self.referenceAnnotationInputURLs = referenceAnnotationInputURLs.map(\.standardizedFileURL)
         self.referenceRecords = referenceRecords
         self.genotypingEvidence = genotypingEvidence
@@ -420,6 +423,9 @@ struct FullLengthONTMHCCandidateArtifactWriter: @unchecked Sendable {
         let annotationInputDescriptors = try request.referenceAnnotationInputURLs.map {
             try FullLengthONTMHCArtifactDescriptor(url: $0, role: .commandInput, phase: .input)
         }
+        let referenceCatalogDescriptor = try request.referenceCatalogProjectionURL.map {
+            try FullLengthONTMHCArtifactDescriptor(url: $0, role: .commandInput, phase: .input)
+        }
         let stagedStableFASTAURL = stagedRootURL.appendingPathComponent("deduplicated_unmatched_clusters.fasta")
         let stableFASTAStartedAt = Date()
         try writeFASTA(grouped.map { ($0.id, $0.sequence) }, to: stagedStableFASTAURL)
@@ -596,18 +602,22 @@ struct FullLengthONTMHCCandidateArtifactWriter: @unchecked Sendable {
             phase: .staging
         )
         let classificationCompletedAt = Date()
+        var classificationArgv = [
+            "lungfish-in-process", "parse-and-classify-reciprocal-mhc-alignments",
+            "--minimum-aligned-bases", String(request.thresholds.minimumAlignedBases),
+            "--minimum-identity", String(request.thresholds.minimumIdentity),
+            "--minimum-shorter-coverage", String(request.thresholds.minimumShorterCoverage),
+            "--minimum-intron-gap-bases", String(request.thresholds.minimumIntronGapBases),
+            "--novel-distance", "snp-substitutions-only",
+        ]
+        if let referenceCatalogProjectionURL = request.referenceCatalogProjectionURL {
+            classificationArgv += ["--reference-catalog", referenceCatalogProjectionURL.path]
+        }
+        classificationArgv.append(reciprocalViewURL.path)
         transformations.append(.init(
             workflowName: "lungfish-in-process:parse-and-classify-reciprocal-mhc-alignments",
             workflowVersion: WorkflowRun.currentAppVersion,
-            argv: [
-                "lungfish-in-process", "parse-and-classify-reciprocal-mhc-alignments",
-                "--minimum-aligned-bases", String(request.thresholds.minimumAlignedBases),
-                "--minimum-identity", String(request.thresholds.minimumIdentity),
-                "--minimum-shorter-coverage", String(request.thresholds.minimumShorterCoverage),
-                "--minimum-intron-gap-bases", String(request.thresholds.minimumIntronGapBases),
-                "--novel-distance", "snp-substitutions-only",
-                reciprocalViewURL.path,
-            ],
+            argv: classificationArgv,
             resolvedOptions: Self.candidateResolvedOptions(request.thresholds).merging(
                 classificationOutcomeCounts.mapValues(String.init)
             ) { current, _ in current }.merging([
@@ -626,7 +636,7 @@ struct FullLengthONTMHCCandidateArtifactWriter: @unchecked Sendable {
             inputs: [
                 referenceDescriptor, stagedStableDescriptor, reciprocalViewDescriptor,
                 reciprocalBAMDescriptor, reciprocalBAIDescriptor,
-            ],
+            ] + [referenceCatalogDescriptor].compactMap { $0 },
             outputs: [],
             exitStatus: 0,
             startedAt: classificationStartedAt,
@@ -2192,10 +2202,11 @@ private extension FullLengthONTMHCCandidateArtifactWriter {
             "minimumIntronGapBases": String(thresholds.minimumIntronGapBases),
             "closestReferenceRanking": "snp-count-in-shared-aligned-region;then-comparable-bases;then-alignment-score;then-deterministic-reference-evidence-order",
             "provisionalNovelNameMetric": "SNP-substitutions-in-shared-aligned-region;indels-reported-separately-and-not-counted-in-_Nnt_nov-label",
-            "zeroSNPClassificationOrder": "1:exact-end-to-end-genomic-zero-snp=known;2:zero-snp-genomic-shared-sequence-with-incomplete-end-coverage=partial-extension;3:eligible-cdna-zero-snp-structural-extension+no-genomic-zero-snp=extension;4:eligible-cdna-zero-snp-end-to-end=known;5:otherwise-broad-genomic-zero-snp=known;6:otherwise=candidate",
-            "exactGenomicKnownRule": "zero-snp;reference-start=1;full-reference-span;full-query-span;no-I-D-N-S-H",
-            "partialExtensionRule": "genomic-zero-snp-shared-sequence;no-I-D-N;incomplete-reference-or-candidate-end-coverage;no-exact-end-to-end-genomic-zero-snp;cDNA-extension-evidence-retained-when-present",
-            "partialExtensionPrecedence": "exact-genomic-known>partial-extension>extension>legacy-broad-genomic-known",
+            "zeroSNPClassificationOrder": "1:exact-end-to-end-or-annotation-complete-full-reference-genomic-zero-snp=known;2:zero-snp-genomic-shared-sequence-with-incomplete-or-unknown-reference-completeness-or-incomplete-end-coverage=partial-extension;3:eligible-cdna-zero-snp-structural-extension+no-genomic-zero-snp=extension;4:eligible-cdna-zero-snp-end-to-end=known;5:otherwise-broad-genomic-zero-snp=known;6:otherwise=candidate",
+            "exactGenomicKnownRule": "zero-snp;reference-start=1;full-reference-span;full-query-span;no-I-D-N-H;S=none-or-terminal-only-when-reference-completeness=complete",
+            "completeReferenceTerminalSoftClipPolicy": "known-when-full-reference-zero-snp-no-I-D-N-H-and-terminal-S-only",
+            "partialExtensionRule": "genomic-zero-snp-shared-sequence;no-I-D-N;reference-completeness-incomplete-or-unknown-or-candidate-end-coverage-incomplete;no-qualifying-genomic-known-match;cDNA-extension-evidence-retained-when-present",
+            "partialExtensionPrecedence": "complete-aware-genomic-known>partial-extension>extension>legacy-broad-genomic-known",
             "extensionRule": "cdna-coverage>=0.95;each-cdna-deficit<20;no-hard-clip;cluster-flank-or-structural-segment>=20",
             "knownCDNARule": "extension-eligibility;cluster-coverage>=0.95;each-cluster-structural-segment<20",
             "cDNACoverageNumerator": "comparable-query-reference-bases-excluding-cdna-deficit-operations",

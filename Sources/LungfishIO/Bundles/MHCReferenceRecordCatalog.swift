@@ -16,6 +16,77 @@ public enum MHCReferenceClassEvidence: String, Codable, Equatable, Sendable {
     case lengthThresholdFallback
 }
 
+public enum MHCReferenceCompletenessStatus: String, Codable, Equatable, Sendable {
+    case complete
+    case incomplete
+    case unknown
+}
+
+public enum MHCReferenceCompletenessReason: String, Codable, Equatable, Sendable {
+    case annotationTopology
+    case missingAnnotationDatabase
+    case missingAnnotationFeatures
+    case nonGenomicReference
+    case unsupportedLocusTopology
+    case ambiguousAnnotationEvidence
+    case missingOrNoncontinuousExons
+    case unsupportedTerminalExon
+    case missingBoundaryCoverage
+    case missingInterveningIntrons
+    case fuzzyOrIncompleteCDS
+}
+
+public struct MHCReferenceCompletenessAssessment: Codable, Equatable, Sendable {
+    public static let topologyPolicyDescription = "class-I=7,8;DRA=5;DRB,DPA,DPB,DQA,DQB=6"
+
+    public let status: MHCReferenceCompletenessStatus
+    public let reason: MHCReferenceCompletenessReason
+    public let observedExons: [Int]
+    public let observedIntrons: [Int]
+    public let acceptedTerminalExons: [Int]
+    public let annotationTrackIDs: [String]
+
+    public init(
+        status: MHCReferenceCompletenessStatus,
+        reason: MHCReferenceCompletenessReason,
+        observedExons: [Int] = [],
+        observedIntrons: [Int] = [],
+        acceptedTerminalExons: [Int] = [],
+        annotationTrackIDs: [String] = []
+    ) {
+        self.status = status
+        self.reason = reason
+        self.observedExons = observedExons
+        self.observedIntrons = observedIntrons
+        self.acceptedTerminalExons = acceptedTerminalExons
+        self.annotationTrackIDs = annotationTrackIDs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case reason
+        case observedExons
+        case observedIntrons
+        case acceptedTerminalExons
+        case annotationTrackIDs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        status = try values.decode(MHCReferenceCompletenessStatus.self, forKey: .status)
+        reason = try values.decode(MHCReferenceCompletenessReason.self, forKey: .reason)
+        observedExons = try values.decodeIfPresent([Int].self, forKey: .observedExons) ?? []
+        observedIntrons = try values.decodeIfPresent([Int].self, forKey: .observedIntrons) ?? []
+        acceptedTerminalExons = try values.decodeIfPresent([Int].self, forKey: .acceptedTerminalExons) ?? []
+        annotationTrackIDs = try values.decodeIfPresent([String].self, forKey: .annotationTrackIDs) ?? []
+    }
+
+    public static let unknown = MHCReferenceCompletenessAssessment(
+        status: .unknown,
+        reason: .missingAnnotationDatabase
+    )
+}
+
 public struct MHCReferenceRecord: Codable, Equatable, Sendable {
     public let sequenceID: String
     public let alleleName: String
@@ -23,6 +94,7 @@ public struct MHCReferenceRecord: Codable, Equatable, Sendable {
     public let moleculeClass: MHCReferenceMoleculeClass
     public let classEvidence: MHCReferenceClassEvidence
     public let sequenceLength: Int
+    public let completeness: MHCReferenceCompletenessAssessment
 
     public init(
         sequenceID: String,
@@ -30,7 +102,8 @@ public struct MHCReferenceRecord: Codable, Equatable, Sendable {
         locus: String,
         moleculeClass: MHCReferenceMoleculeClass,
         classEvidence: MHCReferenceClassEvidence,
-        sequenceLength: Int
+        sequenceLength: Int,
+        completeness: MHCReferenceCompletenessAssessment = .unknown
     ) {
         self.sequenceID = sequenceID
         self.alleleName = alleleName
@@ -38,6 +111,31 @@ public struct MHCReferenceRecord: Codable, Equatable, Sendable {
         self.moleculeClass = moleculeClass
         self.classEvidence = classEvidence
         self.sequenceLength = sequenceLength
+        self.completeness = completeness
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sequenceID
+        case alleleName
+        case locus
+        case moleculeClass
+        case classEvidence
+        case sequenceLength
+        case completeness
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        sequenceID = try values.decode(String.self, forKey: .sequenceID)
+        alleleName = try values.decode(String.self, forKey: .alleleName)
+        locus = try values.decode(String.self, forKey: .locus)
+        moleculeClass = try values.decode(MHCReferenceMoleculeClass.self, forKey: .moleculeClass)
+        classEvidence = try values.decode(MHCReferenceClassEvidence.self, forKey: .classEvidence)
+        sequenceLength = try values.decode(Int.self, forKey: .sequenceLength)
+        completeness = try values.decodeIfPresent(
+            MHCReferenceCompletenessAssessment.self,
+            forKey: .completeness
+        ) ?? .unknown
     }
 }
 
@@ -48,6 +146,8 @@ public enum MHCReferenceRecordCatalogError: Error, LocalizedError, Equatable, Se
     case unsafeBundlePath(field: String, path: String)
     case recordStoreOpenFailed(path: String, reason: String)
     case recordStoreQueryFailed(path: String, reason: String)
+    case annotationStoreOpenFailed(path: String, reason: String)
+    case annotationStoreQueryFailed(path: String, reason: String)
     case duplicateSequenceID(String)
     case conflictingMoleculeClasses(sequenceID: String, values: [String])
     case unsupportedMoleculeTypeValues(sequenceID: String, values: [String])
@@ -71,6 +171,10 @@ public enum MHCReferenceRecordCatalogError: Error, LocalizedError, Equatable, Se
             return "Could not open the MHC reference record store read-only at \(path): \(reason)"
         case .recordStoreQueryFailed(let path, let reason):
             return "Could not query MHC allele metadata from \(path): \(reason)"
+        case .annotationStoreOpenFailed(let path, let reason):
+            return "Could not open the MHC reference annotation store read-only at \(path): \(reason)"
+        case .annotationStoreQueryFailed(let path, let reason):
+            return "Could not query MHC exon/intron annotations from \(path): \(reason)"
         case .duplicateSequenceID(let sequenceID):
             return "The MHC reference FASTA contains duplicate sequence ID '\(sequenceID)', so metadata cannot be joined unambiguously."
         case .conflictingMoleculeClasses(let sequenceID, let values):
@@ -153,6 +257,19 @@ public struct MHCReferenceRecordCatalog: Equatable, Sendable {
             metadataBySequenceID = [:]
         }
 
+        let annotationFeatureTracks = try (manifest.annotations ?? []).compactMap { annotation -> AnnotationFeatureTrack? in
+            guard let databasePath = annotation.databasePath, !databasePath.isEmpty else { return nil }
+            let databaseURL = try bundleMemberURL(
+                bundleURL: referenceBundleURL,
+                relativePath: databasePath,
+                field: "annotations[\(annotation.id)].database_path"
+            )
+            return AnnotationFeatureTrack(
+                id: annotation.id,
+                featuresBySequenceID: try readReferenceFeatures(from: databaseURL)
+            )
+        }
+
         var seenSequenceIDs = Set<String>()
         var resolvedRecords: [MHCReferenceRecord] = []
         resolvedRecords.reserveCapacity(sequences.count)
@@ -162,7 +279,13 @@ public struct MHCReferenceRecordCatalog: Equatable, Sendable {
                 throw MHCReferenceRecordCatalogError.duplicateSequenceID(sequence.name)
             }
 
-            let metadata = metadataBySequenceID[sequence.name] ?? RecordMetadata()
+            let metadata = (metadataBySequenceID[sequence.name] ?? RecordMetadata())
+                .fillingMissingValues(
+                    from: annotationMetadata(
+                        tracks: annotationFeatureTracks,
+                        sequenceID: sequence.name
+                    )
+                )
             let legacyLocus = legacyIPDMHCLocus(from: sequence.name)
             let alleleName = try resolveAlleleName(
                 sequenceID: sequence.name,
@@ -181,6 +304,13 @@ public struct MHCReferenceRecordCatalog: Equatable, Sendable {
                 annotatedValues: metadata.moleculeTypes,
                 cdnaThreshold: cdnaThreshold
             )
+            let completeness = assessCompletenessAcrossTracks(
+                moleculeClass: classResolution.moleculeClass,
+                locus: locus,
+                sequenceLength: sequence.length,
+                tracks: annotationFeatureTracks,
+                sequenceID: sequence.name
+            )
             resolvedRecords.append(
                 MHCReferenceRecord(
                     sequenceID: sequence.name,
@@ -188,7 +318,8 @@ public struct MHCReferenceRecordCatalog: Equatable, Sendable {
                     locus: locus,
                     moleculeClass: classResolution.moleculeClass,
                     classEvidence: classResolution.evidence,
-                    sequenceLength: sequence.length
+                    sequenceLength: sequence.length,
+                    completeness: completeness
                 )
             )
         }
@@ -201,10 +332,12 @@ private extension MHCReferenceRecordCatalog {
     struct ManifestProjection: Decodable {
         let genome: GenomeProjection?
         let recordStore: RecordStoreProjection?
+        let annotations: [AnnotationProjection]?
 
         enum CodingKeys: String, CodingKey {
             case genome
             case recordStore = "record_store"
+            case annotations
         }
     }
 
@@ -218,6 +351,42 @@ private extension MHCReferenceRecordCatalog {
         enum CodingKeys: String, CodingKey {
             case databasePath = "database_path"
         }
+    }
+
+    struct AnnotationProjection: Decodable {
+        let id: String
+        let databasePath: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case databasePath = "database_path"
+        }
+    }
+
+    struct ReferenceFeature {
+        let type: String
+        let start: Int
+        let end: Int
+        let attributes: String
+
+        var number: Int? {
+            attribute(named: "number").flatMap(Int.init)
+        }
+
+        func attribute(named key: String) -> String? {
+            for pair in attributes.split(separator: ";", omittingEmptySubsequences: true) {
+                let fields = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard fields.count == 2, fields[0] == Substring(key) else { continue }
+                let encoded = String(fields[1])
+                return encoded.removingPercentEncoding ?? encoded
+            }
+            return nil
+        }
+    }
+
+    struct AnnotationFeatureTrack {
+        let id: String
+        let featuresBySequenceID: [String: [ReferenceFeature]]
     }
 
     struct RecordMetadata {
@@ -237,6 +406,33 @@ private extension MHCReferenceRecordCatalog {
                 break
             }
         }
+
+        func fillingMissingValues(from fallback: RecordMetadata) -> RecordMetadata {
+            RecordMetadata(
+                alleles: alleles.isEmpty ? fallback.alleles : alleles,
+                genes: genes.isEmpty ? fallback.genes : genes,
+                moleculeTypes: moleculeTypes.isEmpty ? fallback.moleculeTypes : moleculeTypes
+            )
+        }
+    }
+
+    static func annotationMetadata(
+        tracks: [AnnotationFeatureTrack],
+        sequenceID: String
+    ) -> RecordMetadata {
+        var metadata = RecordMetadata()
+        for feature in tracks.compactMap({ $0.featuresBySequenceID[sequenceID] }).flatMap({ $0 }) {
+            if let allele = feature.attribute(named: "allele") {
+                metadata.append(fieldKey: "feature.allele", value: allele)
+            }
+            if let gene = feature.attribute(named: "gene") {
+                metadata.append(fieldKey: "feature.gene", value: gene)
+            }
+            if let moleculeType = feature.attribute(named: "mol_type") {
+                metadata.append(fieldKey: "feature.mol_type", value: moleculeType)
+            }
+        }
+        return metadata
     }
 
     static func bundleMemberURL(bundleURL: URL, relativePath: String, field: String) throws -> URL {
@@ -311,6 +507,245 @@ private extension MHCReferenceRecordCatalog {
         return result
     }
 
+    static func readReferenceFeatures(from databaseURL: URL) throws -> [String: [ReferenceFeature]] {
+        var database: OpaquePointer?
+        let openFlags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
+        guard sqlite3_open_v2(databaseURL.path, &database, openFlags, nil) == SQLITE_OK,
+              let database else {
+            let reason = database.map { String(cString: sqlite3_errmsg($0)) }
+                ?? "SQLite did not return a connection"
+            if let database { sqlite3_close(database) }
+            throw MHCReferenceRecordCatalogError.annotationStoreOpenFailed(
+                path: databaseURL.path,
+                reason: reason
+            )
+        }
+        defer { sqlite3_close(database) }
+
+        let sql = """
+            SELECT chromosome, type, start, end, COALESCE(attributes, '')
+            FROM annotations
+            WHERE lower(type) IN ('exon', 'intron', 'cds')
+            ORDER BY chromosome, start, end, type
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw MHCReferenceRecordCatalogError.annotationStoreQueryFailed(
+                path: databaseURL.path,
+                reason: String(cString: sqlite3_errmsg(database))
+            )
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var result: [String: [ReferenceFeature]] = [:]
+        while true {
+            let step = sqlite3_step(statement)
+            if step == SQLITE_DONE { break }
+            guard step == SQLITE_ROW,
+                  let sequenceText = sqlite3_column_text(statement, 0),
+                  let typeText = sqlite3_column_text(statement, 1),
+                  let attributesText = sqlite3_column_text(statement, 4) else {
+                throw MHCReferenceRecordCatalogError.annotationStoreQueryFailed(
+                    path: databaseURL.path,
+                    reason: step == SQLITE_ROW
+                        ? "annotations returned an unexpected NULL value"
+                        : String(cString: sqlite3_errmsg(database))
+                )
+            }
+            let sequenceID = String(cString: sequenceText)
+            result[sequenceID, default: []].append(
+                ReferenceFeature(
+                    type: String(cString: typeText),
+                    start: Int(sqlite3_column_int64(statement, 2)),
+                    end: Int(sqlite3_column_int64(statement, 3)),
+                    attributes: String(cString: attributesText)
+                )
+            )
+        }
+        return result
+    }
+
+    static func assessCompleteness(
+        moleculeClass: MHCReferenceMoleculeClass,
+        locus: String,
+        sequenceLength: Int,
+        annotationDatabaseAvailable: Bool,
+        features: [ReferenceFeature],
+        annotationTrackIDs: [String] = []
+    ) -> MHCReferenceCompletenessAssessment {
+        let acceptedTerminalExons = acceptedTerminalExons(for: locus) ?? []
+        let exons = features.filter { $0.type.caseInsensitiveCompare("exon") == .orderedSame }
+        let introns = features.filter { $0.type.caseInsensitiveCompare("intron") == .orderedSame }
+        let observedExons = Array(Set(exons.compactMap(\.number))).sorted()
+        let observedIntrons = Array(Set(introns.compactMap(\.number))).sorted()
+        func assessment(
+            _ status: MHCReferenceCompletenessStatus,
+            _ reason: MHCReferenceCompletenessReason
+        ) -> MHCReferenceCompletenessAssessment {
+            MHCReferenceCompletenessAssessment(
+                status: status,
+                reason: reason,
+                observedExons: observedExons,
+                observedIntrons: observedIntrons,
+                acceptedTerminalExons: acceptedTerminalExons,
+                annotationTrackIDs: annotationTrackIDs.sorted()
+            )
+        }
+
+        guard moleculeClass == .genomicDNA else {
+            return assessment(.incomplete, .nonGenomicReference)
+        }
+        guard annotationDatabaseAvailable else {
+            return assessment(.unknown, .missingAnnotationDatabase)
+        }
+        guard !features.isEmpty else {
+            return assessment(.unknown, .missingAnnotationFeatures)
+        }
+        guard !acceptedTerminalExons.isEmpty else {
+            return assessment(.unknown, .unsupportedLocusTopology)
+        }
+
+        let numberedExons = Dictionary(grouping: exons.compactMap { feature in
+            feature.number.map { ($0, feature) }
+        }, by: \.0)
+        let numberedIntrons = Dictionary(grouping: introns.compactMap { feature in
+            feature.number.map { ($0, feature) }
+        }, by: \.0)
+        guard numberedExons.values.allSatisfy({ $0.count == 1 }),
+              numberedIntrons.values.allSatisfy({ $0.count == 1 }) else {
+            return assessment(.unknown, .ambiguousAnnotationEvidence)
+        }
+        guard let terminalExon = observedExons.last,
+              observedExons == Array(1...terminalExon) else {
+            return assessment(.incomplete, .missingOrNoncontinuousExons)
+        }
+        guard acceptedTerminalExons.contains(terminalExon) else {
+            return assessment(.incomplete, .unsupportedTerminalExon)
+        }
+
+        let exonByNumber = Dictionary(uniqueKeysWithValues: numberedExons.map { ($0.key, $0.value[0].1) })
+        let intronByNumber = Dictionary(uniqueKeysWithValues: numberedIntrons.map { ($0.key, $0.value[0].1) })
+        guard exonByNumber[1]?.start == 0,
+              exonByNumber[terminalExon]?.end == sequenceLength else {
+            return assessment(.incomplete, .missingBoundaryCoverage)
+        }
+        for number in 1..<terminalExon {
+            guard let exon = exonByNumber[number],
+                  let nextExon = exonByNumber[number + 1],
+                  let intron = intronByNumber[number],
+                  intron.start == exon.end,
+                  intron.end == nextExon.start else {
+                return assessment(.incomplete, .missingInterveningIntrons)
+            }
+        }
+
+        let hasCompleteCDS = features.contains { feature in
+            guard feature.type.caseInsensitiveCompare("CDS") == .orderedSame,
+                  feature.start == 0,
+                  feature.end == sequenceLength,
+                  let rawLocation = feature.attribute(named: "_lf_raw_genbank_location") else {
+                return false
+            }
+            return !rawLocation.contains("<") && !rawLocation.contains(">")
+        }
+        guard hasCompleteCDS else {
+            return assessment(.incomplete, .fuzzyOrIncompleteCDS)
+        }
+        return assessment(.complete, .annotationTopology)
+    }
+
+    static func assessCompletenessAcrossTracks(
+        moleculeClass: MHCReferenceMoleculeClass,
+        locus: String,
+        sequenceLength: Int,
+        tracks: [AnnotationFeatureTrack],
+        sequenceID: String
+    ) -> MHCReferenceCompletenessAssessment {
+        guard !tracks.isEmpty else {
+            return assessCompleteness(
+                moleculeClass: moleculeClass,
+                locus: locus,
+                sequenceLength: sequenceLength,
+                annotationDatabaseAvailable: false,
+                features: []
+            )
+        }
+        let contributingTracks = tracks.compactMap { track -> (String, [ReferenceFeature])? in
+            guard let features = track.featuresBySequenceID[sequenceID], !features.isEmpty else { return nil }
+            return (track.id, features)
+        }
+        guard !contributingTracks.isEmpty else {
+            return assessCompleteness(
+                moleculeClass: moleculeClass,
+                locus: locus,
+                sequenceLength: sequenceLength,
+                annotationDatabaseAvailable: true,
+                features: [],
+                annotationTrackIDs: tracks.map(\.id)
+            )
+        }
+        let assessments = contributingTracks.map { trackID, features in
+            assessCompleteness(
+                moleculeClass: moleculeClass,
+                locus: locus,
+                sequenceLength: sequenceLength,
+                annotationDatabaseAvailable: true,
+                features: features,
+                annotationTrackIDs: [trackID]
+            )
+        }
+        let first = assessments[0]
+        let decisionsAgree = assessments.dropFirst().allSatisfy {
+            $0.status == first.status
+                && $0.reason == first.reason
+                && $0.observedExons == first.observedExons
+                && $0.observedIntrons == first.observedIntrons
+                && $0.acceptedTerminalExons == first.acceptedTerminalExons
+        }
+        let contributingTrackIDs = contributingTracks.map(\.0).sorted()
+        guard decisionsAgree else {
+            return MHCReferenceCompletenessAssessment(
+                status: .unknown,
+                reason: .ambiguousAnnotationEvidence,
+                observedExons: Array(Set(assessments.flatMap(\.observedExons))).sorted(),
+                observedIntrons: Array(Set(assessments.flatMap(\.observedIntrons))).sorted(),
+                acceptedTerminalExons: acceptedTerminalExons(for: locus) ?? [],
+                annotationTrackIDs: contributingTrackIDs
+            )
+        }
+        return MHCReferenceCompletenessAssessment(
+            status: first.status,
+            reason: first.reason,
+            observedExons: first.observedExons,
+            observedIntrons: first.observedIntrons,
+            acceptedTerminalExons: first.acceptedTerminalExons,
+            annotationTrackIDs: contributingTrackIDs
+        )
+    }
+
+    static func acceptedTerminalExons(for locus: String) -> [Int]? {
+        guard let gene = locus.split(separator: "-", maxSplits: 1).last?
+            .uppercased(), !gene.isEmpty else { return nil }
+        if matchesLocusFamily(gene, family: "DRA") { return [5] }
+        if ["DRB", "DPA", "DPB", "DQA", "DQB"].contains(where: {
+            matchesLocusFamily(gene, family: $0)
+        }) {
+            return [6]
+        }
+        if ["A", "B", "C", "E", "F", "G", "I"].contains(where: {
+            matchesLocusFamily(gene, family: $0)
+        }) {
+            return [7, 8]
+        }
+        return nil
+    }
+
+    static func matchesLocusFamily(_ gene: String, family: String) -> Bool {
+        guard gene.hasPrefix(family) else { return false }
+        return gene.dropFirst(family.count).allSatisfy(\.isNumber)
+    }
+
     static func resolveAlleleName(
         sequenceID: String,
         description: String?,
@@ -318,7 +753,7 @@ private extension MHCReferenceRecordCatalog {
         legacySequenceID: String?
     ) throws -> String {
         let distinctAnnotated = uniqueSortedValues(annotatedValues)
-        let invalidAnnotated = distinctAnnotated.filter { !isValidMHCAlleleName($0) }
+        let invalidAnnotated = distinctAnnotated.filter { !isValidMHCReferenceAlleleLabel($0) }
         if !invalidAnnotated.isEmpty {
             throw MHCReferenceRecordCatalogError.invalidAlleleAnnotations(
                 sequenceID: sequenceID,
@@ -499,9 +934,23 @@ private extension MHCReferenceRecordCatalog {
     }
 
     static func locus(from alleleName: String) -> String? {
-        guard isValidMHCAlleleName(alleleName),
+        guard isValidMHCReferenceAlleleLabel(alleleName),
               let star = alleleName.firstIndex(of: "*") else { return nil }
         return String(alleleName[..<star])
+    }
+
+    static func isValidMHCReferenceAlleleLabel(_ value: String) -> Bool {
+        if isValidMHCAlleleName(value) { return true }
+        for marker in ["_ext", "_nov"] {
+            guard let range = value.range(of: marker, options: .backwards),
+                  range.upperBound == value.endIndex
+                    || value[range.upperBound...].allSatisfy(isASCIIDigit) else {
+                continue
+            }
+            let baseAllele = String(value[..<range.lowerBound])
+            if isValidMHCAlleleName(baseAllele) { return true }
+        }
+        return false
     }
 
     static func isValidMHCAlleleName(_ value: String) -> Bool {
