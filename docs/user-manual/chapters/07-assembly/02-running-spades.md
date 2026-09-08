@@ -146,7 +146,7 @@ One value is filled in for you on every SKESA run. LGE adds `--min_count 2`, whi
 
 ## Reading the results
 
-The assembly viewport contains a contig table and a detail pane, with the whole-assembly metrics available in the Inspector. Where the detail pane sits depends on a stored layout preference offering three arrangements. Detail-leading, the default, puts the detail pane on the left and the table on the right. List-leading puts the table on the left and the detail pane on the right. Stacked puts the table above the detail pane. The control that changes this sits in the Inspector, the panel down the right-hand side of the window, which you open with **View > Show Inspector** (Cmd-Opt-I) if it is not showing. Every arrangement shows the same information.
+The assembly viewport contains a contig table and a detail pane, with the whole-assembly metrics available in the Inspector. With no contig selected, the table uses the available viewport width. Selecting a contig opens its detail pane. The default arrangement puts that pane on the left and the table on the right. The current Preview does not expose a layout picker in the Inspector. Open the Inspector with **View > Show Inspector** (Cmd-Opt-I) if it is not showing.
 
 Open the Inspector's **Bundle** tab and read **Assembly Context** for the headline metrics. It reports the assembler, read type, contig count, total bases assembled, N50, L50, longest contig, whole-assembly GC percent, tool version, and recorded wall time. The strip above the table may show only wall time in the current Preview. The earlier CLI reference run recorded the following figures. The screenshot shows a separate run with the same assembly statistics and a wall time of 25.6 seconds.
 
