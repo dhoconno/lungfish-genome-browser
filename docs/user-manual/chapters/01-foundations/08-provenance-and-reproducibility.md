@@ -16,7 +16,7 @@ shots:
   - id: inspector-provenance-section
     caption: "The chr20 reference bundle selected in the demo project, with the Inspector's Provenance section open on the right showing Run Summary above the Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON blocks."
   - id: provenance-lineage-step-expanded
-    caption: "The Provenance section's Lineage block with one bcftools step expanded, showing that step's own Command, Inputs, Outputs, Exit Status, and Wall Time."
+    caption: "The Provenance section with HG002 bcftools chosen in the Source picker and one bcftools step expanded in Lineage, showing that step's own Command, Inputs, Outputs, Exit Status, and Wall Time."
   - id: file-export-menu
     caption: "The File > Export submenu open, showing the sequence, annotation, FASTQ, metadata, and image export items above the Provenance submenu."
   - id: provenance-export-folder
@@ -73,11 +73,11 @@ Nothing in this chapter needs its own set of tools installed or any extra softwa
 
 3. Read **Run Summary** at the top. For this bundle it names the workflow `lungfish import fasta`, the tool and its version, when the run was created, an exit status of 0, the wall time, and counts of steps, inputs, and outputs. The final row gives the path of the sidecar file itself.
 
-4. Open the **Lineage** block and expand one step inside it. To see a longer chain, select the `HG002 bcftools` variant track in the Variants tab of the table drawer instead of the reference bundle. The table drawer is the panel that slides up from the bottom of a reference bundle viewport, and clicking a variant track in the sidebar opens it on the Variants tab. That track's chain runs eleven steps, from staging the alignment through `samtools`, four `bcftools` calls, `bgzip`, `tabix`, and the import back into the bundle. Those are internal bookkeeping steps LGE ran on your behalf, so read them as a list of what happened rather than as tools you need to learn.
+4. Open the **Lineage** block and expand one step inside it. To see a longer chain, choose `HG002 bcftools` from the **Source** picker in the Inspector's Provenance section. This picker offers **Bundle** and the named variant tracks attached to the reference bundle. Choosing a track loads that track's own record. That track's chain runs eleven steps, from staging the alignment through `samtools`, four `bcftools` calls, `bgzip`, `tabix`, and the import back into the bundle. Those are internal bookkeeping steps LGE ran on your behalf, so read them as a list of what happened rather than as tools you need to learn.
 
     <!-- SHOT: provenance-lineage-step-expanded -->
 
-5. Select the result you want to hand over, then choose **File > Export > Provenance** and pick a format from the submenu. All six formats work on any result that has a record. Choose **Methods Section...** to draft a paragraph, or **Shell Script...** to give a collaborator something they can run. Methods Section is the one to start with if you are unsure.
+5. To hand over the variant track's record, leave it selected in **Source**, click **Export** in the Provenance section header, and pick a format. For a result selected in the project sidebar, you can also choose **File > Export > Provenance** and pick a format from the submenu. All six formats work on any result that has a record. Choose **Methods Section...** to draft a paragraph, or **Shell Script...** to give a collaborator something they can run. Methods Section is the one to start with if you are unsure.
 
     <!-- SHOT: file-export-menu -->
 
@@ -95,7 +95,7 @@ Nothing in this chapter needs its own set of tools installed or any extra softwa
 
 ## Reading the results
 
-The Provenance section breaks into blocks you can open and close one at a time. They are Run Summary, Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON, and the Warnings block appears only when the run emitted one. A filter field labelled Filter provenance appears above them once a record is long enough, and narrows a long lineage to the steps whose text matches what you type. A Copy button in the section header puts the whole record on the clipboard.
+For a reference bundle with variant tracks, the **Source** picker selects the bundle or an individual track. The Provenance section breaks into blocks you can open and close one at a time. They are Run Summary, Warnings, Lineage, Files & Outputs, Invocation & Options, Runtime, and Raw JSON, and the Warnings block appears only when the run emitted one. A filter field labelled Filter provenance appears above them once a record is long enough, and narrows a long lineage to the steps whose text matches what you type. A Copy button in the section header puts the whole record on the clipboard.
 
 **Run Summary** carries the identity of the run. Steps is the number of tool invocations the record holds. On the demo project's chr20 import that number is small, and on its bcftools variant track it is eleven. Inputs and Outputs here are counts rather than lists, so a run reporting one input and ten outputs read one file and wrote ten. Signatures appears only when the sidecar was signed, which "Signing a record" below covers, and Sidecar gives the path of the record on disk.
 
