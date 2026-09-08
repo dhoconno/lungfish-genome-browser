@@ -15,11 +15,11 @@ shots:
   - id: variants-tab-twelve-columns
     caption: "The Variants tab of the table drawer inside the reference bundle viewport, with the twelve fixed columns from ID through AA Change and both caller tracks loaded."
   - id: variants-preset-chips
-    caption: "The Presets chip strip open above the Variants table, grouped into the Biological Effect, Quality / QC, Population / Frequency, and Sample / Genotype sections."
+    caption: "The Presets chip strip open above the Variants table, showing the first three groups, Biological Effect, Quality / QC, and Population / Frequency."
   - id: variants-search-builder
     caption: "The Variant Query Builder sheet with two rules, one on Call Quality and one on an INFO field, combined with Match All."
   - id: variants-inspector-row
-    caption: "The Inspector filled with one selected variant row, showing its identity, quality and filter, genotype summary, and every INFO key on its own line."
+    caption: "The Inspector filled with one selected variant row, showing its identity, quality, genotype summary, and every INFO key on its own line."
   - id: variants-source-column
     caption: "The Source column separating the bcftools rows from the LoFreq rows at one shared coordinate in the aggregated table."
 illustrations: []
@@ -105,7 +105,7 @@ Every column sorts. Click a header once and the table sorts ascending, click aga
 
 ### Step 3. Select a row and read the Inspector
 
-Click any row in the table. The Inspector on the right fills with that one variant, one field to a line, which is far easier to read than the packed `INFO` string a VCF stores. That string arrives as one run of key-and-value pairs joined by semicolons, in the shape `DP=63;VDB=0.62;MQ=60`, and the Inspector breaks it apart for you. It shows the identifier and type, the position, the alleles, the quality and the filter value, a genotype summary where the file carries [genotypes](../../GLOSSARY.md#genotype), and every [`INFO`](../../GLOSSARY.md#info) key on its own line. It does not repeat the `Consequence` or `AA Change` values, which live in the table's own columns, and it does not print the per-sample [`FORMAT`](../../GLOSSARY.md#format) payload.
+Click any row in the table. The Inspector on the right fills with that one variant, one field to a line, which is far easier to read than the packed `INFO` string a VCF stores. That string arrives as one run of key-and-value pairs joined by semicolons, in the shape `DP=63;VDB=0.62;MQ=60`, and the Inspector breaks it apart for you. It shows the identifier and type, the position, the alleles, the quality, a genotype summary where the file carries [genotypes](../../GLOSSARY.md#genotype), and every [`INFO`](../../GLOSSARY.md#info) key on its own line. It does not repeat the `Consequence` or `AA Change` values, which live in the table's own columns, and it does not print the per-sample [`FORMAT`](../../GLOSSARY.md#format) payload.
 
 Once the table has keyboard focus, the up and down arrow keys move the selection from row to row and the Inspector follows. The table is a standard macOS table, so VoiceOver, the screen reader built into macOS, announces the focused cell and its column, and the column headers are reachable as buttons you can activate to sort without a mouse.
 

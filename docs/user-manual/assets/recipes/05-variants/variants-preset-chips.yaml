@@ -2,8 +2,7 @@
 # App state: The Variants tab's chip strip with the sidebar and Inspector hidden and the window back at 1400 points, showing the Biological Effect, Quality / QC and Population / Frequency groups; the Sample / Genotype group sits past the right edge even at this width.
 id: variants-preset-chips
 chapter: 05-variants/02-reading-the-variant-browser
-caption: The Presets chip strip open above the Variants table, grouped into the Biological Effect, Quality
-  / QC, Population / Frequency, and Sample / Genotype sections.
+caption: "The Presets chip strip open above the Variants table, showing the first three groups, Biological Effect, Quality / QC, and Population / Frequency."
 viewport_class: variant
 app_state:
   fixture: '{demo_project}'
