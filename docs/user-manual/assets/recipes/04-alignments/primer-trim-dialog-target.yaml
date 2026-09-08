@@ -1,14 +1,14 @@
 # Captured from Lungfish Preview 2026.9.13 with capture-window.sh (2026-09 campaign).
-# App state: the Primer Trim dialog Target section, opened against the chr20_10.0-10.5Mb HG002 minimap2 alignment track (no SARS-CoV-2 track was available in this session)
+# App state: Preview build 4673. Unconfigured human alignment target, no scheme selected, Output Track Name empty.
 id: primer-trim-dialog-target
 chapter: 04-alignments/03-primer-trimming
-caption: The Primer Trim dialog's Target section, showing the Alignment Track menu, the pre-filled Output
-  Track Name field, and the note that reads without matching primers are retained.
-viewport_class: alignment
+caption: The Primer Trim dialog opened on the human demo alignment before choosing a matching scheme,
+  showing the Alignment Track menu, empty Output Track Name field, and note that reads without matching
+  primers are retained.
+viewport_class: none
 app_state:
   fixture: '{demo_project}'
-  open_files:
-  - reference: Reference Sequences/chr20_10.0-10.5Mb.lungfishref
+  open_files: []
   window_size:
   - 1400
   - 900
@@ -22,16 +22,14 @@ steps:
   size:
   - 1400
   - 900
-  # PROSE-ONLY: Selected the chr20_10.0-10.5Mb reference bundle in the sidebar
-  # PROSE-ONLY: Clicked the Analysis tab, then the Primer Trim sub-tab
-  # PROSE-ONLY: Clicked Primer-trim BAM...
+  # PROSE-ONLY: Select chr20 reference. Inspector > Analysis > Primer Trim > Primer-trim BAM. Capture before choosing a matching scheme, then Cancel without running.
 crop:
   mode: region
   region:
-  - 465
-  - 210
-  - 539
-  - 479
+  - 790
+  - 428
+  - 540
+  - 480
 post:
   retina: true
   format: png
