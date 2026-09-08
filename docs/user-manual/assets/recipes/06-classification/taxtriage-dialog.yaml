@@ -2,9 +2,7 @@
 # App state: FASTQ/FASTA Operations sheet on the TaxTriage pane for SRR36291587, Prerequisites row (Nextflow, Apple Containerization: Available), Samples section, Kraken2 Database picker
 id: taxtriage-dialog
 chapter: 06-classification/04-running-taxtriage
-caption: The FASTQ/FASTA Operations dialog opened from Tools > Classification > TaxTriage..., showing
-  the Prerequisites row with its Nextflow and Docker indicators, the Samples section with a sample-ID
-  field and a role picker on each row, and the Kraken2 Database picker below.
+caption: "The FASTQ/FASTA Operations dialog opened from Tools > Classification > TaxTriage..., showing the Prerequisites row with its Nextflow indicator and Apple Containerization reported as Available, the Samples section with a sample-ID field and a role picker on each row, and the Kraken2 Database picker below."
 viewport_class: none
 app_state:
   fixture: '{demo_project}'

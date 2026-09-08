@@ -13,7 +13,7 @@ entry_points:
   - "CLI: lungfish-cli taxtriage run"
 shots:
   - id: taxtriage-dialog
-    caption: "The FASTQ/FASTA Operations dialog opened from Tools > Classification > TaxTriage..., showing the Prerequisites row with its Nextflow and Docker indicators, the Samples section with a sample-ID field and a role picker on each row, and the Kraken2 Database picker below."
+    caption: "The FASTQ/FASTA Operations dialog opened from Tools > Classification > TaxTriage..., showing the Prerequisites row with its Nextflow indicator and Apple Containerization reported as Available, the Samples section with a sample-ID field and a role picker on each row, and the Kraken2 Database picker below."
   - id: taxtriage-advanced-settings
     caption: "The dialog's Advanced Settings disclosure expanded, showing the K2 Confidence slider, the Top hits stepper, the Max memory stepper, the Max CPUs stepper, the Skip Krona visualization checkbox, and the Extra arguments field."
   - id: taxtriage-result-table
