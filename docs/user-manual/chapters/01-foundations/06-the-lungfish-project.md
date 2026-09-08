@@ -30,7 +30,7 @@ shots:
   - id: operations-panel-row
     caption: "An Operations Panel row mid-run, expanded to show the CLI command, the log buttons, the running log output, and the progress bar."
   - id: operations-panel-right-click-menu
-    caption: "The right-click menu on an Operations Panel row, showing Run Again, Copy CLI Command, Copy Log, View Log, Reveal Log in Finder, and Cancel."
+    caption: "The right-click menu on a completed trim operation, showing Copy CLI Command, Copy Log, View Log, Reveal Log in Finder, and Clear."
 illustrations: []
 glossary_refs: [project, bundle, reference-bundle, primer-scheme, extraction, project-lock, inspector, operations-panel, sidebar, provenance, provenance-sidecar]
 features_refs: []
