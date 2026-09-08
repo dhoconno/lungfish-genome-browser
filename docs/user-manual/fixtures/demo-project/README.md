@@ -173,3 +173,83 @@ under `set -e` and step 7 never ran.
 Anyone writing the Kraken 2 chapter should screenshot the Kraken 2 report
 rather than a Bracken abundance column, because there is no Bracken output
 in this project.
+
+## September 7 fixture completion additions
+
+The final step of `build-demo-project.sh` invokes `extend-demo-fixtures.py`.
+Run the helper directly to add only these fixtures to an already open demo
+without rerunning mapping, classifiers, or assembly from the main script.
+It never rebuilds the demo and does not write `.project.db`.
+
+```bash
+python3 docs/user-manual/fixtures/demo-project/extend-demo-fixtures.py \
+  ont hifi barcode ont-run flye amplicon nao czid 12s benchmark sra sra-import
+```
+
+The same `LUNGFISH_CLI` and `LUNGFISH_DEMO_ROOT` overrides apply. Successful
+steps with their recorded output present are skipped on later runs. This
+incremental rerun was verified on September 7. A destructive rebuild of the
+live demo was deliberately not performed while screenshot work was active.
+
+New paths relative to `LGE Manual Demo.lungfish` are:
+
+| Fixture | Output | Observed result |
+| --- | --- | --- |
+| Public HG002 ONT mitochondrial reads | `Imports/HG002.chrM.ont.lungfishfastq` | 950 reads |
+| Public HG002 HiFi mitochondrial reads | `Imports/HG002.chrM.hifi.lungfishfastq` | 363 reads |
+| Public HG002 ONT run folder | `ont-run/barcode01.lungfishfastq` | 950 unprocessed reads with native run and child-bundle provenance |
+| Public HG002 Flye assembly | `Analyses/HG002-chrM-flye` | Human mitochondrial ONT reads assembled by Flye 2.9.6 with four threads |
+| Public HG002 ONT barcode file | `Imports/HG002_chrM_pass_barcode01_0.lungfishfastq` | Barcode01 FASTQ imported with platform ONT |
+| Constructed HG002 12S teaching read subset | `Imports/HG002-12S-amplicon.lungfishfastq` | 631 reads |
+| Primate 12S exact matching result | `Analyses/HG002-12S.lungfish12s` | 173 oriented reads, 110 human matches, 63 unresolved |
+| Existing NAO-MGS test report | `Analyses/naomgs-nao-mgs-demo` | 35 hits, five samples, four distinct taxa |
+| Existing CZ-ID test report | `Classifications/czid-demo.lungfishtax` | Three rows, reported pipeline 8.4 |
+| Public HG002 GIAB benchmark | `HG002.chr20.10.0-10.5Mb.benchmark.vcf.gz` | 961 variants, companion index |
+| Public SRA run SRR32909537 | `Imports/SRR32909537.lungfishfastq` | Paired FASTQ downloaded through ENA and imported |
+
+NAO-MGS and CZ-ID are existing repository test reports. They are display
+fixtures, not newly executed surveillance analyses or newly downloaded public
+study outputs. The NAO report has four distinct taxa. Do not describe it as
+seven taxa to match the older capture specification. Reference fetching is
+explicitly disabled for this report import.
+
+The barcode CLI step imports the supplied barcode01 FASTQ directly. It does
+not claim to recreate the GUI ONT Run Folder workflow or its run-level
+metadata. Use the original `hg002-long-reads/ont-run` folder when capturing
+that import sheet. The separate `ont-run` step imports the run folder through
+`lungfish-cli fastq import-ont` and writes the native run-level metadata directly
+to `ont-run`, reproducing the captured folder layout without a processing
+recipe. The `flye` step uses the public HG002 ONT mitochondrial FASTQ. Run only
+`python3 docs/user-manual/fixtures/demo-project/extend-demo-fixtures.py ont-run flye`
+to create or verify those two human fixtures. Existing outputs are verified
+against their native provenance and skipped even if they predate the helper
+audit. Missing metadata, missing payloads, or mismatched file identities stop
+the step instead of overwriting an existing result. The 12S fixture is the constructed teaching subset described
+in `../primate-12s/README.md`, not a published amplicon sequencing study.
+The benchmark is the coordinate-shifted public GIAB subset documented in
+`../hg002-chr20/README.md`, imported as a standalone VCF rather than a newly
+called or simulated variant set.
+
+Every command retains native CLI provenance. The helper also writes the
+actual argv, shell command, CLI version and binary SHA-256, runtime identity,
+options, input/output SHA-256 and byte sizes, status, wall time and logs into
+`LGE Manual Demo.build/fixture-provenance/<step>/execution.json`. Bundles and
+result directories receive a copy named `fixture-execution.json`. Native
+provenance retains resolved thread counts and managed tool environments.
+The SRA bundle additionally keeps `provenance/source-sra-download.json` with
+the original download receipt and final imported payload checksums. Downloaded
+FASTQs remain under `LGE Manual Demo.build/_scratch/SRR32909537`.
+
+Verification found all 43 native output records across the eight new bundles
+at their final stored paths with matching SHA-256 values and successful exit
+status. The verification record lives at
+`LGE Manual Demo.build/fixture-provenance/verification.json`. Python syntax,
+shell syntax, and the complete incremental helper rerun passed. No screenshot,
+chapter, recipe, or Williams-project files are modified by this helper.
+
+The ONT run and Flye additions were separately verified at their final paths.
+ONT has two linked native sidecars and five distinct recorded files, and Flye
+has one sidecar and five recorded files. Their recorded SHA-256 values, byte
+sizes, options, versions, runtime identities, exit status, and wall time were
+checked. The existing-output path was exercised with an unavailable CLI path
+to confirm it verifies and skips without starting another scientific run.
