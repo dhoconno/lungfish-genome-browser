@@ -20,7 +20,7 @@ shots:
   - id: kraken2-advanced-settings
     caption: "The dialog's Advanced Settings disclosure expanded, showing the Confidence slider, the Min hit groups stepper, the Threads stepper, the Memory mapping checkbox, and the Extra arguments field."
   - id: kraken2-taxonomy-viewport
-    caption: "The taxonomy viewport after classifying SRR36291587, with the breadcrumb bar running across the top of both panes, the sunburst on the left, and the per-taxon table on the right showing its Filter taxa... field and its Bracken column."
+    caption: "The taxonomy viewport after classifying SRR36291587, with the breadcrumb bar running across the top of both panes, the sunburst on the left, and the per-taxon table on the right showing its Filter taxa... field."
   - id: kraken2-drilldown-coronaviridae
     caption: "The sunburst re-centred on Coronaviridae after a double-click, with the breadcrumb bar showing the path back to the root."
   - id: kraken2-extract-reads
