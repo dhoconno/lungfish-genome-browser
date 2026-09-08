@@ -964,6 +964,15 @@ final class FullLengthONTMHCCandidateArtifactWriterTests: XCTestCase {
         let classification = try XCTUnwrap(
             transformations["lungfish-in-process:parse-and-classify-reciprocal-mhc-alignments"]
         )
+        XCTAssertTrue(classification.argv.indices.dropLast().contains { index in
+            classification.argv[index] == "--reference-catalog"
+                && classification.argv[classification.argv.index(after: index)] == fixture.referenceCatalogURL.path
+        })
+        let catalogInput = try XCTUnwrap(
+            classification.inputs.first { $0.path == fixture.referenceCatalogURL.path }
+        )
+        XCTAssertFalse(catalogInput.sha256.isEmpty)
+        XCTAssertGreaterThan(catalogInput.byteSize, 0)
         XCTAssertEqual(classification.resolvedOptions["minimumAlignedBases"], "1000")
         XCTAssertEqual(classification.resolvedOptions["minimumIdentity"], "0.75")
         XCTAssertEqual(classification.resolvedOptions["minimumShorterCoverage"], "0.7")
@@ -980,7 +989,7 @@ final class FullLengthONTMHCCandidateArtifactWriterTests: XCTestCase {
         XCTAssertNil(classification.resolvedOptions["zeroSNPIndelClassification"])
         XCTAssertEqual(
             classification.resolvedOptions["zeroSNPClassificationOrder"],
-            "1:exact-end-to-end-genomic-zero-snp=known;2:zero-snp-genomic-shared-sequence-with-incomplete-end-coverage=partial-extension;3:eligible-cdna-zero-snp-structural-extension+no-genomic-zero-snp=extension;4:eligible-cdna-zero-snp-end-to-end=known;5:otherwise-broad-genomic-zero-snp=known;6:otherwise=candidate"
+            "1:exact-end-to-end-or-annotation-complete-full-reference-genomic-zero-snp=known;2:zero-snp-genomic-shared-sequence-with-incomplete-or-unknown-reference-completeness-or-incomplete-end-coverage=partial-extension;3:eligible-cdna-zero-snp-structural-extension+no-genomic-zero-snp=extension;4:eligible-cdna-zero-snp-end-to-end=known;5:otherwise-broad-genomic-zero-snp=known;6:otherwise=candidate"
         )
         XCTAssertEqual(
             classification.resolvedOptions["extensionRule"],
@@ -989,15 +998,19 @@ final class FullLengthONTMHCCandidateArtifactWriterTests: XCTestCase {
         XCTAssertEqual(classification.resolvedOptions["documentSchemaVersion"], "5")
         XCTAssertEqual(
             classification.resolvedOptions["exactGenomicKnownRule"],
-            "zero-snp;reference-start=1;full-reference-span;full-query-span;no-I-D-N-S-H"
+            "zero-snp;reference-start=1;full-reference-span;full-query-span;no-I-D-N-H;S=none-or-terminal-only-when-reference-completeness=complete"
+        )
+        XCTAssertEqual(
+            classification.resolvedOptions["completeReferenceTerminalSoftClipPolicy"],
+            "known-when-full-reference-zero-snp-no-I-D-N-H-and-terminal-S-only"
         )
         XCTAssertEqual(
             classification.resolvedOptions["partialExtensionRule"],
-            "genomic-zero-snp-shared-sequence;no-I-D-N;incomplete-reference-or-candidate-end-coverage;no-exact-end-to-end-genomic-zero-snp;cDNA-extension-evidence-retained-when-present"
+            "genomic-zero-snp-shared-sequence;no-I-D-N;reference-completeness-incomplete-or-unknown-or-candidate-end-coverage-incomplete;no-qualifying-genomic-known-match;cDNA-extension-evidence-retained-when-present"
         )
         XCTAssertEqual(
             classification.resolvedOptions["partialExtensionPrecedence"],
-            "exact-genomic-known>partial-extension>extension>legacy-broad-genomic-known"
+            "complete-aware-genomic-known>partial-extension>extension>legacy-broad-genomic-known"
         )
         XCTAssertEqual(classification.resolvedOptions["partialExtensionOutcomeCount"], "0")
         XCTAssertEqual(
@@ -2401,6 +2414,7 @@ private extension FullLengthONTMHCCandidateArtifactWriterTests {
         let toolsURL: URL
         let referenceFASTAURL: URL
         let referenceAnnotationURL: URL
+        let referenceCatalogURL: URL
         var additionalSAM = ""
 
         let novelSequence = String(repeating: "A", count: 1_200)
@@ -2442,11 +2456,13 @@ private extension FullLengthONTMHCCandidateArtifactWriterTests {
             toolsURL = rootURL.appendingPathComponent("tools", isDirectory: true)
             referenceFASTAURL = rootURL.appendingPathComponent("reference.fa")
             referenceAnnotationURL = rootURL.appendingPathComponent("reference-annotations.json")
+            referenceCatalogURL = rootURL.appendingPathComponent("mhc-reference-catalog.json")
             try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: workURL, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: toolsURL, withIntermediateDirectories: true)
             try Data(">ref-genomic\n\(String(repeating: "A", count: 1_200))\n>ref-cdna\n\(String(repeating: "C", count: 1_000))\n".utf8).write(to: referenceFASTAURL)
             try Data("{\"schemaVersion\":1}\n".utf8).write(to: referenceAnnotationURL)
+            try Data("{\"schemaVersion\":2,\"records\":[]}\n".utf8).write(to: referenceCatalogURL)
             try writeExecutable(Self.minimapScript, to: toolsURL.appendingPathComponent("minimap2"))
             try writeExecutable(Self.samtoolsScript, to: toolsURL.appendingPathComponent("samtools"))
         }
@@ -2499,6 +2515,7 @@ private extension FullLengthONTMHCCandidateArtifactWriterTests {
                 observations: observations,
                 referenceAlleleFASTAURL: referenceFASTAURL,
                 rawUnmatchedConsensusesFASTAURL: rawInternalURL,
+                referenceCatalogProjectionURL: referenceCatalogURL,
                 referenceAnnotationInputURLs: [referenceAnnotationURL],
                 referenceRecords: referenceRecords ?? defaultReferenceRecords,
                 genotypingEvidence: genotypingEvidence,

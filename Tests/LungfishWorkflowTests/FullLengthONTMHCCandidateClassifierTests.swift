@@ -21,6 +21,87 @@ final class FullLengthONTMHCCandidateClassifierTests: XCTestCase {
         sequenceLength: 1_000
     )
 
+    func testCompleteEightExonGenomicReferenceIgnoresTerminalPrimerBarcodeFlanks() throws {
+        let reference = completeGenomicReference(
+            sequenceID: "PROV014ff",
+            alleleName: "Mamu-E*02:05:ext01",
+            sequenceLength: 3_186,
+            terminalExon: 8
+        )
+        let cluster = makeCluster(
+            sequenceLength: 3_690,
+            alignments: [alignment(reference: reference, cigar: "218S3186=286S")]
+        )
+
+        guard case .known(let calls) = try FullLengthONTMHCCandidateClassifier().classify(cluster) else {
+            return XCTFail("Expected the complete genomic allele to remain known")
+        }
+        XCTAssertEqual(calls.map(\.reference.sequenceID), ["PROV014ff"])
+    }
+
+    func testCompleteSevenExonGenomicReferenceIgnoresTerminalPrimerBarcodeFlanks() throws {
+        let reference = completeGenomicReference(
+            sequenceID: "PROV34221",
+            alleleName: "Mamu-E*02:13:ext01",
+            sequenceLength: 2_551,
+            terminalExon: 7
+        )
+        let cluster = makeCluster(
+            sequenceLength: 3_040,
+            alignments: [alignment(reference: reference, cigar: "189S2551=300S")]
+        )
+
+        guard case .known(let calls) = try FullLengthONTMHCCandidateClassifier().classify(cluster) else {
+            return XCTFail("Expected the complete seven-exon genomic allele to remain known")
+        }
+        XCTAssertEqual(calls.map(\.reference.sequenceID), ["PROV34221"])
+    }
+
+    func testIncompleteGenomicReferenceWithTerminalFlankRemainsPartialExtension() throws {
+        let reference = MHCReferenceRecord(
+            sequenceID: "NHP01629",
+            alleleName: "Mamu-E*02:11:01:01",
+            locus: "Mamu-E",
+            moleculeClass: .genomicDNA,
+            classEvidence: .annotatedMetadata,
+            sequenceLength: 3_186,
+            completeness: .init(
+                status: .incomplete,
+                reason: .missingInterveningIntrons,
+                observedExons: Array(1...8),
+                observedIntrons: [2, 3, 4, 5, 6],
+                acceptedTerminalExons: [7, 8]
+            )
+        )
+        let cluster = makeCluster(
+            sequenceLength: 3_690,
+            alignments: [alignment(reference: reference, cigar: "218S3186=286S")]
+        )
+
+        guard case .candidate(let candidate) = try FullLengthONTMHCCandidateClassifier().classify(cluster) else {
+            return XCTFail("Expected incomplete genomic reference to remain a candidate")
+        }
+        XCTAssertEqual(candidate.classification, .partialExtension)
+    }
+
+    func testCompleteGenomicReferenceDoesNotPermitInternalSoftClipPromotion() throws {
+        let reference = completeGenomicReference(
+            sequenceID: "PROV014ff",
+            alleleName: "Mamu-E*02:05:ext01",
+            sequenceLength: 3_186,
+            terminalExon: 8
+        )
+        let cluster = makeCluster(
+            sequenceLength: 3_196,
+            alignments: [alignment(reference: reference, cigar: "100=10S3086=")]
+        )
+
+        guard case .candidate(let candidate) = try FullLengthONTMHCCandidateClassifier().classify(cluster) else {
+            return XCTFail("Expected an internally clipped alignment to remain a candidate")
+        }
+        XCTAssertEqual(candidate.classification, .partialExtension)
+    }
+
     func testZeroSNPGenomicAlignmentWithIndelsIsKnown() throws {
         let cluster = makeCluster(
             sequenceLength: 1_250,
@@ -1190,6 +1271,29 @@ final class FullLengthONTMHCCandidateClassifierTests: XCTestCase {
             sequenceLength: sequenceLength,
             observations: observations ?? [observation(stableClusterID: stableClusterID)],
             alignments: alignments
+        )
+    }
+
+    private func completeGenomicReference(
+        sequenceID: String,
+        alleleName: String,
+        sequenceLength: Int,
+        terminalExon: Int
+    ) -> MHCReferenceRecord {
+        MHCReferenceRecord(
+            sequenceID: sequenceID,
+            alleleName: alleleName,
+            locus: "Mamu-E",
+            moleculeClass: .genomicDNA,
+            classEvidence: .annotatedMetadata,
+            sequenceLength: sequenceLength,
+            completeness: .init(
+                status: .complete,
+                reason: .annotationTopology,
+                observedExons: Array(1...terminalExon),
+                observedIntrons: Array(1..<terminalExon),
+                acceptedTerminalExons: [7, 8]
+            )
         )
     }
 

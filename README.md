@@ -139,10 +139,36 @@ cd lungfish-genome-explorer
 swift build -c release --arch arm64
 ```
 
-`python3 scripts/release/release.py debug` assembles a self-contained
-`Lungfish Debug.app` for local work. Packaging, notarization, Sparkle
-updates, and fork configuration are covered in
-[docs/development.md](docs/development.md).
+## Debug build
+
+Run `python3 scripts/release/release.py debug` for incremental local work. The
+coordinator selects supported Xcode and assembles the GUI and CLI from one
+native build graph. Add `--portable` for the full relocation and
+self-containment diagnostic, and use `--jobs N` to bound build parallelism.
+Neither option runs the unit or UI suites.
+
+The upstream result is `build/Debug/Lungfish Debug.app`, displayed as
+`Lungfish Genome Explorer Debug`, with bundle identifier
+`com.lungfish.browser.debug`; its exact identity is defined by
+`config/release-contract.json`. It is locally ad-hoc signed, not Developer ID
+signed, and not notarized. The app is self-contained and relocatable, with no
+checkout or `.build` dependency. Debug is not a release and has no updater or
+publication path.
+
+Release operators use only this seven-command front door:
+
+```text
+python3 scripts/release/release.py debug [--portable] [--jobs N]
+python3 scripts/release/release.py configure-fork
+python3 scripts/release/release.py configure-machine
+python3 scripts/release/release.py setup [--profile PATH]
+python3 scripts/release/release.py doctor [--profile PATH]
+python3 scripts/release/release.py package preview|stable
+python3 scripts/release/release.py publish preview|stable [--profile PATH]
+```
+
+Packaging, notarization, Sparkle updates, machine setup, and fork configuration
+are covered in [docs/development.md](docs/development.md).
 
 ## Reporting issues
 

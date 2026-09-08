@@ -874,15 +874,29 @@ public struct FullLengthONTMHCCandidateClassifier: Sendable {
               reference.moleculeClass == .genomicDNA else {
             return false
         }
-        return hit.metrics.snps == 0
+        let isFullReferenceIdentity = hit.metrics.snps == 0
             && hit.input.evidence.referenceStart == 1
             && hit.metrics.referenceSpan == reference.sequenceLength
             && hit.metrics.querySpan == clusterLength
             && hit.metrics.insertedBases == 0
             && hit.metrics.deletedBases == 0
             && hit.metrics.skippedReferenceBases == 0
-            && hit.metrics.softClippedBases == 0
             && hit.metrics.hardClippedBases == 0
+        guard isFullReferenceIdentity else { return false }
+
+        if hit.metrics.softClippedBases == 0 {
+            return true
+        }
+        return reference.completeness.status == .complete
+            && hasOnlyTerminalSoftClips(hit.input.evidence.cigar)
+    }
+
+    private func hasOnlyTerminalSoftClips(_ cigar: String) -> Bool {
+        let operations = Array(cigar.filter { !$0.isNumber })
+        guard !operations.isEmpty else { return false }
+        return operations.enumerated().allSatisfy { index, operation in
+            operation != "S" || index == operations.startIndex || index == operations.index(before: operations.endIndex)
+        }
     }
 
     private func isPartialEndCoverageGenomicMatch(

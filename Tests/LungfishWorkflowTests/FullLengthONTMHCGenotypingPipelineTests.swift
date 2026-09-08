@@ -698,11 +698,14 @@ final class FullLengthONTMHCGenotypingPipelineTests: XCTestCase {
         let bundle = root.appendingPathComponent("annotated.lungfishref", isDirectory: true)
         let genomeDirectory = bundle.appendingPathComponent("genome", isDirectory: true)
         let metadataDirectory = bundle.appendingPathComponent("metadata", isDirectory: true)
+        let annotationsDirectory = bundle.appendingPathComponent("annotations", isDirectory: true)
         try FileManager.default.createDirectory(at: genomeDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: metadataDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: annotationsDirectory, withIntermediateDirectories: true)
         let fastaURL = genomeDirectory.appendingPathComponent("reference.fasta")
         let manifestURL = bundle.appendingPathComponent("manifest.json")
         let databaseURL = metadataDirectory.appendingPathComponent("records.sqlite")
+        let annotationDatabaseURL = annotationsDirectory.appendingPathComponent("features.sqlite")
         try ">record-1 fallback-description\nACGTACGT\n".write(
             to: fastaURL, atomically: true, encoding: .utf8
         )
@@ -734,6 +737,13 @@ final class FullLengthONTMHCGenotypingPipelineTests: XCTestCase {
             "schema_version": 1,
             "record_count": 1,
         ]
+        manifestObject["annotations"] = [[
+            "id": "genbank-features",
+            "name": "GenBank features",
+            "path": "annotations/features.sqlite",
+            "database_path": "annotations/features.sqlite",
+            "annotation_type": "gene",
+        ]]
         try JSONSerialization.data(withJSONObject: manifestObject, options: [.prettyPrinted, .sortedKeys])
             .write(to: manifestURL, options: .atomic)
         var database: OpaquePointer?
@@ -762,6 +772,27 @@ final class FullLengthONTMHCGenotypingPipelineTests: XCTestCase {
             XCTFail(String(cString: sqliteError))
         }
         XCTAssertEqual(sqlite3_close(database), SQLITE_OK)
+        var annotationDatabase: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(annotationDatabaseURL.path, &annotationDatabase), SQLITE_OK)
+        guard let annotationDatabase else { return XCTFail("Could not create SQLite annotation store") }
+        let annotationSchemaAndRows = """
+        CREATE TABLE db_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO db_metadata VALUES ('schema_version', '4');
+        CREATE TABLE annotations (
+            name TEXT NOT NULL, type TEXT NOT NULL, chromosome TEXT NOT NULL,
+            start INTEGER NOT NULL, end INTEGER NOT NULL, strand TEXT NOT NULL DEFAULT '.',
+            attributes TEXT, block_count INTEGER, block_sizes TEXT, block_starts TEXT,
+            gene_name TEXT
+        );
+        INSERT INTO annotations (name,type,chromosome,start,end,strand,attributes) VALUES ('exon 1', 'exon', 'record-1', 0, 8, '.', 'number=1');
+        INSERT INTO annotations (name,type,chromosome,start,end,strand,attributes) VALUES ('CDS', 'CDS', 'record-1', 0, 8, '.', '_lf_raw_genbank_location=1..8');
+        """
+        XCTAssertEqual(sqlite3_exec(annotationDatabase, annotationSchemaAndRows, nil, nil, &sqliteError), SQLITE_OK)
+        if let sqliteError {
+            defer { sqlite3_free(sqliteError) }
+            XCTFail(String(cString: sqliteError))
+        }
+        XCTAssertEqual(sqlite3_close(annotationDatabase), SQLITE_OK)
 
         let (request, pipeline) = try makeFakeFullLengthRun(
             root: root,
@@ -776,7 +807,7 @@ final class FullLengthONTMHCGenotypingPipelineTests: XCTestCase {
         let step = try XCTUnwrap(imports.first)
         XCTAssertEqual(imports.count, 1, "The writer must not synthesize a second catalog import.")
         XCTAssertEqual(Set(step.inputs.map(\.path)), Set([
-            fastaURL.path, manifestURL.path, databaseURL.path,
+            fastaURL.path, manifestURL.path, databaseURL.path, annotationDatabaseURL.path,
         ]))
         for input in step.inputs {
             XCTAssertNotNil(input.checksumSHA256)
@@ -785,7 +816,12 @@ final class FullLengthONTMHCGenotypingPipelineTests: XCTestCase {
         XCTAssertEqual(value(after: "--reference-fasta", in: step.argv), fastaURL.path)
         XCTAssertEqual(value(after: "--reference-bundle-manifest", in: step.argv), manifestURL.path)
         XCTAssertEqual(value(after: "--record-store", in: step.argv), databaseURL.path)
+        XCTAssertEqual(value(after: "--annotation-database", in: step.argv), annotationDatabaseURL.path)
         XCTAssertEqual(value(after: "--cdna-threshold", in: step.argv), "2000")
+        XCTAssertEqual(step.resolvedOptions["referenceCompletenessPolicy"], .string("class-I=7,8;DRA=5;DRB,DPA,DPB,DQA,DQB=6"))
+        XCTAssertEqual(step.resolvedOptions["completeReferenceCount"], .integer(0))
+        XCTAssertEqual(step.resolvedOptions["incompleteReferenceCount"], .integer(1))
+        XCTAssertEqual(step.resolvedOptions["unknownReferenceCompletenessCount"], .integer(0))
         XCTAssertNotNil(step.startedAt)
         XCTAssertNotNil(step.completedAt)
         XCTAssertGreaterThanOrEqual(step.wallTimeSeconds ?? -1, 0)
@@ -799,6 +835,8 @@ final class FullLengthONTMHCGenotypingPipelineTests: XCTestCase {
         )
         XCTAssertEqual(projection.records.first?.alleleName, "Mafa-A1*018:01:01:01")
         XCTAssertEqual(projection.records.first?.classEvidence, .annotatedMetadata)
+        XCTAssertEqual(projection.schemaVersion, 2)
+        XCTAssertEqual(projection.records.first?.completeness.status, .incomplete)
     }
 
     func testMalformedReferenceCatalogFailsBeforeSampleStaging() async throws {

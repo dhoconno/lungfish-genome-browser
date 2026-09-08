@@ -60,7 +60,12 @@ final class MHCReferenceRecordCatalogTests: XCTestCase {
                     locus: "Mafa-A1",
                     moleculeClass: .genomicDNA,
                     classEvidence: .annotatedMetadata,
-                    sequenceLength: 12
+                    sequenceLength: 12,
+                    completeness: .init(
+                        status: .unknown,
+                        reason: .missingAnnotationDatabase,
+                        acceptedTerminalExons: [7, 8]
+                    )
                 ),
                 MHCReferenceRecord(
                     sequenceID: "NHP01638",
@@ -68,11 +73,265 @@ final class MHCReferenceRecordCatalogTests: XCTestCase {
                     locus: "Mafa-B",
                     moleculeClass: .cDNA,
                     classEvidence: .annotatedMetadata,
-                    sequenceLength: 30
+                    sequenceLength: 30,
+                    completeness: .init(
+                        status: .incomplete,
+                        reason: .nonGenomicReference,
+                        acceptedTerminalExons: [7, 8]
+                    )
                 ),
             ]
         )
         XCTAssertEqual(catalog.record(sequenceID: "NHP01222"), catalog.records[0])
+    }
+
+    func testCompleteEightExonClassIAnnotationTopologyIsComplete() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "PROV014ff",
+            alleleName: "Mamu-E*02:05:ext01",
+            moleculeType: "genomic DNA",
+            exonCount: 8
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "PROV014ff")
+        )
+
+        XCTAssertEqual(record.completeness.status, .complete)
+        XCTAssertEqual(record.completeness.reason, .annotationTopology)
+        XCTAssertEqual(record.completeness.observedExons, [1, 2, 3, 4, 5, 6, 7, 8])
+        XCTAssertEqual(record.completeness.observedIntrons, [1, 2, 3, 4, 5, 6, 7])
+        XCTAssertEqual(record.completeness.acceptedTerminalExons, [7, 8])
+    }
+
+    func testAnnotationTrackResolvesCuratedAlleleWithoutRecordStoreOrFASTADescription() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "Mamu-E*02:28_ext1|PV815705",
+            alleleName: "Mamu-E*02:28_ext1",
+            moleculeType: "genomic DNA",
+            exonCount: 8,
+            includeRecordMetadata: false,
+            includeFASTADescription: false
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "Mamu-E*02:28_ext1|PV815705")
+        )
+
+        XCTAssertEqual(record.alleleName, "Mamu-E*02:28_ext1")
+        XCTAssertEqual(record.locus, "Mamu-E")
+        XCTAssertEqual(record.completeness.status, .complete)
+        XCTAssertEqual(record.completeness.observedExons, [1, 2, 3, 4, 5, 6, 7, 8])
+    }
+
+    func testCompleteSevenExonClassIAnnotationTopologyIsComplete() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "PROV34221",
+            alleleName: "Mamu-E*02:13:ext01",
+            moleculeType: "genomic DNA",
+            exonCount: 7
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "PROV34221")
+        )
+
+        XCTAssertEqual(record.completeness.status, .complete)
+        XCTAssertEqual(record.completeness.acceptedTerminalExons, [7, 8])
+    }
+
+    func testCompleteSixExonDRBAnnotationTopologyIsComplete() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "NHP00448",
+            alleleName: "Mamu-DRB1*03:03:01:01",
+            moleculeType: "genomic DNA",
+            exonCount: 6
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "NHP00448")
+        )
+
+        XCTAssertEqual(record.completeness.status, .complete)
+        XCTAssertEqual(record.completeness.acceptedTerminalExons, [6])
+    }
+
+    func testUnsupportedLocusBeginningWithClassILetterRemainsUnknown() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "B2M-record",
+            alleleName: "Mamu-B2M*01:01",
+            moleculeType: "genomic DNA",
+            exonCount: 8
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "B2M-record")
+        )
+
+        XCTAssertEqual(record.completeness.status, .unknown)
+        XCTAssertEqual(record.completeness.reason, .unsupportedLocusTopology)
+        XCTAssertTrue(record.completeness.acceptedTerminalExons.isEmpty)
+    }
+
+    func testFeaturesFromSeparateAnnotationTracksCannotFabricateCompleteTopology() throws {
+        let sequenceID = "PROV-track-split"
+        let alleleName = "Mamu-E*02:99:ext01"
+        let exonCount = 8
+        let sequenceLength = exonCount * 20 - 10
+        let fasta = ">\(sequenceID) \(alleleName)\n\(String(repeating: "A", count: sequenceLength))"
+        let bundleURL = try makeBundle(
+            fasta: fasta,
+            annotations: [
+                .init(
+                    sequenceID: sequenceID,
+                    sequenceLength: sequenceLength,
+                    fields: [
+                        "feature.allele": [alleleName],
+                        "feature.gene": ["E"],
+                        "feature.mol_type": ["genomic DNA"],
+                    ]
+                ),
+            ]
+        )
+        let annotationDirectory = bundleURL.appendingPathComponent("annotations", isDirectory: true)
+        try FileManager.default.createDirectory(at: annotationDirectory, withIntermediateDirectories: true)
+        let exonFeatures = (1...exonCount).map { exonNumber in
+            FeatureFixture(
+                sequenceID: sequenceID,
+                type: "exon",
+                start: (exonNumber - 1) * 20,
+                end: (exonNumber - 1) * 20 + 10,
+                attributes: "number=\(exonNumber)"
+            )
+        }
+        let intronAndCDSFeatures = (1..<exonCount).map { intronNumber in
+            FeatureFixture(
+                sequenceID: sequenceID,
+                type: "intron",
+                start: (intronNumber - 1) * 20 + 10,
+                end: intronNumber * 20,
+                attributes: "number=\(intronNumber)"
+            )
+        } + [
+            FeatureFixture(
+                sequenceID: sequenceID,
+                type: "CDS",
+                start: 0,
+                end: sequenceLength,
+                attributes: "_lf_raw_genbank_location=1..\(sequenceLength)"
+            ),
+        ]
+        try writeFeatureStore(at: annotationDirectory.appendingPathComponent("exons.db"), features: exonFeatures)
+        try writeFeatureStore(
+            at: annotationDirectory.appendingPathComponent("introns-and-cds.db"),
+            features: intronAndCDSFeatures
+        )
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        manifest["annotations"] = [
+            ["id": "exons", "database_path": "annotations/exons.db"],
+            ["id": "introns-and-cds", "database_path": "annotations/introns-and-cds.db"],
+        ]
+        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+            .write(to: manifestURL, options: .atomic)
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: sequenceID)
+        )
+
+        XCTAssertEqual(record.completeness.status, .unknown)
+        XCTAssertEqual(record.completeness.reason, .ambiguousAnnotationEvidence)
+        XCTAssertEqual(record.completeness.annotationTrackIDs, ["exons", "introns-and-cds"])
+    }
+
+    func testGenomicAnnotationTopologyMissingInterveningIntronIsIncomplete() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "NHP01629",
+            alleleName: "Mamu-E*02:10:01:01",
+            moleculeType: "genomic DNA",
+            exonCount: 8,
+            omittedIntron: 4
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "NHP01629")
+        )
+
+        XCTAssertEqual(record.completeness.status, .incomplete)
+        XCTAssertEqual(record.completeness.reason, .missingInterveningIntrons)
+        XCTAssertEqual(record.completeness.observedIntrons, [1, 2, 3, 5, 6, 7])
+    }
+
+    func testCompleteExonChainAnnotatedAsCDNARemainsNonGenomic() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "NHP00581",
+            alleleName: "Mamu-E*02:01:01:01",
+            moleculeType: "mRNA",
+            exonCount: 8
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "NHP00581")
+        )
+
+        XCTAssertEqual(record.completeness.status, .incomplete)
+        XCTAssertEqual(record.completeness.reason, .nonGenomicReference)
+    }
+
+    func testFuzzyCompleteLengthCDSIsIncomplete() throws {
+        let bundleURL = try makeAnnotatedTopologyBundle(
+            sequenceID: "fuzzy",
+            alleleName: "Mamu-E*02:31",
+            moleculeType: "genomic DNA",
+            exonCount: 8,
+            fuzzyCDS: true
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "fuzzy")
+        )
+
+        XCTAssertEqual(record.completeness.status, .incomplete)
+        XCTAssertEqual(record.completeness.reason, .fuzzyOrIncompleteCDS)
+    }
+
+    func testMissingAnnotationDatabaseLeavesCompletenessUnknown() throws {
+        let bundleURL = try makeBundle(
+            fasta: """
+            >no-features Mamu-E*02:05:ext01
+            AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+            """,
+            annotations: [
+                .init(
+                    sequenceID: "no-features",
+                    sequenceLength: 128,
+                    fields: [
+                        "feature.allele": ["Mamu-E*02:05:ext01"],
+                        "feature.gene": ["E"],
+                        "feature.mol_type": ["genomic DNA"],
+                    ]
+                )
+            ]
+        )
+
+        let record = try XCTUnwrap(
+            MHCReferenceRecordCatalog.load(from: bundleURL, cdnaThreshold: 100)
+                .record(sequenceID: "no-features")
+        )
+
+        XCTAssertEqual(record.completeness.status, .unknown)
+        XCTAssertEqual(record.completeness.reason, .missingAnnotationDatabase)
     }
 
     func testFASTAOnlyFallbackUsesDescriptionAndStrictLengthThreshold() throws {
@@ -640,7 +899,77 @@ final class MHCReferenceRecordCatalogTests: XCTestCase {
         let fields: [String: [String]]
     }
 
-    private func makeBundle(fasta: String, annotations: [AnnotationFixture]?) throws -> URL {
+    private struct FeatureFixture {
+        let sequenceID: String
+        let type: String
+        let start: Int
+        let end: Int
+        let attributes: String
+    }
+
+    private func makeAnnotatedTopologyBundle(
+        sequenceID: String,
+        alleleName: String,
+        moleculeType: String,
+        exonCount: Int,
+        omittedIntron: Int? = nil,
+        fuzzyCDS: Bool = false,
+        includeRecordMetadata: Bool = true,
+        includeFASTADescription: Bool = true
+    ) throws -> URL {
+        let sequenceLength = exonCount * 20 - 10
+        let description = includeFASTADescription ? " \(alleleName)" : ""
+        let fasta = ">\(sequenceID)\(description)\n" + String(repeating: "A", count: sequenceLength)
+        var features: [FeatureFixture] = []
+        for exonNumber in 1...exonCount {
+            let exonStart = (exonNumber - 1) * 20
+            features.append(.init(
+                sequenceID: sequenceID,
+                type: "exon",
+                start: exonStart,
+                end: exonStart + 10,
+                attributes: "gene=\(alleleName.split(separator: "*").first?.split(separator: "-").last ?? "");number=\(exonNumber)"
+            ))
+            if exonNumber < exonCount, exonNumber != omittedIntron {
+                features.append(.init(
+                    sequenceID: sequenceID,
+                    type: "intron",
+                    start: exonStart + 10,
+                    end: exonStart + 20,
+                    attributes: "number=\(exonNumber)"
+                ))
+            }
+        }
+        let rawCDSStart = fuzzyCDS ? "%3C1" : "1"
+        features.append(.init(
+            sequenceID: sequenceID,
+            type: "CDS",
+            start: 0,
+            end: sequenceLength,
+            attributes: "_lf_raw_genbank_location=\(rawCDSStart)..\(sequenceLength);allele=\(alleleName);gene=\(alleleName.split(separator: "*").first?.split(separator: "-").last ?? "")"
+        ))
+        return try makeBundle(
+            fasta: fasta,
+            annotations: includeRecordMetadata ? [
+                .init(
+                    sequenceID: sequenceID,
+                    sequenceLength: sequenceLength,
+                    fields: [
+                        "feature.allele": [alleleName],
+                        "feature.gene": [String(alleleName.split(separator: "*").first?.split(separator: "-").last ?? "")],
+                        "feature.mol_type": [moleculeType],
+                    ]
+                )
+            ] : nil,
+            features: features
+        )
+    }
+
+    private func makeBundle(
+        fasta: String,
+        annotations: [AnnotationFixture]?,
+        features: [FeatureFixture]? = nil
+    ) throws -> URL {
         let bundleURL = workspace.appendingPathComponent("fixture-\(UUID().uuidString).lungfishref", isDirectory: true)
         let genomeDirectory = bundleURL.appendingPathComponent("genome", isDirectory: true)
         try FileManager.default.createDirectory(at: genomeDirectory, withIntermediateDirectories: true)
@@ -658,9 +987,54 @@ final class MHCReferenceRecordCatalogTests: XCTestCase {
             manifest["record_store"] = ["database_path": "metadata/records.sqlite"]
         }
 
+        if let features {
+            let annotationDirectory = bundleURL.appendingPathComponent("annotations", isDirectory: true)
+            try FileManager.default.createDirectory(at: annotationDirectory, withIntermediateDirectories: true)
+            let databaseURL = annotationDirectory.appendingPathComponent("features.db")
+            try writeFeatureStore(at: databaseURL, features: features)
+            manifest["annotations"] = [[
+                "id": "imported_annotations",
+                "database_path": "annotations/features.db",
+            ]]
+        }
+
         let manifestData = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
         try manifestData.write(to: bundleURL.appendingPathComponent("manifest.json"))
         return bundleURL
+    }
+
+    private func writeFeatureStore(at url: URL, features: [FeatureFixture]) throws {
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
+        guard let database else {
+            throw NSError(domain: "MHCReferenceRecordCatalogTests", code: 3)
+        }
+        defer { sqlite3_close(database) }
+
+        try execute(
+            """
+            CREATE TABLE annotations (
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                chromosome TEXT NOT NULL,
+                start INTEGER NOT NULL,
+                end INTEGER NOT NULL,
+                strand TEXT NOT NULL DEFAULT '.',
+                attributes TEXT,
+                block_count INTEGER,
+                block_sizes TEXT,
+                block_starts TEXT,
+                gene_name TEXT
+            );
+            """,
+            in: database
+        )
+        for feature in features {
+            try execute(
+                "INSERT INTO annotations (name,type,chromosome,start,end,strand,attributes) VALUES (\(quoted(feature.sequenceID)),\(quoted(feature.type)),\(quoted(feature.sequenceID)),\(feature.start),\(feature.end),'.',\(quoted(feature.attributes)));",
+                in: database
+            )
+        }
     }
 
     private func writeRecordStore(at url: URL, records: [AnnotationFixture]) throws {
