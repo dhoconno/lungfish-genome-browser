@@ -263,3 +263,17 @@ The `mhc-simulated` extension creates two explicitly simulated primate MHC read 
 Run `python3 extend-demo-fixtures.py hello-workflow` to copy the shipped `Examples/WorkflowPackages/hello-world-nextflow.lungfishflowpkg` unchanged to `~/Desktop/lge-docs/hello-world-nextflow.lungfishflowpkg`. Link that package from the Workflow Library for the User Workflows screenshot. Its Nextflow runner, required reference and FASTQ inputs, and declared output satisfy the app's Runnable contract. Linking does not execute the workflow.
 
 The helper verifies the manifest fields and entrypoint, runs the CLI's static workflow validation, and records source/output sizes and checksums, validation output, tool version, runtime, and elapsed time in the copied package's `fixture-copy-provenance.json`. Existing copies are verified without being overwritten or executing Nextflow. This preparation step does not generate scientific output.
+
+## Validate a separate project
+
+The Python extension accepts `--project` for an existing project created in the app. Its default remains `LGE Manual Demo.lungfish` under `LUNGFISH_DEMO_ROOT`. An explicit project writes execution audits into the adjacent project-named `.build/fixture-provenance` folder. The real `.project.db` guard still applies, and the helper does not create or copy a project database.
+
+For an isolated human, primate, and simulated fixture check, create `LGE Manual Rebuild Check.lungfish` in the app, close that project, then run the following from the repository root.
+
+```sh
+python3 docs/user-manual/fixtures/demo-project/extend-demo-fixtures.py \
+  --project "$HOME/Desktop/lge-docs/LGE Manual Rebuild Check.lungfish" \
+  ont hifi barcode ont-run flye amplicon 12s benchmark mhc-simulated
+```
+
+This subset requires the existing committed and prepared human/primate inputs documented by the individual fixtures. It omits the shell builder's viral steps, remote SRA fetching, classifier report imports, and the shell-only mapping, SPAdes, alignment, and tree steps. Do not invoke the full shell builder to perform this bounded check. The `hello-workflow` step copies a linked package beside the project rather than inside it and is independently verified.

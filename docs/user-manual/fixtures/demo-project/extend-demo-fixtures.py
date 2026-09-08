@@ -104,8 +104,13 @@ def run(name, args, inputs, output, defaults, native_workflow=None):
     if result.returncode: raise SystemExit(result.returncode)
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--project', type=pathlib.Path, help='Existing .lungfish project to populate; defaults to LGE Manual Demo under LUNGFISH_DEMO_ROOT')
 parser.add_argument('steps', nargs='*', default=['ont', 'hifi', 'barcode', 'amplicon', 'nao', 'czid', '12s', 'benchmark'])
 options = parser.parse_args()
+if options.project is not None:
+    P = options.project.expanduser().resolve()
+    ROOT = P.parent
+    AUDIT = P.with_suffix('.build')/'fixture-provenance'
 if not (P/'.project.db').exists(): raise SystemExit('Create the demo project in the app first')
 common = dict(format='text', verbose=0, quiet=False, debug=False, progress='auto', threads='auto')
 for name, source, sample, sequencing in [('ont', FX/'hg002-long-reads/HG002.chrM.ont.fastq.gz', 'HG002.chrM.ont', 'ont'), ('hifi', FX/'hg002-long-reads/HG002.chrM.hifi.fastq.gz', 'HG002.chrM.hifi', 'pacbio'), ('barcode', FX/'hg002-long-reads/ont-run/fastq_pass/barcode01/HG002_chrM_pass_barcode01_0.fastq.gz', 'HG002_chrM_pass_barcode01_0', 'ont'), ('amplicon', FX/'primate-12s/HG002-12S-amplicon.fastq.gz', 'HG002-12S-amplicon', 'illumina')]:
