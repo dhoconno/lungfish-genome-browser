@@ -1,0 +1,103 @@
+ID   OR823640; SV 1; linear; genomic DNA; STD; MAM; 2858 BP.
+XX
+AC   OR823640;
+XX
+DT   05-DEC-2023 (Rel. 144, Created)
+DT   07-DEC-2023 (Rel. 144, Last updated, Version 1)
+XX
+DE   Macaca fascicularis isolate cy0695 Mafa-G pseudogene, Mafa-G*02_M4nov01
+DE   allele, complete sequence.
+XX
+KW   .
+XX
+OS   Macaca fascicularis (crab-eating macaque)
+OC   Eukaryota; Metazoa; Chordata; Craniata; Vertebrata; Euteleostomi; Mammalia;
+OC   Eutheria; Euarchontoglires; Primates; Haplorrhini; Catarrhini;
+OC   Cercopithecidae; Cercopithecinae; Macaca.
+XX
+RN   [1]
+RP   1-2858
+RA   Karl J.A., Prall T.M., Wiseman R.W., O'Connor D.H.;
+RT   "Mauritian cynomolgus macaque major histocompatibility complex (MHC) region
+RT   pangenome";
+RL   Unpublished.
+XX
+RN   [2]
+RP   1-2858
+RA   Karl J.A., Prall T.M., Wiseman R.W., O'Connor D.H.;
+RT   ;
+RL   Submitted (15-NOV-2023) to the INSDC.
+RL   Department of Pathology and Laboratory Medicine, University of
+RL   Wisconsin-Madison, 585 Science Drive, Madison, WI 53711, USA
+XX
+DR   MD5; 3b5b26c803f9d89839e188e3fd711010.
+XX
+CC   ##Assembly-Data-START##
+CC   Assembly Method       :: Verkko v. 1.2
+CC   Sequencing Technology :: Oxford Nanopore; PacBio
+CC   ##Assembly-Data-END##
+XX
+FH   Key             Location/Qualifiers
+FH
+FT   source          1..2858
+FT                   /organism="Macaca fascicularis"
+FT                   /isolate="cy0695"
+FT                   /mol_type="genomic DNA"
+FT                   /country="Mauritius"
+FT                   /haplotype="M4"
+FT                   /db_xref="taxon:9541"
+FT   gene            1..2858
+FT                   /pseudo
+FT                   /gene="Mafa-G"
+FT                   /allele="Mafa-G*02_M4nov01"
+XX
+SQ   Sequence 2858 BP; 549 A; 808 C; 880 G; 621 T; 0 other;
+     atggtggtca tggcgccccg aaccctcctg ctgctgctct cgggggctct ggccctgaca        60
+     gagacgtggg tgggtgagtg cgggatcggg agatggcctc tgcggggagg ggccaggggt       120
+     ccacccgacg gtggtgcagg acccggggag ccgcgcgggg agtagggtcg ggcgggtctc       180
+     agcccctcct cgcccccagg ctcccactcc atgaggtact tcagtgctgc cgtgtcccag       240
+     ccaggccgcg gggagccccg cttcatcgcg gtgggctacg tggactacac acagttcgtg       300
+     tggctcgata gcgacgctgc gagtccgagg atggagcctc gggcgccgtg ggtggagcag       360
+     gaggggccgg agtattggga agaggagaca cggatcgcca aggcccacgc acagactgac       420
+     cgagtgaacc agcggaccct gcgcagctgc tacaaccaga gcgaggccgg taagtgaccc       480
+     cggcccgggg cgcaggtcac gaccccccac ctccatgccc tactgacgac cggggtactc       540
+     ccgagtctcc aggtctgaga tccaccccga ggccacggga ctcgcccaga ccctctacct       600
+     gggagaagcc cacgttcctt taccaaaacc cctgcgggtt ggtccgggag ggggcgaggc       660
+     taggtgggcg gggctgaccg aggggcgggg ccaaccgagg gggcggggcc agggtctcac       720
+     accctccagt ggatgattgg ttgcgacctg gggcccgacg ggcgcctctt ccggtgtgaa       780
+     cagttcgcct aggatggcaa ggattacctc gccctgaacg aggacctgtg ctcctgaacc       840
+     gcagcggaca ctgtggctca gatctccaag cgcaagtgtg aggcggccaa agtgactgaa       900
+     cgaaggagag cctacctgga gggcacgtga gtggagtggc ttcacagata cctggagaat       960
+     gggaaggaga tgctgcatcg tgcgggtacc aggggccaca gggcgcctcc ccgatctcct      1020
+     gtagacctcc cactctggct tagcacaagg agaggaggaa aatgggacca acactagaat      1080
+     agcgccctcc ctctggtcct gaaggaaagg aatcctcctg ggtttccaga tcctgtacca      1140
+     gagagtgact ctgagggccc gccctgctct ctgggacaat taagggatga agtctctgag      1200
+     gcagtggagg ggaagacaat ccctggaata ccgatcagga gttccctttg actccactgc      1260
+     agtcttaggc accaggacct ttcccctcag gccttgttct ctgcctcaca ctcaatgtgt      1320
+     gtgggggtct gactccagct cctctgagtc ctttggcctt cactcaggtc cgaatcggaa      1380
+     gtccctgctc ccccgctgag agattagaac tttccaagga ttaggagatt atcccaggtg      1440
+     cccgtgtcca ggctggtgtc tgagttttgt gctccctccc ctccccccac cccgccaggt      1500
+     atctggttca ttcttaggac ggtcacatac tggtgctgct ggagtgtccc acgagagatg      1560
+     caaagtgcct gagttttcgg actcttcctt tcagaccccc ccaattcgca cgtgacccac      1620
+     catcctgtct ttgactatga ggccaccctg aggtgctgag ccctgggctt ctaccctgcg      1680
+     gagatcagac tgacctggca gcgggagagt gaggaccaga cccacgacgt ggagctcatg      1740
+     gggaccaggc ctgcagggga tggaaccttc cagaagtggg cagctgtggt ggtgccttct      1800
+     ggagaggagc agagattcat gtgctatgtg cagcaccagg ggctgcctga gctgcaggag      1860
+     ctcctctgga gacctttaag agggtgggtg gtggggcctg gggtcagaga ccctcacctt      1920
+     cccctccttt cccagagcag tcttcccagc ccactatccc catcatgggc atcattgctg      1980
+     gactggttgt ctttgcagct gttgtcactg aagctgtggt cacttttgtg ctgtggagga      2040
+     agaagagctc tgagtttttt tgtcccactg agggttccaa gccccaggta gaaatgccct      2100
+     gcctggttac tgggaagcac catctacact catgggccca cccagcctac gccctgtgtg      2160
+     ccagcactta ctcttttgta aagcacatgt gacaaagaag cacgatttat caccttgatg      2220
+     attgtagtga tggggacctg atcccagtaa tcacaggtca gggaaaggtc cctggctaag      2280
+     gacagacctt aggagggcag ttagtccagg acccacatct gctttccttg ttttccctta      2340
+     tcctgccctg ggtctgcagt cacacatttc tggaaacttc tctggggtcc aagactagga      2400
+     gtttcctcta gggcctcatg gcgctgccac ctttctgacc tctcaaagga cattttcttc      2460
+     ccacagatag aaaaggaggg agctactctc aggctggaag taagtatgaa ggaggctgat      2520
+     ccctgagatc cttgggatct tgtggttggg agcccatggg ggagctcact caggcaatat      2580
+     ttcctcttct ggccatatct cctgtgggct ctgaccaggt cctgtttttg ttgtacccca      2640
+     ggcagtgaca gtgtccaggg ctctgatgtc tctcacggct tgtaaatgtg agaccctggg      2700
+     ggcctgatgt gtgtgggttg ttggggggaa cagtggacac agctgtgcca tgaggtttct      2760
+     ttgacttgga tgtattgagc atgtgctggg ctgtttcaag tgtcacccct cactgtgaca      2820
+     gatacgaatt tgttcatgaa tgtttttctg cagtctga                              2858
+//

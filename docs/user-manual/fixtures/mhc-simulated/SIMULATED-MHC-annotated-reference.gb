@@ -1,0 +1,68 @@
+LOCUS       Mafa-G_02:31:01:01|OR823640 156 bp DNA linear MAM 08-SEP-2026
+DEFINITION  Mafa-G*02:31:01:01 public genomic reference amplicon for simulated-read teaching.
+ACCESSION   Mafa-G_02:31:01:01|OR823640
+VERSION     Mafa-G_02:31:01:01|OR823640
+SOURCE      Macaca fascicularis
+  ORGANISM  Macaca fascicularis
+COMMENT     Reference slice verified against public accession OR823640.
+            This is a reference sequence, not a simulated biological observation.
+FEATURES             Location/Qualifiers
+     source          1..156
+                     /organism="Macaca fascicularis"
+                     /mol_type="genomic DNA"
+                     /db_xref="taxon:9541"
+                     /note="Public reference accession OR823640; partial reference amplicon"
+     gene            1..156
+                     /gene="Mafa-G"
+                     /allele="Mafa-G*02:31:01:01"
+ORIGIN
+        1 acagttcgtg tggctcgata gcgacgctgc gagtccgagg atggagcctc gggcgccgtg
+       61 ggtggagcag gaggggccgg agtattggga agaggagaca cggatcgcca aggcccacgc
+      121 acagactgac cgagtgaacc agcggaccct gcgcag
+//
+LOCUS       Mafa-DRB_W001:03:01:01|OR823568 244 bp DNA linear MAM 08-SEP-2026
+DEFINITION  Mafa-DRB*W001:03:01:01 public genomic reference amplicon for simulated-read teaching.
+ACCESSION   Mafa-DRB_W001:03:01:01|OR823568
+VERSION     Mafa-DRB_W001:03:01:01|OR823568
+SOURCE      Macaca fascicularis
+  ORGANISM  Macaca fascicularis
+COMMENT     Reference slice verified against public accession OR823568.
+            This is a reference sequence, not a simulated biological observation.
+FEATURES             Location/Qualifiers
+     source          1..244
+                     /organism="Macaca fascicularis"
+                     /mol_type="genomic DNA"
+                     /db_xref="taxon:9541"
+                     /note="Public reference accession OR823568; partial reference amplicon"
+     gene            1..244
+                     /gene="Mafa-DRB"
+                     /allele="Mafa-DRB*W001:03:01:01"
+ORIGIN
+        1 agagtactgt aagtttgagt gccatttctt caatgggacg gagcgggtgc tgaacctgat
+       61 cagatacttc tataaccaag aggagtacgt gcgctacgac agcgacgtcg gggagtaccg
+      121 ggcggtgacg gagctggggc ggcctgacgc caagtactgg aacggccaga aggacctcct
+      181 ggagcagagg cgggccgagg tggacaccta ctgcagacac aactacgggg ttgttgagag
+      241 cttc
+//
+LOCUS       Mafa-DPA1_07:02:01:01|OR823525 173 bp DNA linear MAM 08-SEP-2026
+DEFINITION  Mafa-DPA1*07:02:01:01 public genomic reference amplicon for simulated-read teaching.
+ACCESSION   Mafa-DPA1_07:02:01:01|OR823525
+VERSION     Mafa-DPA1_07:02:01:01|OR823525
+SOURCE      Macaca fascicularis
+  ORGANISM  Macaca fascicularis
+COMMENT     Reference slice verified against public accession OR823525.
+            This is a reference sequence, not a simulated biological observation.
+FEATURES             Location/Qualifiers
+     source          1..173
+                     /organism="Macaca fascicularis"
+                     /mol_type="genomic DNA"
+                     /db_xref="taxon:9541"
+                     /note="Public reference accession OR823525; partial reference amplicon"
+     gene            1..173
+                     /gene="Mafa-DPA1"
+                     /allele="Mafa-DPA1*07:02:01:01"
+ORIGIN
+        1 atatgtttga gtttgatgag gatgagatgt tctatgtgga tctggacaag aaggagaccg
+       61 tctggcatct ggaggagttt ggccgagcct tttcctttga ggctcagggc gggctggcta
+      121 acattgctgc attgaacaac aacttgaata ccttgatcca gctttccaac cac
+//

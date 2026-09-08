@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "workflowName": "manual-simulated-macaque-mhc-fixture",
+  "workflowVersion": "1",
+  "toolName": "generate.py",
+  "toolVersion": "1",
+  "argv": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/generate.py"
+  ],
+  "reproducibleCommand": "/opt/homebrew/opt/python@3.14/bin/python3.14 /Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/generate.py",
+  "options": {
+    "explicit": {},
+    "defaults": {
+      "mateLength": 150,
+      "phred": 40,
+      "errors": 0,
+      "seed": null
+    },
+    "resolvedDefaults": {
+      "mixtures": {
+        "SIMULATED-MHC-A": [
+          120,
+          80,
+          4
+        ],
+        "SIMULATED-MHC-B": [
+          12,
+          60,
+          100
+        ]
+      },
+      "referenceSelection": [
+        [
+          "MCM_MHC_MiSeq_0002",
+          "OR823640"
+        ],
+        [
+          "MCM_MHC_MiSeq_0005",
+          "OR823568"
+        ],
+        [
+          "MCM_MHC_MiSeq_0007",
+          "OR823525"
+        ]
+      ]
+    }
+  },
+  "runtimeIdentity": {
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "operatingSystemVersion": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64"
+  },
+  "inputs": [
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/Sources/LungfishWorkflow/Resources/MCMHaplotyping/MCM-MHC-miSeq-20260617.lungfishmhcref/mcm_mhc_miseq_reference.trimmed.unique.fasta",
+      "sha256": "13134729eba56d42479e251b53299152d823947a0bc2c64fb82a61023e1b6561",
+      "sizeBytes": 77084
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/Sources/LungfishWorkflow/Resources/MCMHaplotyping/MCM-MHC-miSeq-20260617.lungfishmhcref/.lungfish-provenance.json",
+      "sha256": "c3fddb4438c4b56a2d322612ef25c2be6eeb6fc322baa6a6ee07391a1e8cea79",
+      "sizeBytes": 8589
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/generate.py",
+      "sha256": "ab7de6e23e5be9a67a10918331565e5e4d466a433a283c348f9f348b47f7eb20",
+      "sizeBytes": 5124
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/public-records/OR823640.embl",
+      "sha256": "298af644bf33c8ccf169f780816aed0766aa5a97917d11112a0305a5bf111b89",
+      "sizeBytes": 5638
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/public-records/OR823568.embl",
+      "sha256": "a115b290297eb38aad5df169f1be5159a9617bba8d3f2cf67e4772ef96a621f4",
+      "sizeBytes": 20088
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/public-records/OR823525.embl",
+      "sha256": "4475c44f2e469caf651a5fc59209a1f96c33c5039deb664e8a1f62b4235a9c11",
+      "sizeBytes": 9282
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-reference.fasta",
+      "sha256": "7962855e3e80aa6ec8d450ea05451ddb5470b972dc9f0e5a6c1f8a7410a3c191",
+      "sizeBytes": 670
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-A-pairs.fastq",
+      "sha256": "1b8a66b482ff41346c410174ead948206a9d7e1f98bc6e30e101fb8b03c64bf5",
+      "sizeBytes": 141576
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-A_R1.fastq",
+      "sha256": "d28028366ee3150ea56271cefff665598a772728a216d1e7f33136925d60c522",
+      "sizeBytes": 70788
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-A_R2.fastq",
+      "sha256": "dc025c65c2153e9070828fb68af5f315234acdf37e9a227fa0fc74fad02682d5",
+      "sizeBytes": 70788
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-B-pairs.fastq",
+      "sha256": "0e1a460fe69d85122fe268b7046a1aa8633932b0e8f35758f68e6c0b1437a375",
+      "sizeBytes": 119368
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-B_R1.fastq",
+      "sha256": "f2ad43d728f399a63d343240dd4340d8e3e6dc7e3a66552df9996b6da1926e01",
+      "sizeBytes": 59684
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-B_R2.fastq",
+      "sha256": "ec4c757aa84e21c437173185990139fb68a0f8ce76d52d83bc827976e6775573",
+      "sizeBytes": 59684
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/simulation-truth.json",
+      "sha256": "d77e98e02a81ae89393b430006f9e4e4dcc879c7de48c1db6514052b9a2bbb5e",
+      "sizeBytes": 2415
+    }
+  ],
+  "startedAt": "2026-09-08T01:28:48.122432+00:00",
+  "completedAt": "2026-09-08T01:28:48.163157+00:00",
+  "wallTimeSeconds": 0.040752792032435536,
+  "exitStatus": 0,
+  "stderr": "",
+  "notice": "Deterministic simulated observations derived from public primate immune-gene references. No biological specimen, private reads, or pathogen data."
+}

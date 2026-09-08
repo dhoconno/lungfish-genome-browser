@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "workflowName": "prepare-simulated-mhc-gui-reference",
+  "workflowVersion": "1",
+  "toolName": "prepare-gui-reference.py",
+  "toolVersion": "1",
+  "argv": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/prepare-gui-reference.py"
+  ],
+  "reproducibleCommand": "/opt/homebrew/opt/python@3.14/bin/python3.14 /Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/prepare-gui-reference.py",
+  "options": {
+    "explicit": {},
+    "defaults": {
+      "format": "GenBank",
+      "moleculeType": "genomic DNA"
+    },
+    "resolvedDefaults": {
+      "alleleNormalization": "Replace bundled allele separator underscore with canonical star",
+      "sequenceChanges": false
+    }
+  },
+  "runtimeIdentity": {
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "operatingSystemVersion": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64"
+  },
+  "inputs": [
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/simulation-truth.json",
+      "sha256": "d77e98e02a81ae89393b430006f9e4e4dcc879c7de48c1db6514052b9a2bbb5e",
+      "sizeBytes": 2415
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/fixture-generation-provenance.json",
+      "sha256": "0c9359a0db4c80f5a84444927f9e7985a5d7f1aad41b091a220de94be10ff7f8",
+      "sizeBytes": 5415
+    },
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/prepare-gui-reference.py",
+      "sha256": "04ef54c0b5684d370771523383dd2225e4dc1f924a7f9e55f665bec16b14004b",
+      "sizeBytes": 3205
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/Users/dho/Documents/lungfish-genome-explorer/docs/user-manual/fixtures/mhc-simulated/SIMULATED-MHC-annotated-reference.gb",
+      "sha256": "51506d1a68dfbc628e99359da00649bf3cbdd0058c5b6c595b0fa559c5d5683d",
+      "sizeBytes": 3461
+    }
+  ],
+  "startedAt": "2026-09-08T02:09:46.448582+00:00",
+  "completedAt": "2026-09-08T02:09:46.500181+00:00",
+  "wallTimeSeconds": 0.05162745900452137,
+  "exitStatus": 0,
+  "stderr": ""
+}

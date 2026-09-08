@@ -1,0 +1,44 @@
+{
+  "observationType": "SIMULATED; no animals or biological observations",
+  "referenceRecords": [
+    {
+      "id": "MCM_MHC_MiSeq_0002",
+      "allele": "Mafa-G_02:31:01:01",
+      "accession": "OR823640",
+      "sourceURL": "https://www.ebi.ac.uk/ena/browser/api/embl/OR823640?download=false",
+      "sequence": "ACAGTTCGTGTGGCTCGATAGCGACGCTGCGAGTCCGAGGATGGAGCCTCGGGCGCCGTGGGTGGAGCAGGAGGGGCCGGAGTATTGGGAAGAGGAGACACGGATCGCCAAGGCCCACGCACAGACTGACCGAGTGAACCAGCGGACCCTGCGCAG",
+      "sourceHeader": "MCM_MHC_MiSeq_0002|source_loci=MHC-G|haplotype_groups=MHC-A|haplotypes=M4|alleles=Mafa-G_02:31:01:01|accessions=OR823640|length=156|evidence_classes=primary_expressed|max_evidence_weight=1.00|evidence_weight_sum=1.00"
+    },
+    {
+      "id": "MCM_MHC_MiSeq_0005",
+      "allele": "Mafa-DRB_W001:03:01:01",
+      "accession": "OR823568",
+      "sourceURL": "https://www.ebi.ac.uk/ena/browser/api/embl/OR823568?download=false",
+      "sequence": "AGAGTACTGTAAGTTTGAGTGCCATTTCTTCAATGGGACGGAGCGGGTGCTGAACCTGATCAGATACTTCTATAACCAAGAGGAGTACGTGCGCTACGACAGCGACGTCGGGGAGTACCGGGCGGTGACGGAGCTGGGGCGGCCTGACGCCAAGTACTGGAACGGCCAGAAGGACCTCCTGGAGCAGAGGCGGGCCGAGGTGGACACCTACTGCAGACACAACTACGGGGTTGTTGAGAGCTTC",
+      "sourceHeader": "MCM_MHC_MiSeq_0005|source_loci=MHC-DRB|haplotype_groups=MHC-DR|haplotypes=M7|alleles=Mafa-DRB_W001:03:01:01|accessions=OR823568|length=244|evidence_classes=primary_expressed|max_evidence_weight=1.00|evidence_weight_sum=1.00"
+    },
+    {
+      "id": "MCM_MHC_MiSeq_0007",
+      "allele": "Mafa-DPA1_07:02:01:01",
+      "accession": "OR823525",
+      "sourceURL": "https://www.ebi.ac.uk/ena/browser/api/embl/OR823525?download=false",
+      "sequence": "ATATGTTTGAGTTTGATGAGGATGAGATGTTCTATGTGGATCTGGACAAGAAGGAGACCGTCTGGCATCTGGAGGAGTTTGGCCGAGCCTTTTCCTTTGAGGCTCAGGGCGGGCTGGCTAACATTGCTGCATTGAACAACAACTTGAATACCTTGATCCAGCTTTCCAACCAC",
+      "sourceHeader": "MCM_MHC_MiSeq_0007|source_loci=MHC-DPA1|haplotype_groups=MHC-DP|haplotypes=M1|alleles=Mafa-DPA1_07:02:01:01|accessions=OR823525|length=173|evidence_classes=primary_expressed|max_evidence_weight=1.00|evidence_weight_sum=1.00"
+    }
+  ],
+  "pairCounts": {
+    "SIMULATED-MHC-A": [
+      120,
+      80,
+      4
+    ],
+    "SIMULATED-MHC-B": [
+      12,
+      60,
+      100
+    ]
+  },
+  "errorModel": "none; constant Phred 40",
+  "mateLength": 150,
+  "selectionPurpose": "UI teaching only; mixtures are not inferred individual genotypes or haplotypes"
+}

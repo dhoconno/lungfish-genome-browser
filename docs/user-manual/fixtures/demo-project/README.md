@@ -253,3 +253,7 @@ has one sidecar and five recorded files. Their recorded SHA-256 values, byte
 sizes, options, versions, runtime identities, exit status, and wall time were
 checked. The existing-output path was exercised with an unavailable CLI path
 to confirm it verifies and skips without starting another scientific run.
+
+## Simulated MHC teaching result
+
+The `mhc-simulated` extension creates two explicitly simulated primate MHC read mixtures from accession-verified public reference sequences, then uses native import and genotype-only workflows. See [the fixture README](../mhc-simulated/README.md) for provenance, expected counts, validation, and the GUI capture route. Run this step independently with `python3 extend-demo-fixtures.py mhc-simulated`. The GUI-compatible result is `Analyses/SIMULATED-MHC-bundle-validated`, using `SIMULATED-MHC-annotated-reference`. The raw-FASTA baseline remains at `Analyses/SIMULATED-MHC-native-teaching`.

@@ -146,3 +146,61 @@ if 'sra-import' in options.steps:
     receipt['adopted_bundle'] = str(bundle)
     receipt['adopted_payloads'] = files(list(bundle.glob('*.fastq.gz')))
     (bundle/'provenance/source-sra-download.json').write_text(json.dumps(receipt, indent=2)+'\n')
+if 'mhc-simulated' in options.steps:
+    source = FX/'mhc-simulated'
+    subprocess.run(['python3', str(source/'generate.py')], check=True)
+    samples = ['SIMULATED-MHC-A', 'SIMULATED-MHC-B']
+    bundles = []
+    for sample in samples:
+        pair = [source/f'{sample}-pairs.fastq']
+        bundle = P/'Imports'/f'{sample}-pairs.lungfishfastq'
+        run(sample+'-pairs', ['import-fastq', *pair, '--project', P, '--platform', 'illumina', '--recipe', 'none', '--quality-binning', 'none', '--compression', 'balanced', '--no-optimize-storage', '--threads', '2'], pair + [source/'fixture-generation-provenance.json'], bundle, dict(common, threads=2, platform='illumina', recipe='none', quality_binning='none', compression='balanced', optimize_storage=False, pairing='paired-end'))
+        bundles.append(bundle)
+    output = P/'Analyses/SIMULATED-MHC-native-teaching'
+    run('mhc-simulated-native-genotype', ['fastq', 'genotype-cohort', *bundles, '--reference', source/'SIMULATED-MHC-reference.fasta', '--mode', 'illumina-paired', '--read-type', 'illumina', '--output-dir', output, '--output-name', 'SIMULATED-MHC-native-teaching', '--analysis-name', 'SIMULATED MHC teaching reads', '--keep-intermediates', '--threads', '2', '--sort-threads', '2'], bundles + [source/'SIMULATED-MHC-reference.fasta', source/'fixture-generation-provenance.json'], output, dict(common, threads=2, sort_threads=2, mode='illumina-paired', read_type='illumina', min_support=1, haplotyping='none', extra_args=None, keep_intermediates=True))
+    # Keep explicit simulation provenance beside each imported/result bundle.
+    # This supplements the native records without changing their scientific history.
+    for destination in [*bundles, output]:
+        target = destination/'teaching-source'
+        target.mkdir(exist_ok=True)
+        for filename in ['fixture-generation-provenance.json', 'simulation-truth.json']:
+            data = (source/filename).read_bytes()
+            path = target/filename
+            if path.exists() and path.read_bytes() != data:
+                raise ValueError(f'Existing teaching provenance differs: {path}')
+            if not path.exists(): path.write_bytes(data)
+    # Native provenance records managed package versions for minimap2, samtools,
+    # pysam and openpyxl; preserve the actual BBMerge package identity too.
+    target = output/'teaching-source/bbmerge-runtime.json'
+    if not target.exists():
+        packages = pathlib.Path.home()/'.lungfish/conda/envs/bbtools/conda-meta'
+        identities = [dict(package=json.loads(p.read_text()), **files([p])[0]) for p in sorted(packages.glob('*.json')) if p.name.startswith(('bbmap-', 'openjdk-'))]
+        if not identities: raise ValueError('Missing BBMerge managed runtime identity')
+        target.write_text(json.dumps(identities, indent=2)+'\n')
+    subprocess.run(['python3', str(source/'validate.py'), str(output)], check=True)
+
+if 'mhc-simulated' in options.steps or 'mhc-gui-reference' in options.steps:
+    source = FX/'mhc-simulated'
+    subprocess.run(['python3', str(source/'generate.py')], check=True)
+    subprocess.run(['python3', str(source/'prepare-gui-reference.py')], check=True)
+    reference = P/'Reference Sequences/SIMULATED-MHC-annotated-reference.lungfishref'
+    run('mhc-simulated-annotated-reference', ['import', 'fasta', source/'SIMULATED-MHC-annotated-reference.gb', '--name', 'SIMULATED-MHC-annotated-reference', '-o', P], [source/'SIMULATED-MHC-annotated-reference.gb', source/'gui-reference-provenance.json'], reference, dict(common, name='SIMULATED-MHC-annotated-reference'), native_workflow='lungfish import fasta')
+    bundles = [P/'Imports'/f'SIMULATED-MHC-{sample}-pairs.lungfishfastq' for sample in ['A', 'B']]
+    output = P/'Analyses/SIMULATED-MHC-bundle-validated'
+    run('mhc-simulated-bundle-genotype', ['fastq', 'genotype-cohort', *bundles, '--reference', reference, '--mode', 'illumina-paired', '--read-type', 'illumina', '--output-dir', output, '--output-name', 'SIMULATED-MHC-bundle-validated', '--analysis-name', 'SIMULATED-MHC-bundle-teaching', '--keep-intermediates', '--threads', '2', '--sort-threads', '2'], bundles + [reference, source/'gui-reference-provenance.json'], output, dict(common, threads=2, sort_threads=2, mode='illumina-paired', read_type='illumina', min_support=1, haplotyping='none', extra_args=None, keep_intermediates=True), native_workflow='Illumina Paired Amplicon Genotyping')
+    for destination in [reference, output]:
+        target = destination/'teaching-source'
+        target.mkdir(exist_ok=True)
+        for filename in ['fixture-generation-provenance.json', 'simulation-truth.json', 'gui-reference-provenance.json']:
+            data = (source/filename).read_bytes()
+            path = target/filename
+            if path.exists() and path.read_bytes() != data:
+                raise ValueError(f'Existing teaching provenance differs: {path}')
+            if not path.exists(): path.write_bytes(data)
+    runtime_target = output/'teaching-source/bbmerge-runtime.json'
+    if not runtime_target.exists():
+        packages = pathlib.Path.home()/'.lungfish/conda/envs/bbtools/conda-meta'
+        identities = [dict(package=json.loads(p.read_text()), **files([p])[0]) for p in sorted(packages.glob('*.json')) if p.name.startswith(('bbmap-', 'openjdk-'))]
+        if not identities: raise ValueError('Missing BBMerge managed runtime identity')
+        runtime_target.write_text(json.dumps(identities, indent=2)+'\n')
+    subprocess.run(['python3', str(source/'validate.py'), str(output)], check=True)
