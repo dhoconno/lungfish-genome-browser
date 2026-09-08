@@ -9,6 +9,23 @@ enum AssemblyInspectorSourceResolver {
         provenanceInputs.map { resolve(input: $0, projectURL: projectURL) }
     }
 
+    static func resolve(
+        envelope: ProvenanceEnvelope,
+        outputDirectory: URL,
+        projectURL: URL?
+    ) -> [AssemblyDocumentSourceRow] {
+        let inputs = envelope.files.filter { $0.role == .input }.map { file in
+            let url = URL(fileURLWithPath: file.path, relativeTo: outputDirectory).standardizedFileURL
+            return InputFileRecord(
+                filename: url.lastPathComponent,
+                originalPath: url.path,
+                sha256: file.checksumSHA256,
+                sizeBytes: Int64(clamping: file.fileSize ?? 0)
+            )
+        }
+        return resolve(provenanceInputs: inputs, projectURL: projectURL)
+    }
+
     private static func resolve(
         input: InputFileRecord,
         projectURL: URL?

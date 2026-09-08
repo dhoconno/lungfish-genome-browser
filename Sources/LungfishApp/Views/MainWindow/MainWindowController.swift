@@ -273,8 +273,8 @@ public class MainWindowController: NSWindowController {
         for item in toolbar.items {
             switch item.itemIdentifier {
             case ToolbarIdentifier.translateTool:
-                // Translation is only relevant for genomic sequences
-                let visible = (mode == .genomics || mode == .empty)
+                // Reference bundles and mapping detail both host a full sequence viewer.
+                let visible = (mode == .genomics || mode == .mapping || mode == .empty)
                 item.isHidden = !visible
                 item.isEnabled = visible
 
@@ -483,7 +483,7 @@ public class MainWindowController: NSWindowController {
         toolView.onApply = { [weak self, weak sheetWindow] config in
             guard let sheetWindow else { return }
             window.endSheet(sheetWindow)
-            guard let viewerView = self?.mainSplitViewController.viewerController?.viewerView else { return }
+            guard let viewerView = self?.mainSplitViewController.activeFullSequenceViewerController?.viewerView else { return }
             viewerView.translationColorScheme = config.colorScheme
             viewerView.translationShowStopCodons = config.showStopCodons
             if config.frames.isEmpty {

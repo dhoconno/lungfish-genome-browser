@@ -55,7 +55,7 @@ private enum ExpansionSectionID {
 // MARK: - OperationsPanelViewController
 
 @MainActor
-private final class OperationsPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class OperationsPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
 
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
@@ -132,6 +132,42 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 }
             }
             .store(in: &cancellables)
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard let titleColumn = tableView.tableColumn(withIdentifier: .init("title")) else { return }
+        let otherWidths = tableView.tableColumns.filter { $0 !== titleColumn }.reduce(CGFloat.zero) { $0 + $1.width }
+        let spacing = CGFloat(tableView.tableColumns.count) * tableView.intercellSpacing.width
+        let width = max(titleColumn.minWidth, scrollView.contentSize.width - otherWidths - spacing)
+        guard abs(titleColumn.width - width) > 0.5 else { return }
+        titleColumn.width = width
+        refreshExpandedRowHeights()
+    }
+
+    func tableViewColumnDidResize(_ notification: Notification) {
+        refreshExpandedRowHeights()
+    }
+
+    private func refreshExpandedRowHeights() {
+        let rows = IndexSet(items.indices.filter { expandedItemIDs.contains(items[$0].id) })
+        guard !rows.isEmpty else { return }
+        tableView.noteHeightOfRows(withIndexesChanged: rows)
+        if let column = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == "title" }) {
+            tableView.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: column))
+        }
+    }
+
+    static func commandTextHeight(_ command: String, columnWidth: CGFloat) -> CGFloat {
+        // Cell insets, Copy button, gap, and command box padding.
+        let width = max(1, columnWidth - 64)
+        let bounds = (command as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont(name: "Menlo", size: 10) ?? .monospacedSystemFont(ofSize: 10, weight: .regular)],
+            context: nil
+        )
+        return max(14, ceil(bounds.height))
     }
 
     private func applyOperationCenterChange(_ change: OperationCenter.Change) {
@@ -372,6 +408,7 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         actionColumn.maxWidth = 60
         tableView.addTableColumn(actionColumn)
 
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.dataSource = self
         tableView.delegate = self
         tableView.usesAlternatingRowBackgroundColors = true
@@ -604,9 +641,8 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         var extraHeight: CGFloat = 0
 
         // CLI command section
-        if item.cliCommand != nil {
-            // Label (14pt) + spacing (4pt) + command box (~28pt) + spacing (6pt)
-            extraHeight += 52
+        if let command = item.cliCommand {
+            extraHeight += 14 + 2 + Self.commandTextHeight(command, columnWidth: columnWidth) + 6 + 6
         }
 
         // Output files section
@@ -951,7 +987,8 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
 
             // CLI Command section
             if let cmd = item.cliCommand {
-                let section = buildCLICommandSection(command: cmd)
+                let columnWidth = tableView.tableColumn(withIdentifier: identifier)?.width ?? 200
+                let section = buildCLICommandSection(command: cmd, columnWidth: columnWidth)
                 section.setAccessibilityIdentifier(ExpansionSectionID.cliCommand)
                 section.translatesAutoresizingMaskIntoConstraints = false
                 cell.addSubview(section)
@@ -1043,7 +1080,7 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
     // MARK: - Expanded Section Builders
 
     /// Builds the CLI command display section with a grey background box and Copy button.
-    private func buildCLICommandSection(command: String) -> NSView {
+    private func buildCLICommandSection(command: String, columnWidth: CGFloat) -> NSView {
         let container = NSView()
 
         let label = NSTextField(labelWithString: "CLI Command")
@@ -1062,8 +1099,8 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         let commandField = NSTextField(labelWithString: command)
         commandField.font = NSFont(name: "Menlo", size: 10) ?? .monospacedSystemFont(ofSize: 10, weight: .regular)
         commandField.textColor = .labelColor
-        commandField.lineBreakMode = .byTruncatingTail
-        commandField.maximumNumberOfLines = 2
+        commandField.lineBreakMode = .byCharWrapping
+        commandField.maximumNumberOfLines = 0
         commandField.isSelectable = true
         commandField.translatesAutoresizingMaskIntoConstraints = false
         commandField.applyLungfishHelp(LungfishHelpContent.operationCLIReplay)
@@ -1086,6 +1123,7 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
             box.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -4),
             box.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
+            commandField.heightAnchor.constraint(equalToConstant: Self.commandTextHeight(command, columnWidth: columnWidth)),
             commandField.topAnchor.constraint(equalTo: box.topAnchor, constant: 3),
             commandField.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 6),
             commandField.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -6),

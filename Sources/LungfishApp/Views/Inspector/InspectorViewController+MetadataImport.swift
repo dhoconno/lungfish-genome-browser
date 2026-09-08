@@ -332,7 +332,8 @@ extension InspectorViewController {
 
     func assemblyContextRows(
         result: AssemblyResult,
-        provenance: AssemblyProvenance?
+        provenance: AssemblyProvenance?,
+        scientificProvenance: ProvenanceEnvelope? = nil
     ) -> [(String, String)] {
         var rows: [(String, String)] = [
             ("Assembler", provenance?.assembler ?? result.tool.displayName),
@@ -360,6 +361,25 @@ extension InspectorViewController {
             rows.append(("Minimum Contig Length", "\(provenance.parameters.minContigLength) bp"))
         }
 
+        if provenance == nil, let scientificProvenance {
+            let runtime = scientificProvenance.runtimeIdentity
+            rows.append(("Workflow", scientificProvenance.workflowName))
+            rows.append(("Workflow Version", scientificProvenance.workflowVersion))
+            rows.append(("Workflow Command", scientificProvenance.reproducibleCommand))
+            rows.append(("Run Date", Self.assemblyDateFormatter.string(from: scientificProvenance.createdAt)))
+            rows.append(("Host", "\(runtime.operatingSystemVersion) • \(runtime.architecture)"))
+            rows.append(("Lungfish", runtime.appVersion))
+            if let environment = runtime.condaEnvironment, !environment.isEmpty {
+                rows.append(("Environment", environment))
+            }
+            if let container = runtime.containerImage, !container.isEmpty {
+                rows.append(("Container", container))
+            }
+            if let exitStatus = scientificProvenance.exitStatus {
+                rows.append(("Exit Status", String(exitStatus)))
+            }
+        }
+
         rows.append(("Wall Time", String(format: "%.1fs", result.wallTimeSeconds)))
         rows.append(("Contigs", "\(result.statistics.contigCount)"))
         rows.append(("Total Assembled bp", "\(result.statistics.totalLengthBP)"))
@@ -374,7 +394,11 @@ extension InspectorViewController {
     }
 
     func assemblyArtifactRows(result: AssemblyResult) -> [AssemblyDocumentArtifactRow] {
-        [
+        let legacyURL = result.outputDirectory.appendingPathComponent(AssemblyProvenance.filename)
+        let canonicalURL = result.outputDirectory.appendingPathComponent(ProvenanceRecorder.provenanceFilename)
+        let provenanceURL = !FileManager.default.fileExists(atPath: legacyURL.path)
+            && FileManager.default.fileExists(atPath: canonicalURL.path) ? canonicalURL : legacyURL
+        return [
             .init(label: "Contigs FASTA", fileURL: result.contigsPath),
             .init(label: "Scaffolds FASTA", fileURL: result.scaffoldsPath),
             .init(label: "Graph", fileURL: result.graphPath),
@@ -382,7 +406,7 @@ extension InspectorViewController {
             .init(label: "Parameters", fileURL: result.paramsPath),
             .init(
                 label: "Provenance",
-                fileURL: result.outputDirectory.appendingPathComponent(AssemblyProvenance.filename)
+                fileURL: provenanceURL
             ),
         ]
     }

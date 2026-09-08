@@ -142,7 +142,7 @@ public final class AssemblyResultViewController: NSViewController {
 
         detailPane.translatesAutoresizingMaskIntoConstraints = false
         detailContainer.addSubview(detailPane)
-        detailContainer.isHidden = true
+        setDetailPaneVisible(false)
 
         NSLayoutConstraint.activate([
             contigTableView.topAnchor.constraint(equalTo: tableContainer.topAnchor),
@@ -262,8 +262,19 @@ public final class AssemblyResultViewController: NSViewController {
         }
     }
 
+    private func setDetailPaneVisible(_ visible: Bool) {
+        guard detailContainer.isHidden == visible else { return }
+        splitCoordinator.invalidateInitialSplitPosition()
+        detailContainer.isHidden = !visible
+        applyLayoutPreference()
+    }
+
     private func applyLayoutPreference() {
         guard splitView.arrangedSubviews.count > 1 else { return }
+        guard !detailContainer.isHidden else {
+            tableContainer.frame = splitView.bounds
+            return
+        }
         let layout = AssemblyPanelLayout.current()
         let detailLeading = layout == .detailLeading
         splitCoordinator.applyLayoutPreference(
@@ -278,7 +289,7 @@ public final class AssemblyResultViewController: NSViewController {
     }
 
     private func scheduleInitialSplitValidationIfNeeded() {
-        guard splitView.arrangedSubviews.count > 1 else { return }
+        guard !detailContainer.isHidden, splitView.arrangedSubviews.count > 1 else { return }
         splitCoordinator.scheduleInitialSplitValidationIfNeeded(
             ownerView: view,
             splitView: splitView,
@@ -491,7 +502,7 @@ public final class AssemblyResultViewController: NSViewController {
         refreshContextMenu()
 
         guard let catalog, !rows.isEmpty else {
-            detailContainer.isHidden = true
+            setDetailPaneVisible(false)
             return
         }
 
@@ -499,7 +510,7 @@ public final class AssemblyResultViewController: NSViewController {
             let fastaPreview = (try? await catalog.sequenceFASTA(for: record.name, lineWidth: 70)) ?? ""
             guard generation == selectionGeneration else { return }
             detailPane.showSingleSelection(record: record, fastaPreview: fastaPreview)
-            detailContainer.isHidden = false
+            setDetailPaneVisible(true)
             applyLayoutPreference()
             return
         }
@@ -523,7 +534,7 @@ public final class AssemblyResultViewController: NSViewController {
                 fastaPreview: fastaPreview
             )
         }
-        detailContainer.isHidden = false
+        setDetailPaneVisible(true)
         applyLayoutPreference()
     }
 
@@ -534,13 +545,13 @@ public final class AssemblyResultViewController: NSViewController {
         selectedContigNames = []
         actionBar.setSelectionCount(0)
         refreshContextMenu()
-        detailContainer.isHidden = true
+        setDetailPaneVisible(false)
     }
 
     private func showEmptyContigState() {
         contigTableView.isHidden = true
         emptyStateView.isHidden = false
-        detailContainer.isHidden = true
+        setDetailPaneVisible(false)
         selectedContigNames = []
         actionBar.setSelectionCount(0)
         refreshContextMenu()
@@ -667,8 +678,39 @@ extension AssemblyResultViewController: ResultViewportController {
 extension AssemblyResultViewController: BlastVerifiable {}
 
 extension AssemblyResultViewController: NSSplitViewDelegate {
+    public func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
+        guard !detailContainer.isHidden else {
+            tableContainer.frame = splitView.bounds
+            return
+        }
+        splitCoordinator.resizeSubviewsWithOldSize(
+            self.splitView,
+            oldSize: oldSize,
+            defaultLeadingFraction: defaultLeadingFraction(for: AssemblyPanelLayout.current()),
+            minimumExtents: minimumExtents(for: AssemblyPanelLayout.current())
+        )
+    }
+
+    public func splitView(
+        _ splitView: NSSplitView,
+        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        minimumExtents(for: AssemblyPanelLayout.current()).leading
+    }
+
+    public func splitView(
+        _ splitView: NSSplitView,
+        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        let extents = minimumExtents(for: AssemblyPanelLayout.current())
+        let extent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        return max(extents.leading, extent - splitView.dividerThickness - extents.trailing)
+    }
+
     public func splitViewDidResizeSubviews(_ notification: Notification) {
-        guard splitView.arrangedSubviews.count > 1 else { return }
+        guard !detailContainer.isHidden, splitView.arrangedSubviews.count > 1 else { return }
         splitCoordinator.splitViewDidResizeSubviews(
             splitView,
             minimumExtents: minimumExtents(for: AssemblyPanelLayout.current())

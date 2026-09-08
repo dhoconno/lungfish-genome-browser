@@ -28,6 +28,58 @@ final class AssemblyResultViewControllerTests: XCTestCase {
         XCTAssertTrue(vc.testDetailContainer.isHidden)
     }
 
+    func testSummaryMetricsHaveVisibleDistinctFramesAfterRegrouping() throws {
+        let strip = AssemblySummaryStrip(frame: NSRect(x: 0, y: 0, width: 0, height: 44))
+        strip.configure(result: try makeAssemblyResult(), pasteboard: RecordingPasteboard())
+        strip.frame.size.width = 748
+        strip.layoutSubtreeIfNeeded()
+        func fields(in view: NSView) -> [NSTextField] {
+            view.subviews.flatMap { child in
+                if let field = child as? NSTextField { return [field] }
+                return fields(in: child)
+            }
+        }
+        let valueFields = fields(in: strip).filter { $0.accessibilityIdentifier().hasPrefix("assembly-result-summary-") }
+        XCTAssertGreaterThanOrEqual(valueFields.count, 8)
+        let frames = valueFields.map { strip.convert($0.bounds, from: $0) }
+        for frame in frames {
+            XCTAssertGreaterThan(frame.width, 10)
+            XCTAssertGreaterThan(frame.height, 5)
+            XCTAssertTrue(strip.bounds.contains(frame))
+        }
+        for i in frames.indices {
+            for j in frames.indices where i < j {
+                XCTAssertFalse(frames[i].intersects(frames[j]), "Metric frames overlap: \(frames[i]) and \(frames[j])")
+            }
+        }
+    }
+
+    func testUnselectedAssemblyUsesFullTableWidth() async throws {
+        let vc = AssemblyResultViewController()
+        _ = vc.view
+        try await vc.configureForTesting(result: makeAssemblyResult())
+        let split = vc.testSplitView
+        split.frame = NSRect(x: 0, y: 0, width: 748, height: 600)
+        split.delegate?.splitView?(split, resizeSubviewsWithOldSize: split.bounds.size)
+        XCTAssertTrue(vc.testDetailContainer.isHidden)
+        XCTAssertEqual(vc.testTableContainer.frame.width, 748, accuracy: 1)
+    }
+
+    func testResizeRestoresRequestedDividerAfterContentRelayout() async throws {
+        let vc = AssemblyResultViewController()
+        _ = vc.view
+        try await vc.configureForTesting(result: makeAssemblyResult())
+        try await vc.testSelectContig(named: "contig_7")
+        let split = vc.testSplitView
+        split.frame = NSRect(x: 0, y: 0, width: 748, height: 600)
+        split.setPosition(400, ofDividerAt: 0)
+        split.arrangedSubviews[0].frame.size.width = 700
+        split.arrangedSubviews[1].frame.size.width = 47
+        split.delegate?.splitView?(split, resizeSubviewsWithOldSize: split.bounds.size)
+        XCTAssertEqual(split.arrangedSubviews[0].frame.width, 400, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(split.arrangedSubviews[1].frame.width, 320)
+    }
+
     func testSingleSelectionProvidesPreviewColumnValue() async throws {
         let pasteboard = RecordingPasteboard()
         let vc = AssemblyResultViewController()

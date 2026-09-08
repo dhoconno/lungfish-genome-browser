@@ -39,6 +39,34 @@ final class AssemblyDocumentSectionTests: XCTestCase {
         XCTAssertTrue(viewModel.hasAnyContent)
     }
 
+    func testCLIAssemblyRehydratesSourceAndContextFromCanonicalSidecar() throws {
+        let result = try makeAssemblyResult()
+        defer { try? FileManager.default.removeItem(at: result.outputDirectory) }
+        let input = result.outputDirectory.appendingPathComponent("reads.fastq")
+        try Data().write(to: input)
+        let envelope = ProvenanceEnvelope(
+            workflowName: "assemble", toolName: "lungfish-cli", toolVersion: "2026.9.13",
+            argv: ["lungfish-cli", "assemble", input.path],
+            runtimeIdentity: ProvenanceRuntimeIdentity(condaEnvironment: "flye-env"),
+            files: [.init(path: input.path, checksumSHA256: "abc", fileSize: 0, role: .input)],
+            exitStatus: 0
+        )
+        let sidecar = result.outputDirectory.appendingPathComponent(ProvenanceRecorder.provenanceFilename)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(envelope).write(to: sidecar)
+        let originalData = try Data(contentsOf: sidecar)
+        let inspector = InspectorViewController()
+        inspector.loadViewIfNeeded()
+        inspector.updateAssemblyDocument(result: result, provenance: nil, projectURL: nil)
+        let state = try XCTUnwrap(inspector.viewModel.documentSectionViewModel.assemblyDocument)
+        XCTAssertEqual(state.sourceData, [.filesystemLink(name: "reads.fastq", fileURL: input)])
+        XCTAssertTrue(state.contextRows.contains { $0.0 == "Environment" && $0.1 == "flye-env" })
+        XCTAssertTrue(state.contextRows.contains { $0.0 == "Workflow Command" && $0.1 == envelope.reproducibleCommand })
+        XCTAssertTrue(state.artifactRows.contains { $0.label == "Provenance" && $0.fileURL == sidecar })
+        XCTAssertEqual(try Data(contentsOf: sidecar), originalData)
+    }
+
     func testInspectorUpdateAssemblyDocumentBuildsArtifactsAndSourceRows() throws {
         let projectURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("assembly-doc-inspector-\(UUID().uuidString)", isDirectory: true)

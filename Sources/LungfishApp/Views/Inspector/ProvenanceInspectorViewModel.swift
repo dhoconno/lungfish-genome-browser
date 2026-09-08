@@ -366,6 +366,12 @@ struct ProvenanceRuntimeRow: Identifiable, Equatable {
     var value: String
 }
 
+struct ProvenanceSource: Identifiable {
+    var id: String
+    var name: String
+    var item: ProvenanceInspectableItem
+}
+
 @Observable
 @MainActor
 final class ProvenanceInspectorViewModel {
@@ -373,6 +379,32 @@ final class ProvenanceInspectorViewModel {
     private static let maximumDisplayedStepPaths = 200
 
     var currentItem: ProvenanceInspectableItem?
+    private(set) var sources: [ProvenanceSource] = []
+    private(set) var selectedSourceID = ""
+
+    /// The manifest supplies the final stored payload paths, so track lookup and export
+    /// continue to use the same audited provenance resolver as sidebar selections.
+    func configureVariantSources(bundleItem: ProvenanceInspectableItem, tracks: [VariantTrackInfo]) {
+        guard let bundleURL = bundleItem.url, !tracks.isEmpty else { return }
+        let root = bundleURL.standardizedFileURL
+        sources = [ProvenanceSource(id: root.path, name: "Bundle", item: bundleItem)]
+        sources += tracks.compactMap { track in
+            let url = root.appendingPathComponent(track.path).standardizedFileURL
+            guard url.path.hasPrefix(root.path + "/") else { return nil }
+            return ProvenanceSource(id: url.path, name: track.name, item: .init(
+                url: url, sidebarType: nil, contentMode: bundleItem.contentMode, displayName: track.name
+            ))
+        }
+        selectedSourceID = root.path
+    }
+
+    func selectSource(id: String) {
+        guard let source = sources.first(where: { $0.id == id }) else { return }
+        let availableSources = sources
+        load(item: source.item)
+        sources = availableSources
+        selectedSourceID = id
+    }
     var audit: ProvenanceAuditResult = .notRequired
     var summary = ProvenanceRunSummary()
     var warnings: [ProvenanceWarningRow] = []
@@ -409,6 +441,8 @@ final class ProvenanceInspectorViewModel {
         loadGeneration += 1
         isLoading = false
         currentItem = nil
+        sources = []
+        selectedSourceID = ""
         audit = .notRequired
         summary = ProvenanceRunSummary()
         warnings = []
@@ -440,7 +474,9 @@ final class ProvenanceInspectorViewModel {
     /// matches the generation captured when this call started, so a superseded lookup from
     /// rapid arrow-key/click navigation cannot overwrite a newer selection's result.
     func load(item: ProvenanceInspectableItem, clearWhenUnavailable: Bool = false) {
-        loadGeneration += 1
+        // Clear the previous record before publishing the new target. Copy, raw JSON,
+        // and visible lineage must all agree with the currently selected source.
+        clear()
         let thisGeneration = loadGeneration
         currentItem = item
         isLoading = true

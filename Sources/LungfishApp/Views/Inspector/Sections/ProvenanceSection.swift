@@ -22,6 +22,19 @@ struct ProvenanceSection: View {
         VStack(alignment: .leading, spacing: 12) {
             header
 
+            if viewModel.sources.count > 1 {
+                Picker("Source", selection: Binding(
+                    get: { viewModel.selectedSourceID },
+                    set: { viewModel.selectSource(id: $0) }
+                )) {
+                    ForEach(viewModel.sources) { source in
+                        Text(source.name).tag(source.id)
+                    }
+                }
+                .font(.caption)
+                .accessibilityIdentifier("provenance-source-picker")
+            }
+
             if shouldShowSearch {
                 TextField("Filter provenance", text: $viewModel.searchText)
                     .textFieldStyle(.roundedBorder)
@@ -102,7 +115,7 @@ struct ProvenanceSection: View {
                 .buttonStyle(.borderless)
                 .font(.caption)
                 .help("Copy provenance text")
-                .disabled(viewModel.copyableText.isEmpty)
+                .disabled(viewModel.isLoading || viewModel.copyableText.isEmpty)
                 .accessibilityIdentifier("provenance-copy-text")
                 Menu {
                     ForEach(ProvenanceExportMenuModel.items, id: \.format) { item in

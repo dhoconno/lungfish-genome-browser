@@ -45,6 +45,11 @@ extension InspectorViewController {
                 sidebarType: .referenceBundle,
                 displayName: manifest?.name ?? bundleURL.deletingPathExtension().lastPathComponent
             )
+            if let item = viewModel.provenanceSectionViewModel.currentItem {
+                viewModel.provenanceSectionViewModel.configureVariantSources(
+                    bundleItem: item, tracks: manifest?.variants ?? []
+                )
+            }
         }
     }
 
@@ -75,15 +80,25 @@ extension InspectorViewController {
         provenance: AssemblyProvenance?,
         projectURL: URL?
     ) {
-        let sourceRows = provenance.map {
-            AssemblyInspectorSourceResolver.resolve(provenanceInputs: $0.inputs, projectURL: projectURL)
-        } ?? []
+        let scientificProvenance = ProvenanceRecorder.loadEnvelope(from: result.outputDirectory)
+        let sourceRows: [AssemblyDocumentSourceRow]
+        if let inputs = provenance?.inputs, !inputs.isEmpty {
+            sourceRows = AssemblyInspectorSourceResolver.resolve(provenanceInputs: inputs, projectURL: projectURL)
+        } else if let scientificProvenance {
+            sourceRows = AssemblyInspectorSourceResolver.resolve(
+                envelope: scientificProvenance,
+                outputDirectory: result.outputDirectory,
+                projectURL: projectURL
+            )
+        } else {
+            sourceRows = []
+        }
 
         let state = AssemblyDocumentState(
             title: result.outputDirectory.lastPathComponent,
             subtitle: "\(result.tool.displayName) • \(result.readType.displayName)",
             sourceData: sourceRows,
-            contextRows: assemblyContextRows(result: result, provenance: provenance),
+            contextRows: assemblyContextRows(result: result, provenance: provenance, scientificProvenance: scientificProvenance),
             artifactRows: assemblyArtifactRows(result: result)
         )
 
