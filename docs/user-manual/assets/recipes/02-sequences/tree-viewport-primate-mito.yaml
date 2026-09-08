@@ -2,8 +2,7 @@
 # App state: The primate mitochondrial tree open in the tree viewport, with the summary line reading Primate mitochondria 5 tips 3 internal nodes unrooted, the Phylogram/Cladogram control, and the Nodes drawer scrolled to its top row (the drawer's fixed height shows a few of its eight node rows at a time, scrollable to the rest).
 id: tree-viewport-primate-mito
 chapter: 02-sequences/05-building-trees
-caption: The primate mitochondrial tree open in the tree viewport, with the summary line, the Phylogram
-  and Cladogram control, and the Nodes drawer listing all eight nodes.
+caption: "The primate mitochondrial tree open in the tree viewport, with the summary line, the Phylogram and Cladogram control, and the Nodes drawer showing the visible subset of the tree’s nodes."
 viewport_class: tree
 app_state:
   fixture: '{demo_project}'

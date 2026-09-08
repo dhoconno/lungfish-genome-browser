@@ -18,7 +18,7 @@ shots:
   - id: iqtree-dialog
     caption: "The Phylogenetic Tree Operations dialog, with the Output Name and Model fields above the Branch Support group and the collapsed Advanced Options group."
   - id: tree-viewport-primate-mito
-    caption: "The primate mitochondrial tree open in the tree viewport, with the summary line, the Phylogram and Cladogram control, and the Nodes drawer listing all eight nodes."
+    caption: "The primate mitochondrial tree open in the tree viewport, with the summary line, the Phylogram and Cladogram control, and the Nodes drawer showing the visible subset of the tree’s nodes."
 illustrations:
   - id: tree-anatomy
     caption: "Anatomy of a rectangular phylogram, showing tips, internal nodes, branch lengths, and support values."
