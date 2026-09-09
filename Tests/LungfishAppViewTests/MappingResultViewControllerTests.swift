@@ -382,6 +382,43 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertEqual(embeddedViewer.headerView.testTrackNames.first, "Alignment Tracks (gamma)")
     }
 
+    func testInspectorReloadSurvivesContigRowsChangingDuringBundleLoadCallback() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        let bundleURL = try makeReferenceBundleWithAlignmentTracks()
+        let result = makeAlphaGammaMappingResult(viewerBundleURL: bundleURL)
+        vc.configureForTesting(result: result)
+        let gamma = try XCTUnwrap(result.contigs.first { $0.contigName == "gamma" })
+        vc.testContigTableView.configure(rows: [
+            MappingContigSummary(
+                sampleID: "sample-1",
+                alignmentTrackID: "filtered-track",
+                readGroupIDs: ["rg-1"],
+                contigName: gamma.contigName,
+                contigLength: gamma.contigLength,
+                mappedReads: gamma.mappedReads,
+                mappedReadPercent: gamma.mappedReadPercent,
+                meanDepth: gamma.meanDepth,
+                coverageBreadth: gamma.coverageBreadth,
+                medianMAPQ: gamma.medianMAPQ,
+                meanIdentity: gamma.meanIdentity
+            )
+        ])
+        vc.testSelectContig(sampleID: "sample-1", alignmentTrackID: "filtered-track", named: "gamma")
+        vc.onEmbeddedReferenceBundleLoaded = { [weak vc] _ in
+            vc?.testContigTableView.configure(rows: [])
+        }
+
+        try vc.reloadViewerBundleForInspectorChanges()
+
+        let embeddedViewer = try XCTUnwrap(
+            vc.children.compactMap { $0 as? ViewerViewController }.first
+        )
+        XCTAssertEqual(embeddedViewer.headerView.testTrackNames.first, "Alignment Tracks (gamma)")
+        XCTAssertTrue(vc.testContigTableView.displayedRows.isEmpty)
+    }
+
     func testTrackHeaderFallsBackToContigNameWithoutCachedManifest() throws {
         let host = ViewerViewController()
         _ = host.view

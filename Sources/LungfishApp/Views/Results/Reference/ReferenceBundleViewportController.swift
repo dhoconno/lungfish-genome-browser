@@ -1159,9 +1159,10 @@ public class ReferenceBundleViewportController: NSViewController, SampleMetadata
 
     private func selectContig(at row: Int, appliesAlignmentIdentity: Bool = true) {
         guard row >= 0, row < contigTableView.displayedRows.count else { return }
+        let selectedContig = contigTableView.displayedRows[row]
         contigTableView.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         displaySelectedContig(
-            contigTableView.displayedRows[row],
+            selectedContig,
             appliesAlignmentIdentity: appliesAlignmentIdentity
         )
     }
