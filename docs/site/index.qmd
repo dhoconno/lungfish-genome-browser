@@ -17,11 +17,9 @@ title: "Lungfish Genome Explorer"
 <!-- The introduction below is also the top of the repository README.md.
      Keep the two in sync when editing either one. -->
 
-## TL;DR
+## Introduction
 
 I originally conceived of Lungfish Genome Explorer (LGE) as my love letter to Mac-based graphical sequence analysis software. Now I think it is more of a college-era mix tape: blending together a bunch of disparate things I like into what I hope is a thoughtful and opinionated whole.
-
-There are two versions of LGE, a more stable version that I update every few weeks and preview versions that change more frequently. LGE only runs on Apple Silicon Macs.
 
 LGE makes it easy for users to interact with many state-of-the-art open source bioinformatics tools that most users have to run from the command line. Most of the functionality is geared towards analysis and visualization of genomic data (Illumina, Pacific Biosciences, Oxford Nanopore) collected by labs and in [NCBI SRA](https://www.ncbi.nlm.nih.gov/sra). LGE projects are designed for maximal reproducibility, can be shared easily with others, and can be extended by using agentic LLMs to perform analyses that are not built-in.
 
@@ -57,10 +55,8 @@ I'm also unabashed about hoping that others will make LGE their own by forking i
 
 ## Where to go next
 
-The download links are in the card at the top of this page. Beyond an Apple Silicon Mac on macOS 26, you will want 8 GB of RAM (16 GB or more for large genomes or metagenomics), an SSD, and an internet connection so the app can fetch its tools and pull data from NCBI, SRA, and Pathoplexus. On first launch it offers to install its core tools into `~/.lungfish`; mappers, assemblers, and classifiers download the first time a workflow needs them. After that, Lungfish Genome Explorer > Check for Updates keeps you current.
-
-The [user manual](https://lungfish-genome-explorer.readthedocs.io/en/latest/) on Read the Docs is the place for step-by-step guidance. It is being written alongside the app, so expect gaps. The [README](https://github.com/dhoconno/lungfish-genome-explorer#what-lge-can-do-today) has a current, viewport-by-viewport account of what the app does.
+The [user manual](https://lungfish-genome-explorer.readthedocs.io/en/latest/) on Read the Docs is the place for step-by-step guidance. It is being written alongside the app, so expect gaps.
 
 LGE is MIT licensed. Bug reports, failed workflows, and half-formed notes are all welcome on the [issue tracker](https://github.com/dhoconno/lungfish-genome-explorer/issues); please keep private sequence data and credentials out of public issues. I'm not taking pull requests, but if you fork it, the repository has the scripts to sign and publish your own build.
 
-Development is supported by [Inkfish](https://ink.fish). Lungfish Genome Explorer is developed in association with the [Lungfish Research Collaboratory](https://lung.fish).
+Development is supported by [Inkfish](https://ink.fish).
