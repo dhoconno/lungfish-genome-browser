@@ -15,7 +15,7 @@ shots:
   - id: import-center-reference-card
     caption: "The Import Center with the Reference Sequences tab open and the Reference Sequences card ready to accept a dropped file."
   - id: hbb-record-in-sequence-viewport
-    caption: "The imported HBB gene record open in the sequence viewport, with its annotation features drawn above the bases."
+    caption: "The imported HBB gene record open in the sequence viewport, with its annotation features drawn below the bases."
   - id: go-to-location-hbb-codon
     caption: "The Go to Location dialog holding the coordinate that frames the sickle cell codon in the HBB gene record."
 illustrations:
@@ -67,7 +67,7 @@ The file you downloaded is a plain-text Genbank flatfile that includes a sequenc
 
 2. Drag `NG_000007.3.gb` from the folder you saved it in and drop it onto the Reference Sequences card. LGE compresses and indexes the sequence and builds the bundle without asking you to confirm anything. The import finishes in about a second, and you know it is done when the new reference appears in the sidebar.
 
-3. Find the new bundle under `Reference Sequences/` in the sidebar and open it. It carries the name of the file you dropped, so it appears as `NG_000007.3`. In addition to the sequences, the features from the Genbank file are drawn above the bases in the sequence viewport.
+3. Find the new bundle under `Reference Sequences/` in the sidebar and open it. It carries the name of the file you dropped, so it appears as `NG_000007.3`. In addition to the sequences, the features from the Genbank file are drawn below the bases in the sequence viewport.
 
     <!-- SHOT: hbb-record-in-sequence-viewport -->
 
@@ -91,7 +91,7 @@ The coordinate you typed has two halves. `NG_000007` is the name of the sequence
 
 If LGE is asked to show a coordinate whose position falls outside the loaded sequence, it will refuse with the message "Position is outside the sequence bounds". A contig name it cannot match is treated more gently. LGE first puts the name through its chromosome-name mapping, which is the table that lets equivalent spellings of the same sequence match each other, such as `chr11` and `11`. If that fails too, the app moves to the position on the sequence already open rather than warning you. Checking that the name in the ruler is the one you meant is the first sign that you have loaded the wrong reference for your data.
 
-The annotation features drawn above the bases come straight from the GenBank feature table. The record has 8 genes, 5 mRNAs, 5 CDS features, and 13 exons, and 102 annotation features in total once the other GenBank feature types are counted. An exon is one of the pieces a coding sequence is split into. There are more genes than mRNAs because three of the eight in this region are pseudogenes, which are gene-shaped sequences that no longer produce a protein and so do not have mRNA or CDS features. For a curated record of this size, a hundred or so features is what you should expect. If you have no annotations on a large "Genbank" file, the likeliest cause is that a bare FASTA without features was imported by mistake.
+The annotation features drawn below the bases come straight from the GenBank feature table. The record has 8 genes, 5 mRNAs, 5 CDS features, and 13 exons, and 102 annotation features in total once the other GenBank feature types are counted. An exon is one of the pieces a coding sequence is split into. There are more genes than mRNAs because three of the eight in this region are pseudogenes, which are gene-shaped sequences that no longer produce a protein and so do not have mRNA or CDS features. For a curated record of this size, a hundred or so features is what you should expect. If you have no annotations on a large "Genbank" file, the likeliest cause is that a bare FASTA without features was imported by mistake.
 
 ## Reading a variant
 
@@ -117,7 +117,7 @@ In LGE, a DNA genome and an RNA genome look alike. Sequencing instruments read D
 
 ## What good looks like
 
-Four checks are worth running before you trust a coordinate. Confirm that the sequence viewport shows the length you expected, which is 81,706 bases for this record, and which appears in the Inspector beside the reference's name. Confirm that annotation features appear above the bases, since a bundle built from a bare FASTA would show none. A bare FASTA holds only header lines starting with `>` and the bases beneath them. A GenBank flatfile opens with a `LOCUS` line and carries a FEATURES table. Opening the file in any text editor tells the two apart. Confirm that the bases at 70613 to 70615 read `GAG`, which is the codon this chapter is about. This check fails when the wrong record or the wrong version was imported, because the same coordinate then lands on different bases. And confirm that the Inspector's Provenance section names the file you imported.
+Four checks are worth running before you trust a coordinate. Confirm that the sequence viewport shows the length you expected, which is 81,706 bases for this record, and which appears in the Inspector beside the reference's name. Confirm that annotation features appear below the bases, since a bundle built from a bare FASTA would show none. A bare FASTA holds only header lines starting with `>` and the bases beneath them. A GenBank flatfile opens with a `LOCUS` line and carries a FEATURES table. Opening the file in any text editor tells the two apart. Confirm that the bases at 70613 to 70615 read `GAG`, which is the codon this chapter is about. This check fails when the wrong record or the wrong version was imported, because the same coordinate then lands on different bases. And confirm that the Inspector's Provenance section names the file you imported.
 
 If any of those disagree, suspect the input rather than the app. The most common cause is a file that looks right by name but has a different record or a different version of it.
 
