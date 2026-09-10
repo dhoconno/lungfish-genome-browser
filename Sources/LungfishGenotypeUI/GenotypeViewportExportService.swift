@@ -136,14 +136,15 @@ struct GenotypeViewportExportService {
 
         var arguments: [String]
         if format.usesPivotSubcommand {
-            // The pivot builder reads the bundle directly rather than the
-            // rendered projection, so the viewport's thresholds are passed
-            // explicitly and applied while the workbook is built.
             arguments = [
                 "genotype", "export-pivot-xlsx",
                 "--bundle", snapshot.bundleURL.path,
                 "--output", standardizedOutputURL.path,
+                "--view-projection", projectionURL.path,
             ]
+            if let annotationSidecarURL = snapshot.annotationSidecarURL {
+                arguments += ["--annotations", annotationSidecarURL.path]
+            }
             if let minReads = minimumReads(from: snapshot.filters) {
                 arguments += ["--min-reads", String(minReads)]
             }
@@ -196,11 +197,8 @@ struct GenotypeViewportExportService {
             guard fileManager.fileExists(atPath: provenanceURL.path) else {
                 throw GenotypeViewportExportError.missingProvenance(provenanceURL.path)
             }
-            // The pivot subcommand builds from the bundle, not the rendered
-            // projection, so only the projection-driven export attests it.
-            let expectedInputURLs = format.usesPivotSubcommand
-                ? []
-                : [projectionURL] + (snapshot.annotationSidecarURL.map { [$0] } ?? [])
+            let expectedInputURLs = [projectionURL]
+                + (snapshot.annotationSidecarURL.map { [$0] } ?? [])
             try verifyProvenance(
                 provenanceURL: provenanceURL,
                 outputURL: standardizedOutputURL,

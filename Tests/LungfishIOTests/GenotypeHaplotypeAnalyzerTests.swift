@@ -1250,6 +1250,45 @@ final class GenotypeHaplotypeAnalyzerTests: XCTestCase {
         XCTAssertEqual(dq.matchedHaplotypes.map(\.name), ["M1DQ", "M2DQ"])
     }
 
+    func testMCMIntactHaplotypeIsH1BeforeRecombinantRegardlessOfFamilyNumber() throws {
+        let definition = try JSONDecoder().decode(
+            GenotypeHaplotypeDefinitionSet.self,
+            from: Data(
+                """
+                {
+                  "id": "MHC-exon2-miSeq.mauritian-cynomolgus-macaques.intact-first",
+                  "assayID": "MHC-exon2-miSeq",
+                  "displayName": "MCM intact-first test",
+                  "speciesName": "Mauritian cynomolgus macaque",
+                  "speciesCode": "MCM",
+                  "prefix": "Mafa",
+                  "locusDefinitions": [{
+                    "locus": "MHC-DQ",
+                    "sourceLocus": "MHC-DQ",
+                    "haplotypes": [
+                      { "name": "recM1M2DQ", "diagnosticAlleles": ["rec_marker"], "minimumMatches": 1 },
+                      { "name": "M3DQ", "diagnosticAlleles": ["M3_marker"], "minimumMatches": 1 }
+                    ]
+                  }]
+                }
+                """.utf8
+            )
+        )
+
+        let analysis = GenotypeHaplotypeAnalyzer.analyze(
+            calls: [
+                Self.call(sample: "LF0002", genotype: "rec_marker|source_loci=MHC-DQA1|haplotype_groups=MHC-DQ", reads: 120),
+                Self.call(sample: "LF0002", genotype: "M3_marker|source_loci=MHC-DQB1|haplotype_groups=MHC-DQ", reads: 110),
+            ],
+            definitionSet: definition
+        )
+
+        let dq = try XCTUnwrap(analysis.samples.first?.calls.first)
+        XCTAssertEqual(dq.haplotype1, "M3DQ")
+        XCTAssertEqual(dq.haplotype2, "recM1M2DQ")
+        XCTAssertEqual(dq.matchedHaplotypes.map(\.name), ["M3DQ", "recM1M2DQ"])
+    }
+
     func testReadDominanceDoesNotCallIncompletePrimaryHaplotypesFromSharedMCMAMarker() throws {
         let definition = try JSONDecoder().decode(
             GenotypeHaplotypeDefinitionSet.self,

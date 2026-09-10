@@ -536,6 +536,53 @@ final class GenotypeCallEvidenceViewTests: XCTestCase {
         XCTAssertFalse(pending.isEmpty)
     }
 
+    func testSwapRequestsExchangeDistinctCallableHaplotypes() {
+        let evidence = GenotypeCallEvidenceView.Evidence(
+            sample: "DW472", locus: "MHC-DP", slot: .h1,
+            callName: "M4DP / M7DP", status: .called,
+            observedGenotypeCount: 2, observedGenotypes: [], diagnosticAlleles: [],
+            locusReadTotal: 500, neighborsBefore: [], neighborsAfter: [],
+            h1Name: "M4DP", h2Name: "M7DP"
+        )
+        XCTAssertEqual(
+            GenotypeCallEvidenceView.swapRequests(for: evidence),
+            [
+                .init(slot: .h1, haplotypeName: "M7DP"),
+                .init(slot: .h2, haplotypeName: "M4DP"),
+            ]
+        )
+
+        var identical = evidence
+        identical.h2Name = "M4DP"
+        XCTAssertNil(GenotypeCallEvidenceView.swapRequests(for: identical))
+
+        var unavailable = evidence
+        unavailable.h2Name = "-"
+        XCTAssertNil(GenotypeCallEvidenceView.swapRequests(for: unavailable))
+        unavailable.h2Name = "?"
+        XCTAssertNil(GenotypeCallEvidenceView.swapRequests(for: unavailable))
+    }
+
+    func testSwapButtonImmediatelySendsPairedOverride() throws {
+        var callbackRequests: [[GenotypeCallEvidenceView.HaplotypeOverrideRequest]] = []
+        let mounted = mountEvidenceView(onOverridesRequested: {
+            callbackRequests.append($0)
+            return .changed
+        })
+        defer { mounted.window.close() }
+        let swap = try XCTUnwrap(
+            button("genotype-call-evidence-swap-haplotypes", in: mounted.host)
+        )
+
+        swap.performClick(nil)
+        flush(mounted.host)
+
+        XCTAssertEqual(callbackRequests, [[
+            .init(slot: .h1, haplotypeName: "M7DP"),
+            .init(slot: .h2, haplotypeName: "M4DP"),
+        ]])
+    }
+
     func testRenderedPendingOverrideClearsOnlyAfterChangedCallback() throws {
         for outcome in [
             GenotypeHaplotypeMutationOutcome.unchanged,

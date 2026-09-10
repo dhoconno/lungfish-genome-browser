@@ -596,6 +596,23 @@ struct GenotypeCallEvidenceView: View {
         )
     }
 
+    /// Builds the paired, immediately persisted override represented by the
+    /// locus-level swap control. Uncalled, error, and homozygous pairs cannot
+    /// be meaningfully exchanged.
+    static func swapRequests(for evidence: Evidence) -> [HaplotypeOverrideRequest]? {
+        let h1 = evidence.h1Name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let h2 = evidence.h2Name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let unavailable: (String) -> Bool = { value in
+            value.isEmpty || value == "-" || value == "?" || value == "Not assayed"
+                || value.hasPrefix("ERR")
+        }
+        guard !unavailable(h1), !unavailable(h2), h1 != h2 else { return nil }
+        return [
+            HaplotypeOverrideRequest(slot: .h1, haplotypeName: h2),
+            HaplotypeOverrideRequest(slot: .h2, haplotypeName: h1),
+        ]
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -610,6 +627,16 @@ struct GenotypeCallEvidenceView: View {
                         errorExplanationBlock(evidence)
                     }
                     Divider()
+                    GenotypeMutationActionButton(
+                        title: "Swap H1 ↔ H2",
+                        accessibilityIdentifier: "genotype-call-evidence-swap-haplotypes",
+                        isEnabled: Self.swapRequests(for: evidence) != nil
+                            && onOverridesRequested != nil
+                    ) {
+                        guard let requests = Self.swapRequests(for: evidence) else { return }
+                        _ = onOverridesRequested?(requests)
+                    }
+                    .help("Swap H1 and H2 for this locus and save immediately")
                     haplotypeSlotCards(evidence)
                     if !evidence.omittedHaplotypeGenotypes.isEmpty {
                         Divider()
