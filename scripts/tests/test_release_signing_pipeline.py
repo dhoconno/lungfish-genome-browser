@@ -77,6 +77,18 @@ class SigningPipelineTests(unittest.TestCase):
         self.assertEqual(self.pipeline(notary)['status'], 'Accepted')
         self.assertEqual(self.calls, before)
 
+    def test_hdiutil_output_is_outside_retained_transaction_and_then_adopted(self):
+        self.assertEqual(
+            self.pipeline(lambda *a, **kw: {'status':'Accepted'})['status'],
+            'Accepted',
+        )
+        create = next(call for call in self.calls if Path(call[0]).name == 'hdiutil')
+        temporary_dmg = Path(create[-1])
+        self.assertNotEqual(temporary_dmg.parent, self.tx)
+        self.assertFalse(temporary_dmg.is_relative_to(self.tx))
+        self.assertTrue((self.tx / 'input.dmg').is_file())
+        self.assertEqual((self.tx / 'input.dmg').read_bytes(), b'fixed dmg-signed')
+
     def test_changed_candidate_or_retained_signed_payload_blocks_before_tools(self):
         self.pipeline(lambda *a, **kw: {'status':'In Progress'})
         before = list(self.calls)

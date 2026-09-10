@@ -174,7 +174,14 @@ def sign_and_notarize(source_app, receipt, signed_app, dmg, transaction_dir, pro
             with tempfile.TemporaryDirectory(prefix='dmg-stage-', dir=transaction_dir) as stage:
                 command(['/usr/bin/ditto', str(signed_app), str(Path(stage) / source_app.name)], 'stage-dmg-app')
                 (Path(stage) / 'Applications').symlink_to('/Applications')
-                command(['/usr/bin/hdiutil', 'create', '-volname', volume_name, '-srcfolder', stage, '-format', 'UDZO', str(paths['dmgInput'])], 'create-dmg')
+                # hdiutil can under-size a source-folder image when its output is
+                # created beside the source tree. Build outside the retained
+                # transaction and copy the completed image into place before it
+                # is signed and recorded.
+                with tempfile.TemporaryDirectory(prefix='lungfish-dmg-output-') as output:
+                    temporary_dmg = Path(output) / 'input.dmg'
+                    command(['/usr/bin/hdiutil', 'create', '-volname', volume_name, '-srcfolder', stage, '-format', 'UDZO', str(temporary_dmg)], 'create-dmg')
+                    shutil.copyfile(temporary_dmg, paths['dmgInput'])
             sign(paths['dmgInput'], runtime=False)
             record('dmgInput')
         if not submit('dmgInput', 'notary-dmg.json'): return state
