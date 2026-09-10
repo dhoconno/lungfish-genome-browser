@@ -71,14 +71,6 @@ public enum GenotypeHaplotypeAnalyzer {
         }
     }
 
-    private struct OrderedMCMFamilyPair: Hashable {
-        let first: String
-        let second: String
-
-        var families: [String] { [first, second] }
-        var familySet: Set<String> { Set(families) }
-    }
-
     private static func enforceMCMHaplotypeSlotContiguity(
         in samples: [GenotypeHaplotypeSampleAnalysis],
         definitionSet: GenotypeHaplotypeDefinitionSet
@@ -100,33 +92,23 @@ public enum GenotypeHaplotypeAnalyzer {
     private static func reorderMCMHaplotypeSlotsByFamilyNumber(
         in call: GenotypeHaplotypeLocusCall
     ) -> GenotypeHaplotypeLocusCall {
-        guard let callPair = orderedMCMFamilyPair(from: call),
-              let firstKey = mcmFamilySortKey(callPair.first),
-              let secondKey = mcmFamilySortKey(callPair.second),
-              firstKey > secondKey else {
-            return call
-        }
-        let orderedPair = OrderedMCMFamilyPair(first: callPair.second, second: callPair.first)
-
-        let haplotypeByFamily = [
-            callPair.first: call.haplotype1,
-            callPair.second: call.haplotype2,
-        ]
-        guard let haplotype1 = haplotypeByFamily[orderedPair.first],
-              let haplotype2 = haplotypeByFamily[orderedPair.second] else {
+        guard call.status == .called || call.status == .specialCase,
+              call.haplotype1 != call.haplotype2,
+              shouldOrderMCMHaplotype(call.haplotype2, before: call.haplotype1) else {
             return call
         }
         let matchedHaplotypes = reorderMatchedMCMHaplotypes(
             call.matchedHaplotypes,
-            using: orderedPair
+            firstName: call.haplotype2,
+            secondName: call.haplotype1
         )
-        let note = "MCM haplotype-slot contiguity: reordered \(call.locus) to \(orderedPair.first)/\(orderedPair.second) by ascending haplotype family number."
+        let note = "MCM haplotype-slot contiguity: reordered \(call.locus) intact-first, then by ascending haplotype family number."
         let notes = ([call.notes].filter { !$0.isEmpty } + [note]).joined(separator: " ")
         return GenotypeHaplotypeLocusCall(
             locus: call.locus,
             sourceLocus: call.sourceLocus,
-            haplotype1: haplotype1,
-            haplotype2: haplotype2,
+            haplotype1: call.haplotype2,
+            haplotype2: call.haplotype1,
             status: call.status,
             matchedHaplotypes: matchedHaplotypes,
             observedGenotypeCount: call.observedGenotypeCount,
@@ -137,31 +119,36 @@ public enum GenotypeHaplotypeAnalyzer {
 
     private static func reorderMatchedMCMHaplotypes(
         _ matchedHaplotypes: [GenotypeHaplotypeMatchedDefinition],
-        using pair: OrderedMCMFamilyPair
+        firstName: String,
+        secondName: String
     ) -> [GenotypeHaplotypeMatchedDefinition] {
         guard matchedHaplotypes.count == 2 else { return matchedHaplotypes }
-        var matchByFamily: [String: GenotypeHaplotypeMatchedDefinition] = [:]
-        for match in matchedHaplotypes {
-            guard let family = singletonMCMFamily(in: match.name),
-                  matchByFamily[family] == nil else {
-                return matchedHaplotypes
-            }
-            matchByFamily[family] = match
+        guard let first = matchedHaplotypes.first(where: { $0.name == firstName }),
+              let second = matchedHaplotypes.first(where: { $0.name == secondName }) else {
+            return matchedHaplotypes
         }
-        guard Set(matchByFamily.keys) == pair.familySet else { return matchedHaplotypes }
-        return pair.families.compactMap { matchByFamily[$0] }
+        return [first, second]
     }
 
-    private static func orderedMCMFamilyPair(
-        from call: GenotypeHaplotypeLocusCall
-    ) -> OrderedMCMFamilyPair? {
-        guard call.status == .called || call.status == .specialCase,
-              let first = singletonMCMFamily(in: call.haplotype1),
-              let second = singletonMCMFamily(in: call.haplotype2),
-              first != second else {
-            return nil
+    private static func shouldOrderMCMHaplotype(_ lhs: String, before rhs: String) -> Bool {
+        let lhsKey = mcmHaplotypeSortKey(lhs)
+        let rhsKey = mcmHaplotypeSortKey(rhs)
+        if lhsKey.intactRank != rhsKey.intactRank {
+            return lhsKey.intactRank < rhsKey.intactRank
         }
-        return OrderedMCMFamilyPair(first: first, second: second)
+        if lhsKey.familyNumber != rhsKey.familyNumber {
+            return lhsKey.familyNumber < rhsKey.familyNumber
+        }
+        return lhs.localizedStandardCompare(rhs) == .orderedAscending
+    }
+
+    private static func mcmHaplotypeSortKey(
+        _ value: String
+    ) -> (intactRank: Int, familyNumber: Int) {
+        let families = mcmFamilies(inAlleleName: value)
+        let isRecombinant = value.lowercased().hasPrefix("rec") || families.count != 1
+        let familyNumber = families.compactMap(mcmFamilySortKey).min() ?? Int.max
+        return (isRecombinant ? 1 : 0, familyNumber)
     }
 
     private static func mcmFamilySortKey(_ family: String) -> Int? {
@@ -170,18 +157,6 @@ public enum GenotypeHaplotypeAnalyzer {
             return nil
         }
         return value
-    }
-
-    private static func singletonMCMFamily(in value: String) -> String? {
-        guard !value.isEmpty,
-              value != "-",
-              value != "Not assayed",
-              !value.hasPrefix("ERR:") else {
-            return nil
-        }
-        let families = mcmFamilies(inAlleleName: value)
-        guard families.count == 1 else { return nil }
-        return families.first
     }
 
     private static func resolveLinkedMCMMHCEAmbiguousSupport(

@@ -79,8 +79,35 @@ final class GenotypeViewportPivotExportTests: XCTestCase {
     func testPivotExportInvokesThePivotSubcommand() throws {
         let arguments = try capturedArguments(filters: [:], format: .pivotExcel)
         XCTAssertEqual(Array(arguments.prefix(2)), ["genotype", "export-pivot-xlsx"])
-        // The pivot builder reads the bundle, so no rendered projection is sent.
-        XCTAssertFalse(arguments.contains("--view-projection"))
+        XCTAssertTrue(
+            arguments.contains("--view-projection"),
+            "the filtered pivot must consume the exact rendered viewport"
+        )
+    }
+
+    func testPivotExportCarriesAnnotationSidecarWithViewportProjection() throws {
+        let runner = RecordingRunner()
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pivot-annotations-\(UUID().uuidString).xlsx")
+        let sidecarURL = URL(fileURLWithPath: "/tmp/run.lungfishgenotype/annotations.json")
+        let annotated = GenotypeViewportExportSnapshot(
+            bundleURL: URL(fileURLWithPath: "/tmp/run.lungfishgenotype", isDirectory: true),
+            analysisName: "Run",
+            lens: "comparison",
+            filters: [:],
+            sampleNames: ["A1"],
+            rows: [],
+            annotationSidecarURL: sidecarURL
+        )
+        XCTAssertThrowsError(
+            try GenotypeViewportExportService(runner: runner).export(
+                snapshot: annotated,
+                format: .pivotExcel,
+                to: outputURL
+            )
+        )
+        XCTAssertTrue(hasOption(runner.arguments, "--view-projection", value: outputURL.appendingPathExtension("view-projection.json").path))
+        XCTAssertTrue(hasOption(runner.arguments, "--annotations", value: sidecarURL.path))
     }
 
     func testPivotExportCarriesTheMatrixMinimumReads() throws {

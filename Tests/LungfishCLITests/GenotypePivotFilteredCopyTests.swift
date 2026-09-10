@@ -50,9 +50,11 @@ for locus in ["MHC-A", "MHC-B"]:
         ws.append([f"{locus} Haplotype {slot}", None, None, "H1" if slot == 1 else "H2", None])
 ws.append(["Comments", "Subtotal", "# Obs.", None, None])
 ws.append(["Genotype", "Total", "# Obs."] + samples)
+ws.append(["MHC-A alleles", None, None, None, None])
 ws.append(["01_Strong", 560, 2, 500, 60])
 ws.append(["01_Middle", 48, 2, 40, 8])
 ws.append(["01_Background", 5, 1, 5, None])
+ws.append(["01_Candidate", 5, 2, 3, 2])
 ws.freeze_panes = "A2"
 ws.column_dimensions["A"].width = 40
 long = wb.create_sheet("Thresholds Long Summ")
@@ -74,8 +76,22 @@ out = {"sheets": wb.sheetnames, "freeze": wb.worksheets[0].freeze_panes,
        "widthA": wb.worksheets[0].column_dimensions["A"].width,
        "boldA1": wb.worksheets[0]["A1"].font.bold,
        "fillA1": wb.worksheets[0]["A1"].fill.fgColor.rgb,
+       "maxColumn": wb.worksheets[0].max_column,
        "rows": [[c for c in row] for row in wb.worksheets[0].iter_rows(values_only=True)],
        "long": [[c for c in row] for row in wb["Thresholds Long Summ"].iter_rows(values_only=True)]}
+for row in wb.worksheets[0].iter_rows():
+    for cell in row:
+        if cell.value in ("[8]", "FN"):
+            out[cell.value] = {
+                "coordinate": cell.coordinate,
+                "italic": bool(cell.font.italic),
+                "fontColor": cell.font.color.rgb if cell.font.color and cell.font.color.type == "rgb" else None,
+                "fillColor": cell.fill.fgColor.rgb,
+                "border": cell.border.left.style,
+                "comment": "" if cell.comment is None else cell.comment.text,
+            }
+        if cell.value in ("Animal2", "01_Background") and cell.comment is not None:
+            out[cell.value + "Comment"] = cell.comment.text
 print(json.dumps(out))
 """#
 
@@ -219,5 +235,166 @@ print(json.dumps(out))
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("missing.xlsx"))
         }
+    }
+
+    func testViewportProjectionControlsVisibleRowsColumnsValuesAndAnnotations() async throws {
+        let python = try XCTUnwrap(Self.managedPythonURL, "managed openpyxl runtime not installed")
+        let root = try TestTempDirectory.make(prefix: "PivotViewportProjection")
+        defer { TestTempDirectory.cleanup(root) }
+        let bundleURL = root.appendingPathComponent("thresholds.lungfishgenotype", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        let sourceURL = bundleURL.appendingPathComponent("t.xlsx")
+        _ = try await runPython(python, script: Self.makeSourceWorkbookScript, arguments: [sourceURL.path], in: root)
+
+        let projection = GenotypeViewProjection(
+            lens: "comparison",
+            sampleColumns: ["Animal2", "Animal1"],
+            rows: [
+                .init(label: "01_Background", rawGenotype: "01_Background", locus: "MHC-A", cells: ["", "5"]),
+                .init(label: "01_Candidate", rawGenotype: "01_Candidate", locus: "MHC-A", stableClusterID: "candidate-1", cells: ["2", "3"]),
+                .init(label: "01_Middle", rawGenotype: "01_Middle", locus: "MHC-A", cells: ["8", "40"]),
+            ]
+        )
+        let projectionURL = root.appendingPathComponent("viewport.json")
+        try JSONEncoder().encode(projection).write(to: projectionURL)
+        var sidecar = GenotypeAnnotationSidecar.empty(generatedAt: "2026-09-10T00:00:00Z")
+        sidecar.matrixReviews = [
+            .init(target: .cell(locus: "MHC-A", genotype: "01_Middle", sample: "Animal2"), disposition: .falsePositive, author: "analyst", timestamp: "2026-09-10T00:00:01Z"),
+            .init(target: .cell(locus: "MHC-A", genotype: "01_Background", sample: "Animal2"), disposition: .falseNegative, author: "analyst", timestamp: "2026-09-10T00:00:02Z"),
+        ]
+        sidecar.matrixComments = [
+            .init(target: .column(sample: "Animal2"), body: "Visible sample note", author: "analyst", timestamp: "2026-09-10T00:00:03Z"),
+            .init(target: .row(locus: "MHC-A", genotype: "01_Background"), body: "Visible allele note", author: "analyst", timestamp: "2026-09-10T00:00:04Z"),
+            .init(target: .cell(locus: "MHC-A", genotype: "01_Middle", sample: "Animal2"), body: "Visible cell note", author: "analyst", timestamp: "2026-09-10T00:00:05Z"),
+            .init(target: .cell(locus: "MHC-A", genotype: "01_Strong", sample: "Animal1"), body: "Hidden note", author: "analyst", timestamp: "2026-09-10T00:00:06Z"),
+        ]
+        let annotationURL = bundleURL.appendingPathComponent(GenotypeAnnotationSidecar.filename)
+        try sidecar.encoded().write(to: annotationURL)
+        let outputURL = root.appendingPathComponent("exports/viewport.xlsx")
+        let buildDir = root.appendingPathComponent("build", isDirectory: true)
+        try FileManager.default.createDirectory(at: buildDir, withIntermediateDirectories: true)
+        let command = try Command.parse([
+            "--bundle", bundleURL.path, "--output", outputURL.path,
+            "--view-projection", projectionURL.path, "--annotations", annotationURL.path,
+        ])
+
+        try await command.exportFilteredCopy(
+            of: sourceURL,
+            result: makeResult(bundleURL: bundleURL),
+            sidecar: sidecar,
+            thresholds: .none,
+            projection: projection,
+            projectionURL: projectionURL,
+            annotationURL: annotationURL,
+            capturedInputRecords: [
+                ProvenanceRecorder.fileRecord(url: projectionURL, role: .input),
+                ProvenanceRecorder.fileRecord(url: annotationURL, role: .input),
+            ],
+            bundleURL: bundleURL,
+            outputURL: outputURL,
+            buildDir: buildDir,
+            managedPythonResolver: { python },
+            startedAt: Date()
+        )
+
+        let dump = try await runPython(python, script: Self.dumpWorkbookScript, arguments: [outputURL.path], in: root)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(dump.utf8)) as? [String: Any])
+        XCTAssertEqual(object["maxColumn"] as? Int, 5)
+        let rows = try XCTUnwrap(object["rows"] as? [[Any]])
+        XCTAssertEqual(Array(rows[1].dropFirst(3)).compactMap { $0 as? String }, ["Animal2", "Animal1"])
+        let labels = rows.compactMap { $0.first as? String }
+        XCTAssertFalse(labels.contains("01_Strong"))
+        XCTAssertTrue(labels.contains("01_Middle"))
+        XCTAssertTrue(labels.contains("01_Background"))
+        XCTAssertTrue(labels.contains("01_Candidate"), "candidate-only viewport rows survive even without a result call")
+        XCTAssertEqual(labels.filter { $0 == "MHC-A alleles" }.count, 1)
+        XCTAssertLessThan(
+            try XCTUnwrap(labels.firstIndex(of: "MHC-A alleles")),
+            try XCTUnwrap(labels.firstIndex(of: "01_Background"))
+        )
+        XCTAssertLessThan(
+            try XCTUnwrap(labels.firstIndex(of: "01_Background")),
+            try XCTUnwrap(labels.firstIndex(of: "01_Middle"))
+        )
+        let falsePositive = try XCTUnwrap(object["[8]"] as? [String: Any])
+        XCTAssertEqual(falsePositive["italic"] as? Bool, true)
+        XCTAssertTrue((falsePositive["fontColor"] as? String)?.hasSuffix("767676") == true)
+        XCTAssertTrue((falsePositive["comment"] as? String)?.contains("Visible cell note") == true)
+        let falseNegative = try XCTUnwrap(object["FN"] as? [String: Any])
+        XCTAssertEqual(falseNegative["border"] as? String, "mediumDashed")
+        XCTAssertTrue((object["Animal2Comment"] as? String)?.contains("Visible sample note") == true)
+        XCTAssertTrue((object["01_BackgroundComment"] as? String)?.contains("Visible allele note") == true)
+        XCTAssertFalse(dump.contains("Hidden note"))
+
+        let provenance = try XCTUnwrap(ProvenanceEnvelopeReader.load(fromSidecar: ProvenanceRecorder.fileSidecarURL(for: outputURL)))
+        let inputs = provenance.files + provenance.steps.flatMap(\.inputs)
+        XCTAssertTrue(inputs.contains { $0.path == projectionURL.path && $0.checksumSHA256 != nil })
+        XCTAssertTrue(inputs.contains { $0.path == annotationURL.path && $0.checksumSHA256 != nil })
+        XCTAssertTrue(provenance.argv.contains(projectionURL.path))
+        XCTAssertTrue(provenance.argv.contains(annotationURL.path))
+        XCTAssertFalse(provenance.argv.contains("--source-workbook"), "auto-resolved inputs belong in resolved options, not exact argv")
+        XCTAssertEqual(provenance.options.defaults["viewProjection"], .null)
+        XCTAssertEqual(provenance.options.defaults["annotations"], .null)
+        XCTAssertEqual(provenance.options.resolvedDefaults["viewProjection"], .file(projectionURL))
+        XCTAssertEqual(provenance.options.resolvedDefaults["annotations"], .file(annotationURL))
+        XCTAssertEqual(provenance.options.resolvedDefaults["minReads"], .integer(0))
+        XCTAssertEqual(provenance.options.resolvedDefaults["percentBasis"], .string("sample-retained"))
+        XCTAssertNotNil(provenance.options.resolvedDefaults["transformRuntime"])
+        XCTAssertNotNil(provenance.options.resolvedDefaults["transformCommand"])
+        let transformStep = try XCTUnwrap(
+            provenance.steps.first { $0.toolName == "python/openpyxl pivot transform" }
+        )
+        XCTAssertEqual(transformStep.exitStatus, 0)
+        XCTAssertNotNil(transformStep.wallTimeSeconds)
+        XCTAssertEqual(transformStep.runtimeIdentity?.condaEnvironment, "openpyxl")
+        XCTAssertEqual(transformStep.inputs.count, 3)
+        XCTAssertTrue(transformStep.inputs.allSatisfy { $0.checksumSHA256?.isEmpty == false })
+    }
+
+    func testViewportAnnotationsRequireExactStableClusterIdentity() throws {
+        let root = try TestTempDirectory.make(prefix: "PivotStableIdentity")
+        defer { TestTempDirectory.cleanup(root) }
+        let bundleURL = root.appendingPathComponent("thresholds.lungfishgenotype", isDirectory: true)
+        let projection = GenotypeViewProjection(
+            lens: "comparison",
+            sampleColumns: ["Animal1"],
+            rows: [
+                .init(
+                    label: "01_Middle",
+                    rawGenotype: "01_Middle",
+                    locus: "MHC-A",
+                    stableClusterID: "cluster-current",
+                    cells: ["40"]
+                ),
+            ]
+        )
+        var sidecar = GenotypeAnnotationSidecar.empty(generatedAt: "2026-09-10T00:00:00Z")
+        sidecar.matrixReviews = [
+            .init(
+                target: .cell(locus: "MHC-A", genotype: "01_Middle", sample: "Animal1"),
+                disposition: .falsePositive,
+                author: "legacy",
+                timestamp: "2026-09-10T00:00:01Z"
+            ),
+        ]
+        sidecar.matrixComments = [
+            .init(
+                target: .row(locus: "MHC-A", genotype: "01_Middle"),
+                body: "Annotation for an obsolete row identity",
+                author: "legacy",
+                timestamp: "2026-09-10T00:00:02Z"
+            ),
+        ]
+
+        let plan = Command.FilterPlan.make(
+            from: makeResult(bundleURL: bundleURL),
+            sidecar: sidecar,
+            thresholds: .none,
+            projection: projection
+        )
+
+        let row = try XCTUnwrap(plan.projectedRows?.first)
+        XCTAssertNil(row.comment)
+        XCTAssertNil(row.cells.first?.review)
     }
 }

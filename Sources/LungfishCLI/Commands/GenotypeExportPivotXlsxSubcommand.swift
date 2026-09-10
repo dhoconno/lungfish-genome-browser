@@ -1,4 +1,5 @@
 import ArgumentParser
+import CryptoKit
 import Foundation
 import LungfishCore
 import LungfishIO
@@ -87,6 +88,18 @@ struct GenotypeExportPivotXlsxSubcommand: AsyncParsableCommand {
     )
     var sourceWorkbook: String?
 
+    @Option(
+        name: .long,
+        help: "Serialized genotype viewport whose visible samples, rows, and cell values define the filtered pivot."
+    )
+    var viewProjection: String?
+
+    @Option(
+        name: .long,
+        help: "Genotype annotation sidecar supplying visible false-positive, false-negative, and comment annotations."
+    )
+    var annotations: String?
+
     func validate() throws {
         if bundle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw ValidationError("--bundle must not be empty.")
@@ -119,7 +132,38 @@ struct GenotypeExportPivotXlsxSubcommand: AsyncParsableCommand {
         // Pick up any analyst-saved dropout/per-locus EQ from the bundle
         // sidecar so the pivot xlsx reflects the same calls the GUI shows
         // — without requiring the analyst to re-export from the inspector.
-        let sidecar = try? ONTGenotypeResultBundleData.loadAnnotationSidecarIfPresent(forBundleAt: bundleURL)
+        let requestedAnnotationURL = annotations.map {
+            URL(fileURLWithPath: $0).standardizedFileURL
+        }
+        let bundleAnnotationURL = ONTGenotypeResultBundleData
+            .annotationSidecarURL(forBundleAt: bundleURL)
+            .standardizedFileURL
+        let annotationURL: URL?
+        let annotationData: Data?
+        let sidecar: GenotypeAnnotationSidecar?
+        if let requestedAnnotationURL, requestedAnnotationURL != bundleAnnotationURL {
+            let data = try Data(contentsOf: requestedAnnotationURL)
+            annotationURL = requestedAnnotationURL
+            annotationData = data
+            sidecar = try GenotypeAnnotationSidecar.decode(data)
+        } else {
+            let snapshot = try ONTGenotypeResultBundleData
+                .loadAnnotationSidecarSnapshot(forBundleAt: bundleURL)
+            annotationURL = snapshot.data == nil ? nil : bundleAnnotationURL
+            annotationData = snapshot.data
+            sidecar = snapshot.data == nil ? nil : snapshot.sidecar
+        }
+        let projectionURL = viewProjection.map {
+            URL(fileURLWithPath: $0).standardizedFileURL
+        }
+        let projectionData = try projectionURL.map { try Data(contentsOf: $0) }
+        let projection = try projectionData.map {
+            try JSONDecoder().decode(GenotypeViewProjection.self, from: $0)
+        }
+        let capturedInputRecords = [
+            Self.capturedInputRecord(url: projectionURL, data: projectionData),
+            Self.capturedInputRecord(url: annotationURL, data: annotationData),
+        ].compactMap { $0 }
         let thresholds = PivotWorkbookBuilder.Thresholds(
             minimumReads: minReads,
             minimumPercent: minPercent,
@@ -142,6 +186,10 @@ struct GenotypeExportPivotXlsxSubcommand: AsyncParsableCommand {
                 result: result,
                 sidecar: sidecar,
                 thresholds: thresholds,
+                projection: projection,
+                projectionURL: projectionURL,
+                annotationURL: annotationURL,
+                capturedInputRecords: capturedInputRecords,
                 bundleURL: bundleURL,
                 outputURL: outputURL,
                 buildDir: buildDir,
@@ -151,32 +199,51 @@ struct GenotypeExportPivotXlsxSubcommand: AsyncParsableCommand {
             return
         }
 
+        if projection != nil {
+            throw ValidationError("A source workbook is required for a viewport-projected pivot export.")
+        }
+
         let workbook = PivotWorkbookBuilder.build(
             from: result,
             sidecar: sidecar,
             thresholds: thresholds
         )
         try Self.writeXLSX(to: outputURL, buildDir: buildDir, workbook: workbook)
+        var command = [
+            CLICommandIdentity.executableName, "genotype", "export-pivot-xlsx",
+            "--bundle", bundle,
+            "--output", output,
+        ]
+        if let annotations {
+            command += ["--annotations", annotations]
+        }
+        command += thresholds.provenanceArguments
         try await GenotypeExportProvenanceSupport.record(
             workflowName: "genotype.export.pivot-xlsx",
             toolName: "lungfish genotype export-pivot-xlsx",
-            command: [
-                CLICommandIdentity.executableName, "genotype", "export-pivot-xlsx",
-                "--bundle", bundleURL.path,
-                "--output", outputURL.path,
-            ] + thresholds.provenanceArguments,
+            command: command,
             bundleURL: bundleURL,
             outputURLs: [outputURL],
             outputDirectory: outputURL.deletingLastPathComponent(),
             optionPaths: [
                 "bundle": bundleURL,
                 "output": outputURL,
-            ],
+            ].merging(
+                annotations == nil ? [:] : (annotationURL.map { ["annotations": $0] } ?? [:])
+            ) { _, new in new },
+            explicitOptions: provenanceExplicitOptions(thresholds: thresholds),
+            defaults: provenanceDefaults,
+            resolvedOptions: provenanceOptions(
+                thresholds: thresholds, sourceWorkbookURL: nil,
+                projectionURL: nil, annotationURL: annotationURL
+            ),
             additionalInputURLs: GenotypeActiveHaplotypeAnalysisResolver.activeDefinitionFileURL(
                 for: result,
                 bundleURL: bundleURL,
                 sidecar: sidecar
             ).map { [$0] } ?? [],
+            additionalInputRecords: capturedInputRecords,
+            excludedInputURLs: capturedInputRecords.map { URL(fileURLWithPath: $0.path) },
             startedAt: startedAt
         )
 
@@ -198,6 +265,74 @@ struct GenotypeExportPivotXlsxSubcommand: AsyncParsableCommand {
         )
         FileHandle.standardOutput.write(summaryData)
         FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private var provenanceDefaults: [String: ParameterValue] {
+        [
+            "minReads": .integer(0),
+            "minPercent": .number(0),
+            "keepEmptyRows": .boolean(false),
+            "percentBasis": .string(PivotWorkbookBuilder.PercentBasis.sampleRetained.rawValue),
+            "sourceWorkbook": .null,
+            "viewProjection": .null,
+            "annotations": .null,
+        ]
+    }
+
+    private func provenanceOptions(
+        thresholds: PivotWorkbookBuilder.Thresholds,
+        sourceWorkbookURL: URL?,
+        projectionURL: URL?,
+        annotationURL: URL?
+    ) -> [String: ParameterValue] {
+        [
+            "minReads": .integer(thresholds.minimumReads),
+            "minPercent": .number(thresholds.minimumPercent),
+            "keepEmptyRows": .boolean(thresholds.keepEmptyRows),
+            "percentBasis": .string(thresholds.percentBasis.rawValue),
+            "sourceWorkbook": sourceWorkbookURL.map(ParameterValue.file) ?? .null,
+            "viewProjection": projectionURL.map(ParameterValue.file) ?? .null,
+            "annotations": annotationURL.map(ParameterValue.file) ?? .null,
+        ]
+    }
+
+    private func provenanceExplicitOptions(
+        thresholds: PivotWorkbookBuilder.Thresholds
+    ) -> [String: ParameterValue] {
+        var options: [String: ParameterValue] = [:]
+        if thresholds.minimumReads != 0 {
+            options["minReads"] = .integer(thresholds.minimumReads)
+        }
+        if thresholds.minimumPercent != 0 {
+            options["minPercent"] = .number(thresholds.minimumPercent)
+        }
+        if thresholds.keepEmptyRows {
+            options["keepEmptyRows"] = .boolean(true)
+        }
+        if thresholds.percentBasis != .sampleRetained {
+            options["percentBasis"] = .string(thresholds.percentBasis.rawValue)
+        }
+        if let sourceWorkbook {
+            options["sourceWorkbook"] = .file(URL(fileURLWithPath: sourceWorkbook))
+        }
+        if let viewProjection {
+            options["viewProjection"] = .file(URL(fileURLWithPath: viewProjection))
+        }
+        if let annotations {
+            options["annotations"] = .file(URL(fileURLWithPath: annotations))
+        }
+        return options
+    }
+
+    private static func capturedInputRecord(url: URL?, data: Data?) -> FileRecord? {
+        guard let url, let data else { return nil }
+        return FileRecord(
+            path: url.path,
+            sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+            sizeBytes: UInt64(data.count),
+            format: .json,
+            role: .input
+        )
     }
 
     // MARK: - Workbook shape
@@ -967,14 +1102,40 @@ extension GenotypeExportPivotXlsxSubcommand {
             let keep: [String]
         }
 
+        struct Comment: Codable, Equatable {
+            let body: String
+            let author: String
+            let timestamp: String
+        }
+
+        struct ProjectedCell: Codable, Equatable {
+            let sample: String
+            let value: String
+            let review: String?
+            let comment: Comment?
+        }
+
+        struct ProjectedRow: Codable, Equatable {
+            let genotype: String
+            let locus: String?
+            let stableClusterID: String?
+            let cells: [ProjectedCell]
+            let comment: Comment?
+        }
+
         let sheet: String
         let keepEmptyRows: Bool
         let rows: [Row]
+        let visibleSamples: [String]?
+        let projectedRows: [ProjectedRow]?
+        let allGenotypes: [String]
+        let columnComments: [String: Comment]
 
         static func make(
             from result: ONTGenotypeResultBundleData,
             sidecar: GenotypeAnnotationSidecar?,
-            thresholds: PivotWorkbookBuilder.Thresholds
+            thresholds: PivotWorkbookBuilder.Thresholds,
+            projection: GenotypeViewProjection? = nil
         ) -> FilterPlan {
             var planThresholds = thresholds
             planThresholds.keepEmptyRows = true
@@ -993,10 +1154,92 @@ extension GenotypeExportPivotXlsxSubcommand {
                     )
                 }
             }
+            let projectedGenotypes = projection?.rows.map { $0.rawGenotype ?? $0.label } ?? []
+            let allGenotypes = Array(
+                Set(result.calls.map(\.genotype)).union(projectedGenotypes)
+            ).sorted()
+            guard let projection else {
+                return FilterPlan(
+                    sheet: workbook.sheetName,
+                    keepEmptyRows: thresholds.keepEmptyRows,
+                    rows: rows,
+                    visibleSamples: nil,
+                    projectedRows: nil,
+                    allGenotypes: allGenotypes,
+                    columnComments: [:]
+                )
+            }
+
+            let comments = sidecar?.resolvedMatrixComments ?? [:]
+            var reviews: [GenotypeAnnotationSidecar.MatrixTarget: GenotypeAnnotationSidecar.MatrixReviewAnnotation] = [:]
+            for review in sidecar?.matrixReviews ?? [] {
+                reviews[review.target] = review
+            }
+            func matches(
+                _ target: GenotypeAnnotationSidecar.MatrixTarget,
+                row: GenotypeViewProjectionRow,
+                sample: String? = nil
+            ) -> Bool {
+                guard target.genotype == (row.rawGenotype ?? row.label),
+                      target.locus == row.locus else { return false }
+                if let targetSample = target.sample, targetSample != sample { return false }
+                return target.stableClusterID == row.stableClusterID
+            }
+            func exportedComment(
+                matching kind: (GenotypeAnnotationSidecar.MatrixTarget) -> Bool
+            ) -> Comment? {
+                comments.first(where: { kind($0.key) }).map {
+                    Comment(body: $0.value.body, author: $0.value.author, timestamp: $0.value.timestamp)
+                }
+            }
+            let projectedRows = projection.rows.map { row in
+                let genotype = row.rawGenotype ?? row.label
+                let cells = projection.sampleColumns.enumerated().map { index, sample in
+                    let review = reviews.first(where: {
+                        if case .cell = $0.key { return matches($0.key, row: row, sample: sample) }
+                        return false
+                    })?.value.disposition.rawValue
+                    let comment = exportedComment {
+                        if case .cell = $0 { return matches($0, row: row, sample: sample) }
+                        return false
+                    }
+                    return ProjectedCell(
+                        sample: sample,
+                        value: index < row.cells.count ? row.cells[index] : "",
+                        review: review,
+                        comment: comment
+                    )
+                }
+                let rowComment = exportedComment {
+                    if case .row = $0 { return matches($0, row: row) }
+                    return false
+                }
+                return ProjectedRow(
+                    genotype: genotype,
+                    locus: row.locus,
+                    stableClusterID: row.stableClusterID,
+                    cells: cells,
+                    comment: rowComment
+                )
+            }
+            var columnComments: [String: Comment] = [:]
+            for sample in projection.sampleColumns {
+                if let comment = comments[.column(sample: sample)] {
+                    columnComments[sample] = Comment(
+                        body: comment.body,
+                        author: comment.author,
+                        timestamp: comment.timestamp
+                    )
+                }
+            }
             return FilterPlan(
                 sheet: workbook.sheetName,
                 keepEmptyRows: thresholds.keepEmptyRows,
-                rows: rows
+                rows: rows,
+                visibleSamples: projection.sampleColumns,
+                projectedRows: projectedRows,
+                allGenotypes: allGenotypes,
+                columnComments: columnComments
             )
         }
     }
@@ -1006,6 +1249,9 @@ extension GenotypeExportPivotXlsxSubcommand {
         let matchedAlleleRows: Int
         let blankedValues: Int
         let removedAlleleRows: Int
+        let pythonExecutable: String
+        let pythonVersion: String
+        let openpyxlVersion: String
     }
 
     /// Copies `sourceWorkbookURL` to the output with only its pivot sheet
@@ -1020,6 +1266,10 @@ extension GenotypeExportPivotXlsxSubcommand {
         result: ONTGenotypeResultBundleData,
         sidecar: GenotypeAnnotationSidecar?,
         thresholds: PivotWorkbookBuilder.Thresholds,
+        projection: GenotypeViewProjection? = nil,
+        projectionURL: URL? = nil,
+        annotationURL: URL? = nil,
+        capturedInputRecords: [FileRecord] = [],
         bundleURL: URL,
         outputURL: URL,
         buildDir: URL,
@@ -1029,7 +1279,12 @@ extension GenotypeExportPivotXlsxSubcommand {
         guard FileManager.default.fileExists(atPath: sourceWorkbookURL.path) else {
             throw FilteredCopyError(message: "Source workbook not found: \(sourceWorkbookURL.path)")
         }
-        let plan = FilterPlan.make(from: result, sidecar: sidecar, thresholds: thresholds)
+        let plan = FilterPlan.make(
+            from: result,
+            sidecar: sidecar,
+            thresholds: thresholds,
+            projection: projection
+        )
         let planURL = buildDir.appendingPathComponent("filter-plan.json")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -1042,10 +1297,12 @@ extension GenotypeExportPivotXlsxSubcommand {
             at: outputURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        let transformStartedAt = Date()
         let (status, stdout, stderr) = try await Self.runProcess(
             executableURL: pythonURL,
             arguments: [scriptURL.path, sourceWorkbookURL.path, outputURL.path, planURL.path]
         )
+        let transformCompletedAt = Date()
         guard status == 0 else {
             throw FilteredCopyError(
                 message: "Filtering the pivot sheet failed (exit \(status)): \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))"
@@ -1055,11 +1312,77 @@ extension GenotypeExportPivotXlsxSubcommand {
 
         var command = [
             CLICommandIdentity.executableName, "genotype", "export-pivot-xlsx",
-            "--bundle", bundleURL.path,
-            "--output", outputURL.path,
-            "--source-workbook", sourceWorkbookURL.path,
+            "--bundle", bundle,
+            "--output", output,
         ]
+        if let sourceWorkbook {
+            command += ["--source-workbook", sourceWorkbook]
+        }
+        if let viewProjection {
+            command += ["--view-projection", viewProjection]
+        }
+        if let annotations {
+            command += ["--annotations", annotations]
+        }
         command += thresholds.provenanceArguments
+        let transformCommand = [
+            pythonURL.path, scriptURL.path, sourceWorkbookURL.path, outputURL.path, planURL.path,
+        ]
+        let resolvedOptions = provenanceOptions(
+            thresholds: thresholds,
+            sourceWorkbookURL: sourceWorkbookURL,
+            projectionURL: projectionURL,
+            annotationURL: annotationURL
+        ).merging([
+            "transformRuntime": .dictionary([
+                "pythonExecutable": .file(URL(fileURLWithPath: summary.pythonExecutable)),
+                "pythonVersion": .string(summary.pythonVersion),
+                "openpyxlVersion": .string(summary.openpyxlVersion),
+            ]),
+            "transformCommand": .array(transformCommand.map(ParameterValue.string)),
+            "transformExitStatus": .integer(Int(status)),
+        ]) { _, new in new }
+        let condaPrefix = pythonURL.deletingLastPathComponent().deletingLastPathComponent()
+        let transformStep = ProvenanceStep(
+            toolName: "python/openpyxl pivot transform",
+            toolVersion: summary.openpyxlVersion,
+            argv: transformCommand,
+            durableReplayArgv: command,
+            resolvedOptions: [
+                "pythonVersion": .string(summary.pythonVersion),
+                "openpyxlVersion": .string(summary.openpyxlVersion),
+                "filterPlan": .file(planURL),
+            ],
+            runtimeIdentity: ProvenanceRuntimeIdentity(
+                appVersion: summary.pythonVersion,
+                executablePath: summary.pythonExecutable,
+                condaEnvironment: "openpyxl",
+                condaPrefix: condaPrefix.path,
+                dependencySet: "openpyxl=\(summary.openpyxlVersion)"
+            ),
+            inputs: [sourceWorkbookURL, scriptURL, planURL].map {
+                ProvenanceFileDescriptor(
+                    fileRecord: ProvenanceRecorder.fileRecord(url: $0, role: .input)
+                )
+            },
+            outputs: [
+                ProvenanceFileDescriptor(
+                    fileRecord: ProvenanceRecorder.fileRecord(url: outputURL, role: .output)
+                ),
+            ],
+            exitStatus: Int(status),
+            wallTimeSeconds: max(0, transformCompletedAt.timeIntervalSince(transformStartedAt)),
+            stderr: stderr,
+            startedAt: transformStartedAt,
+            completedAt: transformCompletedAt
+        )
+        var optionPaths: [String: URL] = [
+            "bundle": bundleURL,
+            "output": outputURL,
+        ]
+        if sourceWorkbook != nil { optionPaths["source-workbook"] = sourceWorkbookURL }
+        if viewProjection != nil, let projectionURL { optionPaths["view-projection"] = projectionURL }
+        if annotations != nil, let annotationURL { optionPaths["annotations"] = annotationURL }
         try await GenotypeExportProvenanceSupport.record(
             workflowName: "genotype.export.pivot-xlsx",
             toolName: "lungfish genotype export-pivot-xlsx",
@@ -1067,11 +1390,10 @@ extension GenotypeExportPivotXlsxSubcommand {
             bundleURL: bundleURL,
             outputURLs: [outputURL],
             outputDirectory: outputURL.deletingLastPathComponent(),
-            optionPaths: [
-                "bundle": bundleURL,
-                "output": outputURL,
-                "source-workbook": sourceWorkbookURL,
-            ],
+            optionPaths: optionPaths,
+            explicitOptions: provenanceExplicitOptions(thresholds: thresholds),
+            defaults: provenanceDefaults,
+            resolvedOptions: resolvedOptions,
             additionalInputURLs: [sourceWorkbookURL] + (
                 GenotypeActiveHaplotypeAnalysisResolver.activeDefinitionFileURL(
                     for: result,
@@ -1079,6 +1401,9 @@ extension GenotypeExportPivotXlsxSubcommand {
                     sidecar: sidecar
                 ).map { [$0] } ?? []
             ),
+            additionalInputRecords: capturedInputRecords,
+            excludedInputURLs: capturedInputRecords.map { URL(fileURLWithPath: $0.path) },
+            extraSteps: [transformStep],
             startedAt: startedAt
         )
 
@@ -1159,9 +1484,14 @@ extension GenotypeExportPivotXlsxSubcommand {
     /// row already carried numbers there.
     static let filterPivotSheetScript = #"""
 import json
+import platform
 import sys
+from copy import copy
 
+import openpyxl
 from openpyxl import load_workbook
+from openpyxl.comments import Comment
+from openpyxl.styles import PatternFill, Side
 
 source, output, plan_path = sys.argv[1:4]
 with open(plan_path) as handle:
@@ -1188,6 +1518,85 @@ for column in range(4, sheet.max_column + 1):
     if isinstance(name, str) and name.strip():
         sample_columns[name.strip()] = column
 
+visible_samples = plan.get("visibleSamples")
+projected_rows = plan.get("projectedRows")
+if visible_samples is not None:
+    if len(visible_samples) != len(set(visible_samples)):
+        sys.stderr.write("The viewport projection contains duplicate sample columns.\n")
+        sys.exit(3)
+    missing_samples = [sample for sample in visible_samples if sample not in sample_columns]
+    if missing_samples:
+        sys.stderr.write("The pivot sheet is missing projected samples: " + ", ".join(missing_samples) + "\n")
+        sys.exit(3)
+
+    def snapshot_cell(cell):
+        return {
+            "value": cell.value,
+            "style": copy(cell._style),
+            "comment": copy(cell.comment),
+            "hyperlink": copy(cell.hyperlink),
+        }
+
+    def restore_cell(cell, state):
+        cell.value = state["value"]
+        cell._style = copy(state["style"])
+        cell.comment = copy(state["comment"])
+        cell._hyperlink = copy(state["hyperlink"])
+
+    sample_snapshots = {}
+    sample_widths = {}
+    for sample in visible_samples:
+        source_column = sample_columns[sample]
+        sample_snapshots[sample] = [
+            snapshot_cell(sheet.cell(row, source_column))
+            for row in range(1, sheet.max_row + 1)
+        ]
+        source_letter = sheet.cell(1, source_column).column_letter
+        sample_widths[sample] = copy(sheet.column_dimensions[source_letter])
+
+    existing_sample_count = max(0, sheet.max_column - 3)
+    if existing_sample_count:
+        sheet.delete_cols(4, existing_sample_count)
+    if visible_samples:
+        sheet.insert_cols(4, len(visible_samples))
+    sample_columns = {}
+    for offset, sample in enumerate(visible_samples):
+        target_column = 4 + offset
+        sample_columns[sample] = target_column
+        for row, state in enumerate(sample_snapshots[sample], start=1):
+            restore_cell(sheet.cell(row, target_column), state)
+        target_letter = sheet.cell(1, target_column).column_letter
+        source_dimension = sample_widths[sample]
+        sheet.column_dimensions[target_letter].width = source_dimension.width
+        sheet.column_dimensions[target_letter].hidden = source_dimension.hidden
+
+def annotation_text(entry, label):
+    if not entry:
+        return None
+    return "\n".join([
+        "[LGE Matrix Comments]",
+        label,
+        "Body: " + str(entry.get("body") or ""),
+        "Author: " + str(entry.get("author") or "Lungfish"),
+        "Timestamp: " + str(entry.get("timestamp") or ""),
+    ])
+
+def apply_comment(cell, entry, label):
+    text = annotation_text(entry, label)
+    if text is None:
+        return
+    base = ""
+    author = "Lungfish"
+    if cell.comment is not None:
+        base = cell.comment.text.split("[LGE Matrix Comments]", 1)[0].rstrip()
+        author = cell.comment.author or author
+    cell.comment = Comment("\n\n".join(part for part in (base, text) if part), author if base else "Lungfish")
+
+for sample, entry in (plan.get("columnComments") or {}).items():
+    column = sample_columns.get(sample)
+    if column is not None:
+        apply_comment(sheet.cell(header_row, column), entry, "Sample column: " + sample)
+
 first_allele_row = header_row + 1
 for row in range(header_row, sheet.max_row + 1):
     if sheet.cell(row, 1).value == "Comments":
@@ -1197,7 +1606,132 @@ for row in range(header_row, sheet.max_row + 1):
 matched = 0
 blanked = 0
 rows_to_delete = []
+if projected_rows is not None:
+    all_genotypes = set(plan.get("allGenotypes") or [])
+    projected_names = [row["genotype"] for row in projected_rows]
+    if len(projected_names) != len(set(projected_names)):
+        sys.stderr.write(
+            "The viewport projection contains duplicate genotype labels; "
+            "the pivot workbook cannot disambiguate their locus/stable identities.\n"
+        )
+        sys.exit(4)
+
+    def snapshot_row(row):
+        return [snapshot_cell(sheet.cell(row, column)) for column in range(1, sheet.max_column + 1)]
+
+    source_rows = {}
+    source_groups = {}
+    current_group = None
+    for source_row in range(first_allele_row, sheet.max_row + 1):
+        name = sheet.cell(source_row, 1).value
+        if (
+            isinstance(name, str)
+            and name not in all_genotypes
+            and name != "Genotype"
+            and name.lower().endswith("alleles")
+        ):
+            current_group = (name, snapshot_row(source_row))
+        if isinstance(name, str) and name in all_genotypes:
+            source_rows.setdefault(name, []).append(source_row)
+            source_groups[name] = current_group
+    ambiguous = [name for name in projected_names if len(source_rows.get(name, [])) != 1]
+    if ambiguous:
+        sys.stderr.write(
+            "The pivot sheet must contain exactly one row for each projected genotype: "
+            + ", ".join(ambiguous) + "\n"
+        )
+        sys.exit(4)
+
+    projected_sequence = []
+    emitted_groups = set()
+    for projected in projected_rows:
+        source_row = source_rows[projected["genotype"]][0]
+        group = source_groups.get(projected["genotype"])
+        group_name = group[0] if group is not None else None
+        if group is not None and group_name not in emitted_groups:
+            projected_sequence.append((None, group[1]))
+            emitted_groups.add(group_name)
+        projected_sequence.append((projected, snapshot_row(source_row)))
+
+    genotype_header_state = None
+    if sheet.cell(first_allele_row, 1).value == "Genotype":
+        genotype_header_state = snapshot_row(first_allele_row)
+        rewrite_start = first_allele_row + 1
+    else:
+        rewrite_start = first_allele_row
+    original_allele_rows = sum(len(rows) for rows in source_rows.values())
+    sheet.delete_rows(rewrite_start, sheet.max_row - rewrite_start + 1)
+    if projected_sequence:
+        sheet.insert_rows(rewrite_start, len(projected_sequence))
+    for offset, (_, state) in enumerate(projected_sequence):
+        target_row = rewrite_start + offset
+        for column, cell_state in enumerate(state, start=1):
+            restore_cell(sheet.cell(target_row, column), cell_state)
+
+    if genotype_header_state is not None:
+        for column, cell_state in enumerate(genotype_header_state, start=1):
+            restore_cell(sheet.cell(first_allele_row, column), cell_state)
+
+    for offset, (projected, _) in enumerate(projected_sequence):
+        if projected is None:
+            continue
+        row = rewrite_start + offset
+        name = projected["genotype"]
+        matched += 1
+        apply_comment(sheet.cell(row, 1), projected.get("comment"), "Allele row: " + name)
+        remaining = []
+        cells_by_sample = {cell["sample"]: cell for cell in projected.get("cells", [])}
+        for sample, column in sample_columns.items():
+            projected_cell = cells_by_sample.get(sample, {})
+            raw_value = str(projected_cell.get("value") or "").strip()
+            cell = sheet.cell(row, column)
+            if raw_value in ("", "-"):
+                cell.value = None
+            else:
+                try:
+                    number = int(raw_value.replace(",", ""))
+                    cell.value = number
+                    remaining.append(number)
+                except ValueError:
+                    cell.value = raw_value
+            review = projected_cell.get("review")
+            if review == "falsePositive" and cell.value is not None:
+                display = cell.value
+                cell.value = "[" + str(display) + "]"
+                font = copy(cell.font)
+                font.italic = True
+                font.color = "FF767676"
+                cell.font = font
+            elif review == "falseNegative":
+                cell.value = "FN"
+                warning_side = Side(style="mediumDashed", color="FFC65911")
+                border = copy(cell.border)
+                border.left = copy(warning_side)
+                border.right = copy(warning_side)
+                border.top = copy(warning_side)
+                border.bottom = copy(warning_side)
+                cell.border = border
+                cell.fill = PatternFill(fill_type="solid", fgColor="FFFFF2CC")
+                font = copy(cell.font)
+                font.bold = True
+                font.color = "FF7F6000"
+                cell.font = font
+            apply_comment(
+                cell,
+                projected_cell.get("comment"),
+                "Cell: " + sample + " / " + name,
+            )
+        total_cell = sheet.cell(row, 2)
+        observed_cell = sheet.cell(row, 3)
+        if isinstance(total_cell.value, (int, float)):
+            total_cell.value = sum(remaining) if remaining else None
+        if isinstance(observed_cell.value, (int, float)):
+            observed_cell.value = len(remaining) if remaining else None
+    removed_projected_rows = max(0, original_allele_rows - len(projected_rows))
+
 for row in range(first_allele_row, sheet.max_row + 1):
+    if projected_rows is not None:
+        break
     name = sheet.cell(row, 1).value
     if not isinstance(name, str) or name not in survivors:
         continue
@@ -1231,7 +1765,10 @@ print(json.dumps({
     "sheet": sheet.title,
     "matchedAlleleRows": matched,
     "blankedValues": blanked,
-    "removedAlleleRows": len(rows_to_delete),
+    "removedAlleleRows": removed_projected_rows if projected_rows is not None else len(rows_to_delete),
+    "pythonExecutable": sys.executable,
+    "pythonVersion": platform.python_version(),
+    "openpyxlVersion": openpyxl.__version__,
 }))
 """#
 }
