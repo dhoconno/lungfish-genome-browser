@@ -1,4 +1,5 @@
 import SwiftUI
+import LungfishKit
 import LungfishCore
 import LungfishIO
 
@@ -7,6 +8,10 @@ import LungfishIO
 /// reading a shared bundle can see the analyst's annotation history without
 /// opening the JSON file. Entries are immutable; deleted entries don't exist.
 struct GenotypeAuditTimelineSection: View {
+    private let typographyModel = ContentTypographyModel.shared
+    private var contentBodyFont: Font { typographyModel.font(for: .body) }
+    private var contentHeadingFont: Font { typographyModel.font(for: .emphasizedBody) }
+
     let entries: [GenotypeAnnotationSidecar.AuditEntry]
     var entryLimit: Int = 10
 
@@ -17,12 +22,12 @@ struct GenotypeAuditTimelineSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Audit timeline")
-                .font(.subheadline.weight(.semibold))
+                .font(contentHeadingFont)
                 .foregroundStyle(.secondary)
             if entries.isEmpty {
                 Text("No annotations recorded yet.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(contentBodyFont)
+                    .foregroundStyle(.secondary)
             } else {
                 ForEach(0..<displayedEntries.count, id: \.self) { index in
                     entryRow(displayedEntries[index])
@@ -32,8 +37,8 @@ struct GenotypeAuditTimelineSection: View {
                 }
                 if entries.count > entryLimit {
                     Text("+ \(entries.count - entryLimit) earlier entries")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(contentBodyFont)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -44,31 +49,30 @@ struct GenotypeAuditTimelineSection: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(displayName(for: entry.action))
-                    .font(.caption.weight(.semibold))
+                    .font(contentHeadingFont)
                     .foregroundStyle(.primary)
                 Spacer()
                 Text(shortTimestamp(entry.timestamp))
-                    .font(.caption2.monospacedDigit())
+                    .font(contentBodyFont.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(entry.author)
-                    .font(.caption2)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                 Text("·")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Text(scopeDescription(entry))
-                    .font(.caption2.monospaced())
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                Text(scopeDescription(entry))
+                    .font(contentBodyFont.monospaced())
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let change = changeSummary(entry) {
                 Text(change)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
+                    .font(contentBodyFont)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

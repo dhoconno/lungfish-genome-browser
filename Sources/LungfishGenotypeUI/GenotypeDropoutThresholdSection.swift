@@ -4,6 +4,10 @@ import LungfishCore
 import LungfishIO
 
 struct GenotypeDropoutThresholdSection: View {
+    private let typographyModel = ContentTypographyModel.shared
+    private var contentBodyFont: Font { typographyModel.font(for: .body) }
+    private var contentHeadingFont: Font { typographyModel.font(for: .emphasizedBody) }
+
     @Binding var absoluteEnabled: Bool
     @Binding var absoluteValue: Int
     @Binding var sampleFractionEnabled: Bool
@@ -24,30 +28,30 @@ struct GenotypeDropoutThresholdSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Dropout thresholds")
-                .font(.caption.weight(.semibold))
+                .font(contentHeadingFont)
                 .foregroundStyle(.secondary)
             Text("A diagnostic allele is marked low support if any active threshold is breached. Changes re-derive haplotype calls live.")
-                .font(.caption2)
+                .font(contentBodyFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Absolute reads", isOn: $absoluteEnabled)
-                    .font(.caption)
+                    .font(contentBodyFont)
                 if absoluteEnabled {
                     HStack {
                         Stepper("\(absoluteValue) reads",
                                 value: $absoluteValue,
                                 in: 1...10_000,
                                 step: 10)
-                            .font(.caption)
+                            .font(contentBodyFont)
                     }
                 }
             }
 
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("% of sample reads", isOn: $sampleFractionEnabled)
-                    .font(.caption)
+                    .font(contentBodyFont)
                 if sampleFractionEnabled {
                     InlineNumericSliderField(
                         accessibilityTitle: "% of sample reads",
@@ -62,7 +66,7 @@ struct GenotypeDropoutThresholdSection: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("% of locus reads", isOn: $locusFractionEnabled)
-                    .font(.caption)
+                    .font(contentBodyFont)
                 if locusFractionEnabled {
                     InlineNumericSliderField(
                         accessibilityTitle: "% of locus reads",
@@ -80,7 +84,7 @@ struct GenotypeDropoutThresholdSection: View {
                             perLocusGrid
                                 .padding(.top, 4)
                         }
-                        .font(.caption2)
+                        .font(contentBodyFont)
                     }
                 }
             }
@@ -88,7 +92,7 @@ struct GenotypeDropoutThresholdSection: View {
             Button("Apply thresholds") {
                 onApply(currentEvaluator())
             }
-            .controlSize(.small)
+            .controlSize(.regular)
         }
     }
 
@@ -101,7 +105,7 @@ struct GenotypeDropoutThresholdSection: View {
             ForEach(availableLoci, id: \.self) { locus in
                 HStack(spacing: 8) {
                     Text(locus)
-                        .font(.caption2.monospaced())
+                        .font(contentBodyFont.monospaced())
                         .frame(width: 70, alignment: .leading)
                     let override = perLocusFractionPercents[locus]
                     let effective = override ?? locusFractionPercent
@@ -127,12 +131,12 @@ struct GenotypeDropoutThresholdSection: View {
                     )
                     Text(String(format: "%.1f%%", effective))
                         .monospacedDigit()
-                        .font(.caption2)
+                        .font(contentBodyFont)
                         .frame(width: 48, alignment: .trailing)
                         .foregroundStyle(override != nil ? Color.accentColor : Color.secondary)
                     Button(action: { perLocusFractionPercents.removeValue(forKey: locus) }) {
                         Image(systemName: "arrow.uturn.backward.circle")
-                            .font(.caption2)
+                            .font(contentBodyFont)
                     }
                     .buttonStyle(.plain)
                     .opacity(override != nil ? 1.0 : 0.25)

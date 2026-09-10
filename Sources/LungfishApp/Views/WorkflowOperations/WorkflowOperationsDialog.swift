@@ -5,6 +5,25 @@ import LungfishWorkflow
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum MiSeqWorkflowSetupHelp {
+    static let reference = LungfishHelpContent.HelpItem(
+        id: "workflow.miseq.reference",
+        summary: "MHC bundles contain allele sequences, haplotype definitions and display order. FASTA files contain sequences; choose a separate definition to call haplotypes.",
+        detail: "An MHC reference bundle contains allele sequences, haplotype definitions and display order. A FASTA contains sequences; choose a separate definition to call haplotypes.",
+        audience: .benchScientist,
+        provenanceRelevant: true
+    )
+
+    static let minimumSupport = LungfishHelpContent.HelpItem(
+        id: "workflow.miseq.minimumSupport",
+        summary: "Minimum supporting reads used to evaluate haplotype evidence.",
+        detail: "This is an analysis setting and is recorded with the run. Inspector filters change only what is displayed.",
+        audience: .analyst,
+        provenanceRelevant: true
+    )
+
+}
+
 struct WorkflowOperationsDialog: View {
     @Bindable var state: WorkflowOperationDialogState
     let onRun: (WorkflowOperationLaunchRequest) -> Void
@@ -152,6 +171,7 @@ private struct WorkflowOperationsDetailPane: View {
     private var referencePicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             groupLabel("Reference")
+                .lungfishHelpIfPresent(state.selectedTool?.kind == .ontGenotyping ? MiSeqWorkflowSetupHelp.reference : nil)
             if state.isDiscoveringProjectResources && state.projectReferenceCandidates.isEmpty {
                 helperText("Scanning project resources...")
                     .accessibilityIdentifier("workflow-operations-reference-scan-status")
@@ -168,8 +188,9 @@ private struct WorkflowOperationsDetailPane: View {
             }
             HStack(spacing: 10) {
                 Text(state.selectedReferenceDisplay)
-                    .font(.caption)
-                    .foregroundStyle(state.selectedReferenceURL == nil ? Color.lungfishOrangeFallback : Color.lungfishSecondaryText)
+                    .font(.body)
+                    .help(state.selectedReferenceDisplay)
+                    .foregroundStyle(state.selectedReferenceURL == nil ? Color.lungfishOrangeFallback : Color.primary)
                     .lineLimit(2)
                 Spacer()
                 if case .twelveSAmpliconMatching = state.selectedTool?.kind {
@@ -221,8 +242,9 @@ private struct WorkflowOperationsDetailPane: View {
                     .accessibilityIdentifier("workflow-operations-locate-repeat-reads")
             }
             Text(state.selectedReadsDisplay)
-                .font(.caption)
-                .foregroundStyle(state.selectedReadURLs.isEmpty ? Color.lungfishOrangeFallback : Color.lungfishSecondaryText)
+                .font(.body)
+                .help(state.selectedReadsDisplay)
+                .foregroundStyle(state.selectedReadURLs.isEmpty ? Color.lungfishOrangeFallback : Color.primary)
                 .lineLimit(3)
                 .accessibilityIdentifier("workflow-operations-resolved-input-summary")
             if let folderEmptyNoticeText = state.folderEmptyNoticeText {
@@ -292,15 +314,15 @@ private struct WorkflowOperationsDetailPane: View {
         case .ontGenotyping:
             VStack(alignment: .leading, spacing: 12) {
                 workflowFormGroup("Report") {
-                    labeledTextField("Report Name", text: $state.outputName)
+                    labeledTextField("Report Name", text: $state.outputName, help: LungfishHelpContent.fastqReportName)
                 }
                 workflowFormGroup("Run Parameters") {
                     HStack(spacing: 12) {
-                        labeledCompactTextField("Threads", value: $state.threads)
-                        labeledCompactTextField("Min Reads", value: $state.minSupport)
+                        labeledCompactTextField("Threads", value: $state.threads, help: LungfishHelpContent.fastqThreads)
+                        labeledCompactTextField("Minimum supporting reads", value: $state.minSupport, help: MiSeqWorkflowSetupHelp.minimumSupport)
                     }
                     Text(state.effectiveGenotypingMode.displayName)
-                        .font(.caption)
+                        .font(.body)
                         .foregroundStyle(.secondary)
                 }
                 ampliconAnalysisModePicker
@@ -308,10 +330,10 @@ private struct WorkflowOperationsDetailPane: View {
         case .fullLengthONTMHCGenotyping:
             VStack(alignment: .leading, spacing: 12) {
                 workflowFormGroup("Report") {
-                    labeledTextField("Report Name", text: $state.outputName)
+                    labeledTextField("Report Name", text: $state.outputName, help: LungfishHelpContent.fastqReportName)
                 }
                 workflowFormGroup("Run Parameters") {
-                    labeledCompactTextField("Threads", value: $state.threads)
+                    labeledCompactTextField("Threads", value: $state.threads, help: LungfishHelpContent.fastqThreads)
                 }
                 workflowFormGroup("Length Filter") {
                     HStack(spacing: 12) {
@@ -371,6 +393,8 @@ private struct WorkflowOperationsDetailPane: View {
                 }
             }
             .pickerStyle(.segmented)
+            .help(state.selectedAmpliconAnalysisMode.helpText)
+            .accessibilityHint(state.selectedAmpliconAnalysisMode.helpText)
             if !state.aiSpecialistPresetsAvailable {
                 helperText("AI specialist presets require configured API access.")
             }
@@ -421,7 +445,7 @@ private struct WorkflowOperationsDetailPane: View {
                 Button("Manage\u{2026}") {
                     NSApp.sendAction(#selector(ToolsMenuActions.showHaplotypeDefinitions(_:)), to: nil, from: nil)
                 }
-                .controlSize(.small)
+                .help("Inspect, import or edit haplotype definitions.")
             }
             if state.usesBundledHaplotypeDefinitions {
                 bundledHaplotypeSummary
@@ -438,7 +462,7 @@ private struct WorkflowOperationsDetailPane: View {
                 .foregroundStyle(.secondary)
             Spacer()
         }
-        Text("This bundle pairs its own haplotype definition with the reference FASTA.")
+        Text("Definitions supplied by the selected reference bundle.")
             .font(.caption)
             .foregroundStyle(.secondary)
     }
@@ -460,15 +484,13 @@ private struct WorkflowOperationsDetailPane: View {
         }
         .pickerStyle(.menu)
         Picker("Definition", selection: haplotypeDefinitionBinding) {
-            Text("No haplotyping").tag("")
+            Text(state.selectedTool?.kind == .ontGenotyping ? "Choose definition…" : "No haplotyping").tag("")
             ForEach(haplotypeDefinitionOptions, id: \.id) { option in
                 Text(option.label).tag(option.id)
             }
         }
         .pickerStyle(.menu)
-        Text("Deterministic haplotyping runs only when a definition is selected.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        .help("Definitions identify the diagnostic alleles used to assign haplotypes.")
     }
 
     @ViewBuilder
@@ -477,12 +499,12 @@ private struct WorkflowOperationsDetailPane: View {
         case .ontGenotyping:
             DisclosureGroup("Advanced Options", isExpanded: $state.advancedOptionsExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
-                    labeledTextField("minimap2 arguments", text: $state.extraArgumentsText)
+                    labeledTextField("minimap2 arguments", text: $state.extraArgumentsText, help: LungfishHelpContent.fastqAdvancedArguments)
                     Toggle("Keep Intermediates", isOn: $state.keepIntermediates)
                     Text("Keeps large regenerable work files for troubleshooting. Off is recommended for normal runs.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("Arguments are passed to minimap2 after the ONT mapping preset.")
+                    Text("Additional arguments follow the mapping preset for the selected read platform.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -547,8 +569,9 @@ private struct WorkflowOperationsDetailPane: View {
             groupLabel("Directory")
             HStack(spacing: 10) {
                 Text(state.outputDirectoryDisplay)
-                    .font(.caption)
-                    .foregroundStyle(state.outputDirectoryURL == nil ? Color.lungfishOrangeFallback : Color.lungfishSecondaryText)
+                    .font(.body)
+                    .help(state.outputDirectoryDisplay)
+                    .foregroundStyle(state.outputDirectoryURL == nil ? Color.lungfishOrangeFallback : Color.primary)
                     .lineLimit(2)
                 Spacer()
                 Button(state.outputDirectoryURL == nil ? "Choose…" : "Replace…") {
@@ -654,23 +677,25 @@ private struct WorkflowOperationsDetailPane: View {
             .foregroundStyle(.secondary)
     }
 
-    private func labeledTextField(_ label: String, text: Binding<String>) -> some View {
+    private func labeledTextField(_ label: String, text: Binding<String>, help: LungfishHelpContent.HelpItem? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             fieldLabel(label)
             TextField(label, text: text)
                 .textFieldStyle(.roundedBorder)
                 .labelsHidden()
         }
+        .lungfishHelpIfPresent(help)
     }
 
-    private func labeledCompactTextField(_ label: String, value: Binding<Int>) -> some View {
+    private func labeledCompactTextField(_ label: String, value: Binding<Int>, help: LungfishHelpContent.HelpItem? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             fieldLabel(label)
             TextField(label, value: value, format: .number)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 96)
+                .frame(minWidth: 96, idealWidth: 112, maxWidth: 160)
                 .labelsHidden()
         }
+        .lungfishHelpIfPresent(help)
     }
 
     private func labeledCompactDoubleTextField(_ label: String, value: Binding<Double>) -> some View {
@@ -730,7 +755,9 @@ private struct WorkflowOperationsDetailPane: View {
         let sessionID = state.replaySessionID
         let panel = NSOpenPanel()
         panel.title = "Choose Reference"
-        panel.message = "Select a .lungfishref bundle or FASTA file."
+        panel.message = state.selectedTool?.kind == .ontGenotyping
+            ? "Choose an MHC reference bundle (.lungfishmhcref), reference bundle (.lungfishref), or FASTA file."
+            : "Select a .lungfishref bundle or FASTA file."
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false

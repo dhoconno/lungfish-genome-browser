@@ -69,16 +69,16 @@ struct MultipleSequenceAlignmentDocumentSection: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(state.title)
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
                 .lineLimit(2)
             if let subtitle = state.subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
             if let summary = state.summary, !summary.isEmpty {
                 Text(summary)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -96,7 +96,7 @@ struct MultipleSequenceAlignmentDocumentSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private var warningsSection: some View {
@@ -107,7 +107,7 @@ struct MultipleSequenceAlignmentDocumentSection: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(state.warningRows.enumerated()), id: \.offset) { _, warning in
                         Text(warning)
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -116,7 +116,7 @@ struct MultipleSequenceAlignmentDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private var artifactSection: some View {
@@ -132,17 +132,17 @@ struct MultipleSequenceAlignmentDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func contextRow(label: String, value: String) -> some View {
         HStack(alignment: .top) {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 112, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -156,13 +156,13 @@ struct MultipleSequenceAlignmentDocumentSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Reveal in Finder")
                 pathCaption(fileURL.path)
             } else {
                 Text(row.label)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let fileURL = row.fileURL {
@@ -176,7 +176,7 @@ struct MultipleSequenceAlignmentDocumentSection: View {
 
     private func pathCaption(_ text: String) -> some View {
         Text(text)
-            .font(.caption2)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.tertiary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -184,7 +184,7 @@ struct MultipleSequenceAlignmentDocumentSection: View {
 
     private func emptyMessage(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.secondary)
             .padding(.vertical, 4)
     }

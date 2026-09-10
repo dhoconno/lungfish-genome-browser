@@ -1,9 +1,14 @@
 import AppKit
 import SwiftUI
+import LungfishKit
 import LungfishCore
 import LungfishIO
 
 public struct GenotypeCandidateEvidenceSection: View {
+    private let typographyModel = ContentTypographyModel.shared
+    private var contentBodyFont: Font { typographyModel.font(for: .body) }
+    private var contentHeadingFont: Font { typographyModel.font(for: .emphasizedBody) }
+
     public static let visibilityLabels = [
         "Known",
         "Shared candidates (2+ samples)",
@@ -27,7 +32,7 @@ public struct GenotypeCandidateEvidenceSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
             Text("Full-length MHC candidates")
-                .font(.caption)
+                .font(contentBodyFont)
                 .foregroundStyle(.secondary)
 
             if viewModel.mhcCandidateControlsAvailable {
@@ -62,7 +67,7 @@ public struct GenotypeCandidateEvidenceSection: View {
             ))
         }
         .toggleStyle(.checkbox)
-        .controlSize(.small)
+        .controlSize(.regular)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Candidate visibility")
     }
@@ -77,7 +82,7 @@ public struct GenotypeCandidateEvidenceSection: View {
                 viewModel.resetAllMHCCandidateTints()
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
+            .controlSize(.regular)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Candidate allele-name tints")
@@ -102,12 +107,12 @@ public struct GenotypeCandidateEvidenceSection: View {
             .help("Reset \(label) to default")
             .accessibilityLabel("Reset \(label) to default")
         }
-        .controlSize(.small)
+        .controlSize(.regular)
     }
 
     private func warningLabel(_ warning: String) -> some View {
         Label(warning, systemImage: "exclamationmark.triangle")
-            .font(.caption2)
+            .font(contentBodyFont)
             .foregroundStyle(.orange)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel("Candidate artifact warning: \(warning)")

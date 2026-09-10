@@ -1725,6 +1725,50 @@ final class GenotypeExportSubcommandTests: XCTestCase {
         )
     }
 
+    func testDiagnosticViewExportKeepsDarkCellsReadableAndIncludesVisibleReadSum() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("genotype-diagnostic-view-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let projection = GenotypeViewProjection(
+            lens: "allele", sampleColumns: ["S1", "S2"],
+            rows: [.init(label: "Mafa-A1_063", locus: "MHC-A",
+                         cells: ["42", "17"], cellColorsHex: ["#000000", "#0000FF"],
+                         rowColorHex: "#000000")],
+            cellColorMode: "Haplotype support",
+            genotypeLocusDisplayOrder: ["MHC-A"],
+            diagnosticAllelesOnly: true, includeTotalReads: true
+        )
+        let data = try JSONEncoder().encode(projection)
+        let decoded = try JSONDecoder().decode(GenotypeViewProjection.self, from: data)
+        XCTAssertEqual(decoded.diagnosticAllelesOnly, true)
+        XCTAssertEqual(decoded.includeTotalReads, true)
+        XCTAssertEqual(decoded.genotypeLocusDisplayOrder, ["MHC-A"])
+        let output = root.appendingPathComponent("view.xlsx")
+        try GenotypeXlsxWorkbookWriter().writeViewProjection(decoded, to: output)
+        let styles = try unzipEntry("xl/styles.xml", from: output)
+        XCTAssertTrue(styles.contains(#"fontId="4" fillId="2""#), "Black fill needs a white font")
+        XCTAssertTrue(styles.contains(#"fontId="4" fillId="3""#), "Blue fill needs a white font")
+        let sheet = try unzipEntry("xl/worksheets/sheet1.xml", from: output)
+        XCTAssertTrue(sheet.contains("Total reads"))
+        XCTAssertTrue(sheet.contains(#"r="F2" s="0" t="n"><v>59</v>"#), "Total reads must be a sortable numeric cell")
+        XCTAssertTrue(styles.contains(#"fontId="5" fillId="2""#), "The dark row header keeps bold white text")
+        let delimited = GenotypeXlsxWorkbookWriter.renderDelimited(decoded, separator: "\t")
+        XCTAssertTrue(delimited.contains("S1\tS2\tTotal reads"))
+        XCTAssertTrue(delimited.contains("42\t17\t59"))
+        var annotations = GenotypeAnnotationSidecar.empty(generatedAt: "2026-09-09T00:00:00Z")
+        annotations.matrixReviews = [.init(
+            target: .cell(locus: "MHC-A", genotype: "Mafa-A1_063", sample: "S1"),
+            disposition: .falsePositive, author: "Analyst", timestamp: "2026-09-09T00:00:00Z"
+        )]
+        let reviewedOutput = root.appendingPathComponent("reviewed.xlsx")
+        try GenotypeXlsxWorkbookWriter().writeViewProjection(decoded, to: reviewedOutput, annotations: annotations)
+        let reviewedStyles = try unzipEntry("xl/styles.xml", from: reviewedOutput)
+        XCTAssertTrue(reviewedStyles.contains(#"fontId="6" fillId="2""#), "False positives retain italic text readable on black")
+        let reviewedSheet = try unzipEntry("xl/worksheets/sheet1.xml", from: reviewedOutput)
+        XCTAssertTrue(reviewedSheet.contains("[42]"))
+    }
+
     // MARK: - Writer-level projection rendering
 
     func testWorkbookWriterRendersProjectionSampleColumns() throws {
@@ -2313,6 +2357,31 @@ final class GenotypeExportSubcommandTests: XCTestCase {
         XCTAssertTrue(audit.contains(">unapplied<"))
         XCTAssertTrue(audit.contains("Analyst"))
         XCTAssertTrue(audit.contains("2026-07-24T01:00:00Z"))
+    }
+
+    func testProjectionConciseAlleleLabelPreservesRawIdentityForReviews() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("genotype-export-reference-alias-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let output = root.appendingPathComponent("aliases.xlsx")
+        let raw = "MCM_MHC_MiSeq_0025|source_loci=MHC-DQA1|alleles=Mafa-DQA1_01:04:01:01"
+        let json: [String: Any] = [
+            "lens": "allele", "sampleColumns": ["S1"],
+            "rows": [["label": "Mafa-DQA1_01:04:01:01", "rawGenotype": raw,
+                      "locus": "MHC-DQA1", "cells": ["42"]]],
+        ]
+        let projection = try JSONDecoder().decode(GenotypeViewProjection.self,
+            from: JSONSerialization.data(withJSONObject: json))
+        var sidecar = GenotypeAnnotationSidecar.empty(generatedAt: "2026-09-09T00:00:00Z")
+        sidecar.matrixReviews = [.init(
+            target: .cell(locus: "MHC-DQA1", genotype: raw, sample: "S1"),
+            disposition: .falsePositive, author: "Analyst", timestamp: "2026-09-09T00:00:00Z")]
+        try GenotypeXlsxWorkbookWriter().writeViewProjection(projection, to: output, annotations: sidecar)
+        let sheet = try unzipEntry("xl/worksheets/sheet1.xml", from: output)
+        XCTAssertTrue(sheet.contains("Mafa-DQA1_01:04:01:01"))
+        XCTAssertFalse(sheet.contains("MCM_MHC_MiSeq_0025"))
+        XCTAssertTrue(sheet.contains("[42]"), "Review must follow the raw identity despite the concise label")
     }
 
     // MARK: - Fixture

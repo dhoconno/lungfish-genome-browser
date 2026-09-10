@@ -19,7 +19,7 @@ struct AnalysesSection: View {
         VStack(alignment: .leading, spacing: 4) {
             if analyses.isEmpty {
                 Text("No analyses performed yet. Use the Operations panel to run classifications, assemblies, or mappings.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
@@ -91,21 +91,21 @@ private struct AnalysisRow: View {
                 // Display name + timestamp
                 HStack {
                     Text(entry.displayName)
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                         .fontWeight(.medium)
                         .lineLimit(1)
 
                     Spacer()
 
                     Text(isHovering ? absoluteTimestamp(entry.timestamp) : relativeTimestamp(entry.timestamp))
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.tertiary)
                 }
 
                 // Summary line
                 if !entry.summary.isEmpty {
                     Text(entry.summary)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -114,7 +114,7 @@ private struct AnalysisRow: View {
                 let paramString = formattedParameters(entry.parameters)
                 if !paramString.isEmpty {
                     Text(paramString)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -122,7 +122,7 @@ private struct AnalysisRow: View {
                 // Status badge for failed analyses
                 if entry.status == .failed {
                     Text("Failed")
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .fontWeight(.medium)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)

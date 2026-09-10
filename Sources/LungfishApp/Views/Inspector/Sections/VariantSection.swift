@@ -295,7 +295,7 @@ public struct VariantSection: View {
                 }
             } label: {
                 Label("Variant Detail", systemImage: "diamond")
-                    .font(.headline)
+                    .font(LungfishInspectorStyle.sectionTitleFont)
             }
         }
     }
@@ -307,7 +307,7 @@ public struct VariantSection: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("ID")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(width: 60, alignment: .trailing)
                 Text(variant.name)
@@ -316,14 +316,14 @@ public struct VariantSection: View {
             }
             HStack {
                 Text("Type")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(width: 60, alignment: .trailing)
                 variantTypeBadge(variant.type)
             }
             HStack {
                 Text("Position")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(width: 60, alignment: .trailing)
                 Text("\(variant.chromosome):\(variant.start + 1)")
@@ -333,7 +333,7 @@ public struct VariantSection: View {
             if let ref = variant.ref, let alt = variant.alt {
                 HStack {
                     Text("Alleles")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .frame(width: 60, alignment: .trailing)
                     Text("\(ref) \u{2192} \(alt)")
@@ -350,7 +350,7 @@ public struct VariantSection: View {
             if let quality = variant.quality {
                 HStack {
                     Text("Quality")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .frame(width: 60, alignment: .trailing)
                     Text(String(format: "%.1f", quality))
@@ -360,7 +360,7 @@ public struct VariantSection: View {
             if let filter = variant.filter {
                 HStack {
                     Text("Filter")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .frame(width: 60, alignment: .trailing)
                     Text(filter)
@@ -375,7 +375,7 @@ public struct VariantSection: View {
     private var genotypeSummary: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Genotype Summary")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 12) {
@@ -384,12 +384,12 @@ public struct VariantSection: View {
                 genotypeCountBadge("Hom Alt", count: viewModel.homAltCount, color: .cyan)
                 genotypeCountBadge("No Call", count: viewModel.noCallCount, color: Color(.systemGray))
             }
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
 
             if let af = viewModel.alleleFrequency {
                 HStack {
                     Text("Alt Allele Freq")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .frame(width: 90, alignment: .trailing)
 
@@ -409,7 +409,7 @@ public struct VariantSection: View {
                     .frame(height: 8)
 
                     Text(String(format: "%.3f", af))
-                        .font(.system(.caption, design: .monospaced))
+                        .font(LungfishInspectorStyle.controlFont.monospaced())
                         .frame(width: 40, alignment: .trailing)
                 }
             }
@@ -420,17 +420,17 @@ public struct VariantSection: View {
     private var infoSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("INFO Fields")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             ForEach(Array(viewModel.infoFields.prefix(20)), id: \.key) { field in
                 HStack(alignment: .top) {
                     Text(field.key)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(LungfishInspectorStyle.controlFont.monospaced())
                         .foregroundStyle(.secondary)
                         .frame(width: 80, alignment: .trailing)
                     Text(field.value)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(LungfishInspectorStyle.controlFont.monospaced())
                         .textSelection(.enabled)
                         .lineLimit(3)
                 }
@@ -438,7 +438,7 @@ public struct VariantSection: View {
 
             if viewModel.infoFields.count > 20 {
                 Text("... and \(viewModel.infoFields.count - 20) more")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -471,7 +471,7 @@ public struct VariantSection: View {
     @ViewBuilder
     private func variantTypeBadge(_ type: String) -> some View {
         Text(type)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(variantTypeColor(type).opacity(0.2))

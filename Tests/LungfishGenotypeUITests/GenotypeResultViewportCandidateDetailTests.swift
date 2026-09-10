@@ -1814,7 +1814,7 @@ final class GenotypeResultViewportCandidateDetailTests: GenotypeResultViewportTe
         let matrix = GenotypeComparisonMatrixView()
         matrix.configure(result: result)
 
-        XCTAssertEqual(matrix.testingPinnedColumnTitles, ["", "Genotype", "Cluster ID", "Locus", "Samples", "Unique"])
+        XCTAssertEqual(matrix.testingPinnedColumnTitles, ["", "Genotype", "Cluster ID", "Locus", "Samples", "Total reads"])
         XCTAssertEqual(
             matrix.testingPinnedTableAccessibilityLabel,
             "Known and candidate genotype calls, stable cluster identifiers, loci, and summary statistics"
@@ -2096,7 +2096,7 @@ final class GenotypeResultViewportCandidateDetailTests: GenotypeResultViewportTe
 
         XCTAssertEqual(matrix.testingVisibleRows.map(\.id), [.known(locus: "MHC-KNOWN", genotype: "Known")])
         XCTAssertEqual(matrix.testingVisibleSampleNames, ["AnimalA"])
-        XCTAssertEqual(matrix.testingPinnedColumnTitles, ["", "Genotype", "Locus", "Samples", "Unique"])
+        XCTAssertEqual(matrix.testingPinnedColumnTitles, ["", "Genotype", "Locus", "Samples", "Total reads"])
         XCTAssertEqual(
             matrix.testingPinnedTableAccessibilityLabel,
             "Shared genotype calls, loci, and summary statistics"
@@ -2498,7 +2498,7 @@ final class GenotypeResultViewportCandidateDetailTests: GenotypeResultViewportTe
         XCTAssertEqual(matrix.testingVisibleRows.map(\.id), [
             .known(locus: "MHC-KNOWN", genotype: "Known"),
         ])
-        XCTAssertEqual(matrix.testingPinnedColumnTitles, ["", "Genotype", "Locus", "Samples", "Unique"])
+        XCTAssertEqual(matrix.testingPinnedColumnTitles, ["", "Genotype", "Locus", "Samples", "Total reads"])
         XCTAssertEqual(
             matrix.testingPinnedTableAccessibilityLabel,
             "Shared genotype calls, loci, and summary statistics"

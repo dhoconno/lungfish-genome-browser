@@ -70,6 +70,8 @@ struct GenotypeMatrixBaseProjection: Sendable {
         let showSharedCandidates: Bool
         let showSingletonCandidates: Bool
         let usesBiologicalAlleleOrder: Bool
+        let locusDisplayOrder: [String]?
+        let usesNumericReferenceOrder: Bool
     }
 
     let knownOccurrences: [KnownOccurrence]
@@ -83,6 +85,8 @@ struct GenotypeMatrixBaseProjection: Sendable {
     private let totalRowCount: Int
     private let candidateSettings: ONTMHCCandidateDisplaySettings
     private let usesBiologicalAlleleOrder: Bool
+    private let locusDisplayOrder: [String]?
+    private let usesNumericReferenceOrder: Bool
 
     init(
         calls: [ONTGenotypeCall],
@@ -91,7 +95,9 @@ struct GenotypeMatrixBaseProjection: Sendable {
         unnameableDocument: ONTMHCUnnameableClustersDocument? = nil,
         logicalSampleNames: [String],
         candidateSettings: ONTMHCCandidateDisplaySettings,
-        usesBiologicalAlleleOrder: Bool = false
+        usesBiologicalAlleleOrder: Bool = false,
+        locusDisplayOrder: [String]? = nil,
+        usesNumericReferenceOrder: Bool = false
     ) {
         var viewedLocusDenominators: [SupportBucket: Int] = [:]
         viewedLocusDenominators.reserveCapacity(calls.count)
@@ -129,12 +135,16 @@ struct GenotypeMatrixBaseProjection: Sendable {
         self.logicalSampleNames = Set(logicalSampleNames)
         self.candidateSettings = candidateSettings
         self.usesBiologicalAlleleOrder = usesBiologicalAlleleOrder
+        self.locusDisplayOrder = locusDisplayOrder
+        self.usesNumericReferenceOrder = usesNumericReferenceOrder
         candidateRows = GenotypeCandidateMatrixProjection.rows(
             knownRows: [],
             candidateDocument: candidateDocument,
             unnameableDocument: unnameableDocument,
             settings: candidateSettings,
-            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder
+            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder,
+            locusDisplayOrder: locusDisplayOrder,
+            usesNumericReferenceOrder: usesNumericReferenceOrder
         )
         let candidateCells = candidateDocument.map { document in
             Set(document.observations.map {
@@ -234,7 +244,9 @@ struct GenotypeMatrixBaseProjection: Sendable {
             showKnown: candidateSettings.showKnown,
             showSharedCandidates: candidateSettings.showSharedCandidates,
             showSingletonCandidates: candidateSettings.showSingletonCandidates,
-            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder
+            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder,
+            locusDisplayOrder: locusDisplayOrder,
+            usesNumericReferenceOrder: usesNumericReferenceOrder
         )
     }
 
@@ -314,7 +326,9 @@ struct GenotypeMatrixBaseProjection: Sendable {
             knownRows: knownRows,
             candidateDocument: nil,
             settings: candidateSettings,
-            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder
+            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder,
+            locusDisplayOrder: locusDisplayOrder,
+            usesNumericReferenceOrder: usesNumericReferenceOrder
         ) + candidateRows
         let sortedRows = projectedRows.sorted(by: rowComesBefore)
         let visibleCellCount = sortedRows.reduce(0) { $0 + $1.sampleCount }
@@ -345,12 +359,17 @@ struct GenotypeMatrixBaseProjection: Sendable {
         _ lhs: GenotypeCandidateMatrixRow,
         _ rhs: GenotypeCandidateMatrixRow
     ) -> Bool {
-        if usesBiologicalAlleleOrder {
+        if usesNumericReferenceOrder, locusDisplayOrder == nil,
+           let order = GenotypeReferenceNumericPrefixOrder.compare(lhs.genotype, rhs.genotype), order != .orderedSame {
+            return order == .orderedAscending
+        }
+        if usesBiologicalAlleleOrder || locusDisplayOrder != nil {
             return MHCAlleleDisplayOrder.compare(
-                lhs.alleleName,
-                rhs.alleleName,
+                MHCReferenceGenotypeDisplay.alleleName(for: lhs.alleleName),
+                MHCReferenceGenotypeDisplay.alleleName(for: rhs.alleleName),
                 lhsStableID: lhs.biologicalSortTieID,
-                rhsStableID: rhs.biologicalSortTieID
+                rhsStableID: rhs.biologicalSortTieID,
+                locusDisplayOrder: locusDisplayOrder
             ) == .orderedAscending
         }
         let locusOrder = lhs.locus.localizedStandardCompare(rhs.locus)

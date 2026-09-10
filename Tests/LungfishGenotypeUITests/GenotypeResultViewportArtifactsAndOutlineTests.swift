@@ -1632,6 +1632,134 @@ final class GenotypeResultViewportArtifactsAndOutlineTests: GenotypeResultViewpo
     // MARK: - Sample column windowing
 
 
+    func testPlainFASTANumericPrefixesSortBeforeUnprefixedReferencesUnlessOrderIsExplicit() throws {
+        let names = ["13_Mafa-DQA1_001:01", "2_Mafa-B_001:01", "Mafa-A1_001:01", "05_Mafa-F_001:01", "10_Mafa-G_001:01"]
+        let result = makeResult(samples: [], calls: names.map {
+            makeCall(sample: "AnimalA", genotype: $0, reads: 10)
+        }, kind: "full-length-ont-mhc-genotype")
+        let matrix = GenotypeComparisonMatrixView()
+        matrix.configure(result: result)
+        XCTAssertEqual(matrix.testingVisibleGenotypes, [names[1], names[3], names[4], names[0], names[2]])
+        XCTAssertEqual(matrix.testingVisibleRows.reduce(0) { $0 + $1.totalUniqueReads }, 50)
+        var state = GenotypeResultDisplayState()
+        state.genotypeLocusDisplayOrder = try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(["A1", "DQA", "G", "F", "B"])
+        matrix.applyDisplayState(state)
+        XCTAssertEqual(matrix.testingVisibleGenotypes, [names[2], names[0], names[4], names[3], names[1]])
+    }
+
+    func testLocusOrderEditorApplyReloadAndResetRestorePortableBundleDefault() throws {
+        let root = try TestTempDirectory.make(prefix: "GenotypeLocusOrder")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let names = ["Mafa-B_001:01", "Mafa-A2_001:01", "Mafa-F_001:01", "Mafa-A1_001:01"]
+        let defaultOrder = try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(["F", "A1", "A2/A3/A4/A5", "B"])
+        let manifest = ONTGenotypeResultBundleManifest(
+            kind: "full-length-ont-mhc-genotype", outputName: "test", analysisName: "Test order",
+            primaryWorkbookPath: "test.xlsx", longSummaryCSVPath: "calls.csv",
+            sampleSummaryCSVPath: "samples.csv", statsJSONPath: "stats.json",
+            provenancePath: "provenance.json", genotypeLocusDisplayOrder: defaultOrder
+        )
+        let result = makeResult(bundleURL: root, samples: [], calls: names.map {
+            makeCall(sample: "AnimalA", genotype: $0, reads: 10)
+        }, manifest: manifest)
+        let controller = GenotypeResultViewController()
+        _ = controller.view
+        controller.configure(result: result)
+        XCTAssertEqual(controller.testingVisibleMatrixGenotypes, [names[2], names[3], names[1], names[0]])
+        let viewModel = GenotypeResultDisplaySectionViewModel()
+        viewModel.update(isAvailable: true, state: controller.testingDisplayState)
+        viewModel.updateMHCCandidatePresentation(from: result)
+        viewModel.onDisplayStateChanged = { controller.applyDisplayState($0) }
+        viewModel.locusDisplayOrderDraft = "B, A2/A3/A4/A5, A1, F"
+        viewModel.applyLocusDisplayOrderDraft()
+        XCTAssertEqual(controller.testingVisibleMatrixGenotypes, [names[0], names[1], names[3], names[2]])
+        let reloaded = GenotypeResultViewController()
+        _ = reloaded.view
+        reloaded.configure(result: result)
+        XCTAssertEqual(reloaded.testingVisibleMatrixGenotypes, [names[0], names[1], names[3], names[2]])
+        viewModel.onDisplayStateChanged = { reloaded.applyDisplayState($0) }
+        viewModel.resetLocusDisplayOrder()
+        XCTAssertEqual(reloaded.testingVisibleMatrixGenotypes, [names[2], names[3], names[1], names[0]])
+        XCTAssertNil(try GenotypeAnnotationStore(bundleURL: root, author: "test").sidecar.settings.genotypeLocusDisplayOrder)
+        if let screenshotPath = ProcessInfo.processInfo.environment["LUNGFISH_LOCUS_ORDER_EDITOR_SCREENSHOT"] {
+            let editor = NSHostingView(rootView: GenotypeResultDisplaySection(viewModel: viewModel).padding()
+                .frame(width: 400, height: 1800, alignment: .topLeading)
+                .background(Color.white).environment(\.colorScheme, .light))
+            editor.frame = NSRect(x: 0, y: 0, width: 400, height: 1800)
+            let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = editor
+            editor.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(editor.bitmapImageRepForCachingDisplay(in: editor.bounds))
+            editor.cacheDisplay(in: editor.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: screenshotPath))
+        }
+    }
+
+    func testCustomLocusOrderSeparatesAAllelesWithoutChangingRawCallsOrIncludedLoci() throws {
+        let names = ["Mafa-B_001:01", "Mafa-A2_001:01", "Mafa-F_001:01", "Mafa-A1_001:01"]
+        let result = makeResult(samples: [], calls: names.map {
+            makeCall(sample: "AnimalA", genotype: $0, reads: 10)
+        }, kind: "full-length-ont-mhc-genotype")
+        let matrix = GenotypeComparisonMatrixView()
+        matrix.configure(result: result)
+        var state = GenotypeResultDisplayState()
+        state.includedLoci = ["MHC-A"]
+        state.genotypeLocusDisplayOrder = try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(["F", "A2/A3/A4/A5", "A1", "B"])
+        matrix.applyDisplayState(state)
+        XCTAssertEqual(matrix.testingVisibleGenotypes, [names[2], names[1], names[3], names[0]])
+        XCTAssertEqual(matrix.testingVisibleRows.reduce(0) { $0 + $1.totalUniqueReads }, 40)
+        let exported = GenotypeViewProjectionSerializer.makeProjection(from: matrix.exportSnapshot(bundleURL: result.bundleURL, analysisName: "Order", lens: "allele"))
+        XCTAssertEqual(exported.genotypeLocusDisplayOrder, state.genotypeLocusDisplayOrder)
+        let viewModel = GenotypeResultDisplaySectionViewModel()
+        viewModel.update(isAvailable: true, state: state)
+        viewModel.updateMHCCandidatePresentation(from: result)
+        viewModel.locusDisplayOrderDraft = "B, A1, A2/A3/A4/A5, F"
+        viewModel.applyLocusDisplayOrderDraft()
+        XCTAssertNil(viewModel.locusDisplayOrderValidationError)
+        XCTAssertEqual(viewModel.displayState.includedLoci, ["MHC-A"])
+        XCTAssertEqual(viewModel.displayState.genotypeLocusDisplayOrder?.first, "MHC-B")
+        viewModel.locusDisplayOrderDraft = "A1, A1"
+        viewModel.applyLocusDisplayOrderDraft()
+        XCTAssertNotNil(viewModel.locusDisplayOrderValidationError)
+        XCTAssertEqual(viewModel.displayState.genotypeLocusDisplayOrder?.first, "MHC-B")
+        viewModel.resetLocusDisplayOrder()
+        XCTAssertNil(viewModel.displayState.genotypeLocusDisplayOrder)
+        XCTAssertEqual(viewModel.displayState.includedLoci, ["MHC-A"])
+    }
+
+    func testMiSeqMatrixDisplaysAllelesWithOptionalFullNamesAndBiologicalOrder() {
+        GenotypeComparisonMatrixView.testingResetPersistedReferenceVisibility()
+        defer { GenotypeComparisonMatrixView.testingResetPersistedReferenceVisibility() }
+        let dq = "MCM_MHC_MiSeq_0001|source_loci=MHC-DQA1|alleles=Mafa-DQA1_01:04:01:01"
+        let a = "MCM_MHC_MiSeq_0099|source_loci=MHC-A|alleles=Mafa-A1_002:01,Mafa-A1_003:01"
+        let matrix = GenotypeComparisonMatrixView()
+        let result = makeResult(samples: [], calls: [
+            makeCall(sample: "AnimalA", genotype: dq, reads: 10),
+            makeCall(sample: "AnimalA", genotype: a, reads: 20),
+        ], kind: "amplicon-genotype")
+        matrix.configure(result: result)
+        XCTAssertEqual(matrix.testingVisibleGenotypes, [a, dq])
+        let fallbackRows = GenotypeCandidateMatrixProjection.rows(
+            knownRows: result.locusSummaries.flatMap(\.sharedCalls),
+            candidateDocument: nil, settings: .default, usesBiologicalAlleleOrder: true
+        )
+        XCTAssertEqual(fallbackRows.map(\.genotype), [a, dq])
+        XCTAssertTrue(matrix.testingPinnedColumnTitles.contains("Allele"))
+        XCTAssertFalse(matrix.testingPinnedColumnTitles.contains("Full reference name"))
+        XCTAssertEqual(matrix.testingReferenceValue(genotype: dq, fieldKey: "feature.allele"), "Mafa-DQA1_01:04:01:01")
+        XCTAssertEqual(matrix.testingReferenceValue(genotype: a, fieldKey: "feature.allele"), "Mafa-A1_002:01 / Mafa-A1_003:01")
+        matrix.testingSetStandardColumnVisibleWithoutPersist("genotype", visible: true)
+        XCTAssertTrue(matrix.testingPinnedColumnTitles.contains("Full reference name"))
+        matrix.testingSetFilter("Mafa-A1_003:01")
+        XCTAssertEqual(matrix.testingVisibleGenotypes, [a])
+        let projected = matrix.sharedSearchProjectedRows()
+        XCTAssertTrue(projected.contains { $0.displayedAllele == "Mafa-DQA1_01:04:01:01" && $0.rawGenotype == dq })
+        let snapshot = matrix.exportSnapshot(bundleURL: URL(fileURLWithPath: "/tmp/miseq.lungfishgenotype"), analysisName: "MiSeq", lens: "genotypes")
+        XCTAssertEqual(snapshot.rows.first?.genotype, a)
+        let export = GenotypeViewProjectionSerializer.makeProjection(from: snapshot)
+        XCTAssertEqual(export.rows.first?.label, "Mafa-A1_002:01 / Mafa-A1_003:01")
+        XCTAssertEqual(export.rows.first?.rawGenotype, a)
+    }
+
     func testGenBankMatrixDefaultsToAlleleAndOffersEveryReferenceField() {
         GenotypeComparisonMatrixView.testingResetPersistedReferenceVisibility()
         let matrix = GenotypeComparisonMatrixView()

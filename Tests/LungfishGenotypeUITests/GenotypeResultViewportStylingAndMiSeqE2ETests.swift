@@ -37,7 +37,7 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
             ),
         ], calls: [callA, callB]))
 
-        XCTAssertEqual(controller.testingPinnedMatrixColumnTitles, ["", "Genotype", "Locus", "Samples", "Unique"])
+        XCTAssertEqual(controller.testingPinnedMatrixColumnTitles, ["", "Genotype", "Locus", "Samples", "Total reads"])
         XCTAssertEqual(controller.testingVisibleMatrixSampleColumnTitles, ["AnimalA", "AnimalB"])
         XCTAssertEqual(controller.testingVisibleMatrixSampleReadTitles, ["12", "9"])
     }
@@ -2332,6 +2332,23 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
         XCTAssertEqual(controller.testingSummaryViewMode, .outline)
     }
 
+    func testHaplotypedMiSeqHeaderDoesNotExposeActionsButton() throws {
+        let controller = GenotypeResultViewController()
+        _ = controller.view
+        controller.configure(result: makeResult(
+            samples: [],
+            calls: [],
+            haplotypeAnalysis: makeUsableHaplotypedMiSeqAnalysis()
+        ))
+
+        XCTAssertNil(
+            descendants(of: controller.view)
+                .compactMap { $0 as? NSButton }
+                .first { $0.accessibilityIdentifier() == "genotype-result-actions-menu" },
+            "The result header should contain only the relevant presentation controls."
+        )
+    }
+
 
     func testHaplotypedMiSeqCandidateCellSelectionRetainsDetailsAndEvidence()
         throws
@@ -2742,19 +2759,6 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
             calls: [],
             haplotypeAnalysis: makeUsableHaplotypedMiSeqAnalysis()
         ))
-        let actionsButton = try XCTUnwrap(
-            descendants(of: controller.view)
-                .compactMap { $0 as? NSButton }
-                .first {
-                    $0.accessibilityIdentifier()
-                        == "genotype-result-actions-menu"
-                }
-        )
-
-        XCTAssertEqual(
-            actionsButton.menu?.items.map(\.title),
-            ["AI Discovery", "AI Refinement", "Export Excel View…"]
-        )
         let documentSourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -2812,82 +2816,6 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
             )
         )
     }
-
-
-    func testActionsMenuAIRefinementDisabledWithoutAnalysis() throws {
-        // Regression test for AS14: the toolbar "Actions" menu's AI
-        // Refinement item must be disabled when no haplotype analysis
-        // exists yet, matching the inline audit-section button.
-        let controller = GenotypeResultViewController()
-        _ = controller.view
-        controller.configure(result: makeResult(
-            samples: [],
-            calls: [],
-            haplotypeAnalysis: nil
-        ))
-
-        let actionsButton = try XCTUnwrap(
-            descendants(of: controller.view)
-                .compactMap { $0 as? NSButton }
-                .first {
-                    $0.accessibilityIdentifier()
-                        == "genotype-result-actions-menu"
-                }
-        )
-        let menu = try XCTUnwrap(actionsButton.menu)
-        menu.delegate?.menuNeedsUpdate?(menu)
-
-        let discoveryItem = try XCTUnwrap(menu.items.first { $0.title == "AI Discovery" })
-        let refinementItem = try XCTUnwrap(menu.items.first { $0.title == "AI Refinement" })
-        XCTAssertTrue(discoveryItem.isEnabled)
-        XCTAssertFalse(refinementItem.isEnabled, "Refinement should be disabled with no active haplotype analysis")
-    }
-
-
-    func testActionsMenuAIItemsDisabledWhenReadOnly() throws {
-        // Regression test for AS14: the toolbar "Actions" menu's AI
-        // Discovery/Refinement items must be disabled on a read-only
-        // bundle, matching the inline audit-section buttons.
-        let root = try TestTempDirectory.make(prefix: "GenotypeResultActionsMenuReadOnly")
-        defer {
-            try? FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: root.path)
-            try? FileManager.default.removeItem(at: root)
-        }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: 0o555)],
-            ofItemAtPath: root.path
-        )
-        let readOnlyStore = try GenotypeAnnotationStore(bundleURL: root, author: "test")
-        XCTAssertTrue(readOnlyStore.isReadOnly)
-
-        let controller = GenotypeResultViewController()
-        _ = controller.view
-        controller.configure(result: makeResult(
-            bundleURL: root,
-            samples: [],
-            calls: [],
-            haplotypeAnalysis: makeUsableHaplotypedMiSeqAnalysis()
-        ))
-        controller.testingInstallEffectiveHaplotypeAnnotationStore(readOnlyStore)
-
-        let actionsButton = try XCTUnwrap(
-            descendants(of: controller.view)
-                .compactMap { $0 as? NSButton }
-                .first {
-                    $0.accessibilityIdentifier()
-                        == "genotype-result-actions-menu"
-                }
-        )
-        let menu = try XCTUnwrap(actionsButton.menu)
-        menu.delegate?.menuNeedsUpdate?(menu)
-
-        let discoveryItem = try XCTUnwrap(menu.items.first { $0.title == "AI Discovery" })
-        let refinementItem = try XCTUnwrap(menu.items.first { $0.title == "AI Refinement" })
-        XCTAssertFalse(discoveryItem.isEnabled, "Discovery should be disabled on a read-only bundle")
-        XCTAssertFalse(refinementItem.isEnabled, "Refinement should be disabled on a read-only bundle")
-    }
-
 
     func testHaplotypedMiSeqPreservesPerSlotStatusAndReviewEligibility() throws {
         let root = try TestTempDirectory.make(prefix: "GenotypeResultPerSlotProjection")
@@ -3068,6 +2996,62 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
         XCTAssertEqual(overrides.count, 1)
         XCTAssertEqual(overrides.first?.overrideCall, "authoritative")
         XCTAssertEqual(overrides.first?.timestamp, "2026-08-03T03:00:00Z")
+    }
+
+
+    func testInspectorCustomOverridePersistsNameRationaleAndOriginalCall() throws {
+        let root = try TestTempDirectory.make(prefix: "GenotypeResultExplicitOverride")
+        defer { TestTempDirectory.cleanup(root) }
+        let bundleURL = root.appendingPathComponent("example.lungfishgenotype", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try installCallOverrideManifest(in: bundleURL)
+        let analysis = GenotypeHaplotypeAnalysis(
+            assayID: "MHC-exon2-miSeq",
+            definitionSetID: "MHC-exon2-miSeq.mauritian-cynomolgus-macaques",
+            definitionSetName: "Mauritian cynomolgus macaques",
+            speciesName: "Mauritian cynomolgus macaques",
+            samples: [
+                GenotypeHaplotypeSampleAnalysis(
+                    sample: "DW472",
+                    calls: [
+                        GenotypeHaplotypeLocusCall(
+                            locus: "MHC-DP",
+                            sourceLocus: "Mafa-DP",
+                            haplotype1: "M4DP",
+                            haplotype2: "M7DP",
+                            status: .tooManyHaplotypes,
+                            matchedHaplotypes: [],
+                            observedGenotypeCount: 3,
+                            observedGenotypes: ["15_M3_DPA1_01", "15_M4_DPA1_01", "15_M7_DPB1_01"]
+                        )
+                    ]
+                )
+            ]
+        )
+        let controller = GenotypeResultViewController()
+        _ = controller.view
+        controller.configure(result: makeResult(bundleURL: bundleURL, samples: [], calls: [], haplotypeAnalysis: analysis))
+        controller.testingSelectCellEvidence(animalId: "DW472", locus: "MHC-DP")
+
+        controller.testingApplyOverridesFromInspector([.init(slot: .h1, haplotypeName: "  Family North  ", rationale: "Independent pedigree review", reasonTag: .pedigreeConflict)])
+        controller.testingApplyOverrideFromInspector(haplotype: "M5DP", slot: .h2)
+
+        let sidecar = try GenotypeAnnotationSidecar.decode(Data(
+            contentsOf: bundleURL.appendingPathComponent(GenotypeAnnotationSidecar.filename)
+        ))
+        let h1Override = try XCTUnwrap(sidecar.callOverrides.first { $0.sample == "DW472" && $0.locus == "MHC-DP" && $0.slot == .h1 })
+        let h2Override = try XCTUnwrap(sidecar.callOverrides.first { $0.sample == "DW472" && $0.locus == "MHC-DP" && $0.slot == .h2 })
+
+        XCTAssertEqual(h1Override.originalCall, "M4DP")
+        XCTAssertEqual(h1Override.reasonTag, .pedigreeConflict)
+        XCTAssertTrue(h1Override.rationale.contains("Independent pedigree review"))
+        XCTAssertFalse(sidecar.auditLog.isEmpty)
+        XCTAssertEqual(controller.testingCurrentCallEvidence?.h1Name, "Family North")
+        XCTAssertEqual(h1Override.overrideCall, "Family North")
+        XCTAssertEqual(h2Override.originalCall, "M7DP")
+        XCTAssertEqual(h2Override.overrideCall, "M5DP")
+        XCTAssertTrue(h1Override.rationale.contains("MHC-DP H1 M4DP -> Family North"))
+        XCTAssertTrue(h2Override.rationale.contains("MHC-DP H2 M7DP -> M5DP"))
     }
 
 
@@ -4914,9 +4898,29 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
 
     func testHaplotypedMiSeqRenderedSampleDetailRetainsDraftForNoOpAndFailure()
         throws {
+        func installKnownAssignments(in bundleURL: URL) throws {
+            let definition = GenotypeHaplotypeDefinitionSet(
+                id: "test.haplotype-definitions",
+                assayID: "MHC-exon2-miSeq",
+                displayName: "Test haplotype definitions",
+                speciesName: "Test species",
+                speciesCode: "TEST",
+                prefix: "",
+                locusDefinitions: [.init(
+                    locus: "MHC-A", sourceLocus: "Mafa-A",
+                    haplotypes: ["A1", "A2", "A3", "A4"].map {
+                        .init(name: $0, diagnosticAlleles: ["\($0)-read"])
+                    }
+                )]
+            )
+            let inputs = bundleURL.appendingPathComponent(".amplicon-genotyping/inputs", isDirectory: true)
+            try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+            try JSONEncoder().encode(definition).write(to: inputs.appendingPathComponent("haplotype-definition.json"))
+        }
         do {
             let fixture = try makeSynchronizedMiSeqFixture()
             defer { TestTempDirectory.cleanup(fixture.root) }
+            try installKnownAssignments(in: fixture.bundleURL)
             let controller = GenotypeResultViewController()
             _ = controller.view
             controller.configure(result: fixture.result)
@@ -4936,6 +4940,7 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
                 controller.testingSampleDetailRootView(sample: "Sample-A")
             )
 
+            XCTAssertTrue(renderedView.allowedTargetsForLocus("MHC-A").contains("A3"))
             try assertRenderedSampleDetailSaveRetainsDraft(
                 renderedView,
                 row: row
@@ -4953,6 +4958,7 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
         do {
             let fixture = try makeSynchronizedMiSeqFixture()
             defer { TestTempDirectory.cleanup(fixture.root) }
+            try installKnownAssignments(in: fixture.bundleURL)
             let controller = GenotypeResultViewController()
             _ = controller.view
             controller.configure(result: fixture.result)
@@ -4994,6 +5000,7 @@ final class GenotypeResultViewportStylingAndMiSeqE2ETests: GenotypeResultViewpor
             var errors: [Error] = []
             controller.testingSetSheetAlertHandler { errors.append($0) }
 
+            XCTAssertTrue(staleRenderedView.allowedTargetsForLocus("MHC-A").contains("A3"))
             try assertRenderedSampleDetailSaveRetainsDraft(
                 staleRenderedView,
                 row: row

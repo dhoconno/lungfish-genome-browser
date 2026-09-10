@@ -351,7 +351,7 @@ public struct FASTQMetadataSection: View {
             } label: {
                 HStack {
                     Text("Sample Metadata")
-                        .font(.headline)
+                        .font(LungfishInspectorStyle.sectionTitleFont)
                     Spacer()
                     Menu {
                         Button("Revert to Last Saved") { viewModel.revertToLastSaved() }
@@ -381,7 +381,7 @@ public struct FASTQMetadataSection: View {
 
             HStack {
                 Text("Template")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(width: 90, alignment: .trailing)
                 Picker("", selection: templateBinding) {
@@ -411,7 +411,7 @@ public struct FASTQMetadataSection: View {
 
             HStack {
                 Text("Read Type")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(width: 90, alignment: .trailing)
                 Picker("", selection: assemblyReadTypeBinding) {
@@ -425,12 +425,12 @@ public struct FASTQMetadataSection: View {
             }
 
             Text(viewModel.assemblyCompatibilitySummary)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if viewModel.readTypeTargetCount > 1 {
                 Text("Read type applies to \(viewModel.readTypeTargetCount) selected FASTQ bundles.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -473,7 +473,7 @@ public struct FASTQMetadataSection: View {
                 fieldRow("Patient ID", binding: metaBinding(\.patientId))
             }
         }
-        .font(.caption)
+        .font(LungfishInspectorStyle.controlFont)
     }
 
     private var wastewaterFields: some View {
@@ -487,7 +487,7 @@ public struct FASTQMetadataSection: View {
                 fieldRow("Catchment ID", binding: customBinding("catchment_area_id"))
             }
         }
-        .font(.caption)
+        .font(LungfishInspectorStyle.controlFont)
     }
 
     private var airSampleFields: some View {
@@ -505,7 +505,7 @@ public struct FASTQMetadataSection: View {
                 fieldRow("Occupancy", binding: customBinding("occupancy_count"))
             }
         }
-        .font(.caption)
+        .font(LungfishInspectorStyle.controlFont)
     }
 
     private var environmentalFields: some View {
@@ -519,7 +519,7 @@ public struct FASTQMetadataSection: View {
                 fieldRow("Isolation Source", binding: customBinding("isolation_source"))
             }
         }
-        .font(.caption)
+        .font(LungfishInspectorStyle.controlFont)
     }
 
     // MARK: - Notes
@@ -535,11 +535,11 @@ public struct FASTQMetadataSection: View {
                     viewModel.scheduleAutosave()
                 }
             ))
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .frame(minHeight: 50, maxHeight: 100)
             .border(Color.secondary.opacity(0.3))
         }
-        .font(.caption)
+        .font(LungfishInspectorStyle.controlFont)
     }
 
     // MARK: - Attachments
@@ -554,7 +554,7 @@ public struct FASTQMetadataSection: View {
                             Image(systemName: "doc")
                                 .foregroundStyle(.secondary)
                             Text(filename)
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer()
@@ -586,13 +586,13 @@ public struct FASTQMetadataSection: View {
                     .controlSize(.small)
                     if let attachmentErrorMessage = viewModel.attachmentErrorMessage {
                         Text(attachmentErrorMessage)
-                            .font(.caption2)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(Color.lungfishDangerFallback)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
         }
     }
 
@@ -609,7 +609,7 @@ public struct FASTQMetadataSection: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(customKeys, id: \.self) { key in
                     HStack {
-                        Text(key).font(.caption).foregroundStyle(.secondary)
+                        Text(key).font(LungfishInspectorStyle.controlFont).foregroundStyle(.secondary)
                             .frame(width: 90, alignment: .trailing)
                         TextField("", text: Binding(
                             get: { viewModel.metadata?.customFields[key] ?? "" },
@@ -636,7 +636,7 @@ public struct FASTQMetadataSection: View {
                 }
             }
         }
-        .font(.caption)
+        .font(LungfishInspectorStyle.controlFont)
     }
 
     // MARK: - Binding Helpers
@@ -658,7 +658,7 @@ public struct FASTQMetadataSection: View {
     private func fieldRow(_ label: String, binding: Binding<String>) -> some View {
         HStack {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 90, alignment: .trailing)
             TextField("", text: binding)

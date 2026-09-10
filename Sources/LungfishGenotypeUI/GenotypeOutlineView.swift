@@ -107,7 +107,7 @@ final class GenotypeOutlineView: NSView {
         tableView.style = .plain
         // Fixed row height keeps the table deterministic (and lets AppKit
         // compute the visible-row window without a full auto-height pass): the
-        // per-sample content is a 26pt tape inside 4pt top/bottom insets.
+        // per-sample content uses two comfortable slots inside 4pt insets.
         tableView.rowSizeStyle = .custom
         tableView.rowHeight = Self.rowHeight
         tableView.intercellSpacing = NSSize(width: 0, height: 4)
@@ -136,6 +136,7 @@ final class GenotypeOutlineView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        NotificationCenter.default.addObserver(self, selector: #selector(densityDidChange), name: Self.densityChanged, object: nil)
         contentTypographyObservation = ContentTypographyViewObservation(
             applicator: ContentTypographyViewApplicator(
                 excludedSubtree: { $0 is GenotypeHaplotypeTapeView }
@@ -269,8 +270,8 @@ final class GenotypeOutlineView: NSView {
     private var leadingGutter: CGFloat {
         blockColumnWidth + 6 + animalColumnWidth
     }
-    /// Fixed per-sample row height: 26pt tape + 4pt top/bottom content insets.
-    private static let rowHeight: CGFloat = 34
+    /// Minimum per-sample height: two 24pt targets plus content insets.
+    private static let rowHeight: CGFloat = 56
 
     private func rebuildHeader() {
         headerView?.removeFromSuperview()
@@ -430,6 +431,7 @@ final class GenotypeOutlineView: NSView {
 
         let tape = GenotypeHaplotypeTapeView()
         tape.translatesAutoresizingMaskIntoConstraints = false
+        tape.labelFont = resolvedContentTypography().font(for: .body)
         tape.configure(loci: row.loci, slots: row.tapeSlots)
         tape.sampleAccessibilityLabel = row.animalId
         tape.isReviewSelected = isSelectedSample
@@ -448,7 +450,7 @@ final class GenotypeOutlineView: NSView {
         tape.setContentHuggingPriority(.defaultLow, for: .horizontal)
         tape.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         NSLayoutConstraint.activate([
-            tape.heightAnchor.constraint(equalToConstant: 26),
+            tape.heightAnchor.constraint(equalToConstant: resolvedTapeHeight),
         ])
 
         container.addArrangedSubview(leading)
@@ -484,6 +486,17 @@ final class GenotypeOutlineView: NSView {
         )
     }
 
+    static let densityPreferenceKey = "genotype.haplotypeRows.compact"
+    static let densityChanged = Notification.Name("genotypeHaplotypeDensityDidChange")
+
+    @objc private func densityDidChange() { applyContentTypography() }
+
+    private var resolvedTapeHeight: CGFloat {
+        let compact = UserDefaults.standard.bool(forKey: Self.densityPreferenceKey)
+        return 2 * max(compact ? 18 : 24,
+                       ceil(resolvedContentTypography().font(for: .body).boundingRectForFont.height) + (compact ? 2 : 8))
+    }
+
     private func applyContentTypography() {
         let topVisibleRow = {
             let range = tableView.rows(in: tableView.visibleRect)
@@ -494,8 +507,8 @@ final class GenotypeOutlineView: NSView {
         }
         let typography = resolvedContentTypography()
         tableView.rowHeight = max(
-            Self.rowHeight,
-            typography.tableRowHeight(minimum: Self.rowHeight, verticalPadding: 8)
+            resolvedTapeHeight + 8,
+            typography.tableRowHeight(minimum: UserDefaults.standard.bool(forKey: Self.densityPreferenceKey) ? 40 : Self.rowHeight, verticalPadding: 8)
         )
         rebuildHeader()
         tableView.reloadData()
@@ -738,7 +751,7 @@ extension GenotypeOutlineView {
             .first?
             .constraints
             .first(where: { $0.firstAttribute == .height && $0.relation == .equal })?
-            .constant ?? 26
+            .constant ?? resolvedTapeHeight
     }
 
     private func descendantTextFields(in view: NSView) -> [NSTextField] {

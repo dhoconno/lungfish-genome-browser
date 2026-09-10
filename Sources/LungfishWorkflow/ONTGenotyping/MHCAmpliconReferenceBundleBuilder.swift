@@ -30,11 +30,13 @@ public struct MHCAmpliconReferenceBundleBuildConfiguration: Equatable, Sendable 
     public let outputURL: URL
     public let name: String?
     public let defaultHaplotypeDefinitionID: String?
+    public let genotypeLocusDisplayOrder: [String]?
     public let sourceFiles: [URL]
     public let sourceDirectories: [URL]
     public let forceOverwrite: Bool
     public let argv: [String]
     public let provenanceWorkflowName: String
+    public let provenanceToolVersion: String
 
     public init(
         referenceFASTA: URL,
@@ -43,11 +45,13 @@ public struct MHCAmpliconReferenceBundleBuildConfiguration: Equatable, Sendable 
         outputURL: URL,
         name: String? = nil,
         defaultHaplotypeDefinitionID: String? = nil,
+        genotypeLocusDisplayOrder: [String]? = nil,
         sourceFiles: [URL] = [],
         sourceDirectories: [URL] = [],
         forceOverwrite: Bool = false,
         argv: [String] = [],
-        provenanceWorkflowName: String = "lungfish fastq mhc-reference-bundle"
+        provenanceWorkflowName: String = "lungfish fastq mhc-reference-bundle",
+        provenanceToolVersion: String = WorkflowRun.currentAppVersion
     ) {
         self.referenceFASTA = referenceFASTA.standardizedFileURL
         self.haplotypeDefinitionURLs = haplotypeDefinitionURLs.map(\.standardizedFileURL)
@@ -55,11 +59,13 @@ public struct MHCAmpliconReferenceBundleBuildConfiguration: Equatable, Sendable 
         self.outputURL = outputURL.standardizedFileURL
         self.name = name
         self.defaultHaplotypeDefinitionID = defaultHaplotypeDefinitionID
+        self.genotypeLocusDisplayOrder = genotypeLocusDisplayOrder
         self.sourceFiles = sourceFiles.map(\.standardizedFileURL)
         self.sourceDirectories = sourceDirectories.map(\.standardizedFileURL)
         self.forceOverwrite = forceOverwrite
         self.argv = argv
         self.provenanceWorkflowName = provenanceWorkflowName
+        self.provenanceToolVersion = provenanceToolVersion
     }
 }
 
@@ -182,7 +188,7 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
                 let destination = uniqueDestination(in: haplotypeDirectory, proposedName: filename)
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                try encoder.encode(definition).write(to: destination, options: .atomic)
+                try (input.sourceData ?? encoder.encode(definition)).write(to: destination, options: .atomic)
                 embeddedDefinitions.append((input, relativePath(for: destination, in: stagingBundleURL)))
             }
             let haplotypePaths = embeddedDefinitions.map(\.path)
@@ -229,6 +235,7 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
                 ),
                 provenancePath: ProvenanceWriter.provenanceFilename,
                 warnings: warnings,
+                genotypeLocusDisplayOrder: try config.genotypeLocusDisplayOrder.map(MHCAlleleDisplayOrder.validatedLocusDisplayOrder),
                 createdAt: formatter.string(from: Date())
             )
             try MHCAmpliconReferenceBundle.writeManifest(manifest, to: stagingBundleURL)
@@ -264,6 +271,7 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
     }
 
     private struct ResolvedDefinitionInput {
+        let sourceData: Data?
         let definition: GenotypeHaplotypeDefinitionSet
         let sourceURL: URL?
         let sourceDescription: String?
@@ -273,6 +281,7 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
     private func validate(
         _ config: MHCAmpliconReferenceBundleBuildConfiguration
     ) throws -> [ResolvedDefinitionInput] {
+        _ = try config.genotypeLocusDisplayOrder.map(MHCAlleleDisplayOrder.validatedLocusDisplayOrder)
         guard config.outputURL.pathExtension.lowercased() == MHCAmpliconReferenceBundle.directoryExtension else {
             throw MHCAmpliconReferenceBundleBuildError.invalidOutputExtension(config.outputURL.path)
         }
@@ -296,6 +305,7 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
         let fileInputs = try config.haplotypeDefinitionURLs.map { url in
             let data = try Data(contentsOf: url)
             return ResolvedDefinitionInput(
+                sourceData: data,
                 definition: try JSONDecoder().decode(GenotypeHaplotypeDefinitionSet.self, from: data),
                 sourceURL: url,
                 sourceDescription: url.path,
@@ -304,6 +314,7 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
         }
         let resolvedInputs = fileInputs + config.haplotypeDefinitionInputs.map { input in
             ResolvedDefinitionInput(
+                sourceData: nil,
                 definition: input.definition,
                 sourceURL: input.sourceURL,
                 sourceDescription: input.sourceDescription,
@@ -373,6 +384,9 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
             "output": .file(publishedBundleURL),
             "forceOverwrite": .boolean(config.forceOverwrite),
         ]
+        if let order = config.genotypeLocusDisplayOrder {
+            explicit["genotypeLocusDisplayOrder"] = .array(order.map(ParameterValue.string))
+        }
         if !warnings.isEmpty {
             explicit["warnings"] = .array(warnings.map(warningParameter))
         }
@@ -410,7 +424,7 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
         )
         let step = ProvenanceStep(
             toolName: config.provenanceWorkflowName,
-            toolVersion: WorkflowRun.currentAppVersion,
+            toolVersion: config.provenanceToolVersion,
             argv: argv,
             durableReplayArgv: argv,
             reproducibleCommand: commandLine(from: argv),
@@ -425,10 +439,10 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
         let envelope = ProvenanceEnvelope(
             createdAt: startedAt,
             workflowName: config.provenanceWorkflowName,
-            workflowVersion: WorkflowRun.currentAppVersion,
+            workflowVersion: config.provenanceToolVersion,
             toolName: CLICommandIdentity.executableName,
-            toolVersion: WorkflowRun.currentAppVersion,
-            tool: ProvenanceToolIdentity(name: CLICommandIdentity.executableName, version: WorkflowRun.currentAppVersion, kind: "cli"),
+            toolVersion: config.provenanceToolVersion,
+            tool: ProvenanceToolIdentity(name: CLICommandIdentity.executableName, version: config.provenanceToolVersion, kind: "cli"),
             argv: argv,
             durableReplayArgv: argv,
             reproducibleCommand: commandLine(from: argv),
@@ -438,9 +452,13 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
                 resolvedDefaults: [
                     "name": .string(config.name ?? publishedBundleURL.deletingPathExtension().lastPathComponent),
                     "forceOverwrite": .boolean(config.forceOverwrite),
+                    "outputChecksumScope": .string("individual-payload-files; bundle directory is an unhashed container"),
+                    "genotypeLocusDisplayOrder": try config.genotypeLocusDisplayOrder.map {
+                        .array(try MHCAlleleDisplayOrder.validatedLocusDisplayOrder($0).map(ParameterValue.string))
+                    } ?? .null,
                 ]
             ),
-            runtimeIdentity: ProvenanceRuntimeIdentity(user: WorkflowRun.currentUser),
+            runtimeIdentity: ProvenanceRuntimeIdentity(appVersion: config.provenanceToolVersion, user: WorkflowRun.currentUser),
             files: inputs + outputs,
             output: outputs.first,
             outputs: outputs,
@@ -514,11 +532,10 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
         publishedBundleURL: URL
     ) throws -> [ProvenanceFileDescriptor] {
         var descriptors = [
-            try directoryDescriptor(
-                url: publishedBundleURL,
-                contentsOf: bundleURL,
-                role: .output
-            ),
+            // ProvenanceWriter adds sidecars after payload publication. Hashing
+            // the container here would attest an incomplete, self-referential tree.
+            // Every payload file below retains its final path, digest, and size.
+            ProvenanceFileDescriptor(path: publishedBundleURL.path, role: .output),
         ]
         guard let enumerator = FileManager.default.enumerator(
             at: bundleURL,
@@ -707,6 +724,9 @@ public struct MHCAmpliconReferenceBundleBuilder: Sendable {
         }
         if let defaultID = config.defaultHaplotypeDefinitionID {
             argv += ["--default-haplotype-definition", defaultID]
+        }
+        for locus in config.genotypeLocusDisplayOrder ?? [] {
+            argv += ["--genotype-locus-display-order", locus]
         }
         for file in config.sourceFiles {
             argv += ["--source-file", file.path]

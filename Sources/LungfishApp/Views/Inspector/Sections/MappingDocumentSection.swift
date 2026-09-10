@@ -75,15 +75,15 @@ struct MappingDocumentSection: View {
     private func header(_ mapping: MappingDocumentState) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(mapping.title)
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             if let subtitle = mapping.subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
             if let summary = mapping.summary, !summary.isEmpty {
                 Text(summary)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -102,7 +102,7 @@ struct MappingDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     @ViewBuilder
@@ -114,7 +114,7 @@ struct MappingDocumentSection: View {
                     viewModel.navigateToSourceData?(targetURL)
                 } label: {
                     Text(name)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.blue)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -129,7 +129,7 @@ struct MappingDocumentSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 } label: {
                     Text(name)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.blue)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -141,7 +141,7 @@ struct MappingDocumentSection: View {
 
             case .missing(let name, let originalPath):
                 Text(name)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let originalPath, !originalPath.isEmpty {
@@ -173,7 +173,7 @@ struct MappingDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func sourceArtifactsSection(_ rows: [MappingDocumentArtifactRow]) -> some View {
@@ -189,7 +189,7 @@ struct MappingDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     @ViewBuilder
@@ -200,13 +200,13 @@ struct MappingDocumentSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Reveal in Finder")
                 pathCaption(fileURL.path)
             } else {
                 Text(row.label)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let fileURL = row.fileURL {
@@ -220,7 +220,7 @@ struct MappingDocumentSection: View {
 
     private func pathCaption(_ text: String) -> some View {
         Text(text)
-            .font(.caption2)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.tertiary)
             .textSelection(.enabled)
             .lineLimit(2)
@@ -232,13 +232,13 @@ struct MappingDocumentSection: View {
     private func contextRow(label: String, value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 92, alignment: .trailing)
                 .lineLimit(2)
 
             Text(value)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .textSelection(.enabled)
                 .lineLimit(3)
                 .truncationMode(.middle)
@@ -249,7 +249,7 @@ struct MappingDocumentSection: View {
 
     private func emptyMessage(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.secondary)
             .padding(.vertical, 4)
     }

@@ -753,7 +753,7 @@ extension ViewerViewController {
     /// Extracts the chromosomes selected in the navigator into a new
     /// `.lungfishref` bundle, through the same `extract contigs --bundle` CLI
     /// path the FASTA collection viewport uses.
-    func extractSelectedChromosomesToNewBundle(_ chromosomes: [ChromosomeInfo]) {
+    func extractSelectedChromosomesToNewBundle(_ chromosomes: [ChromosomeInfo], suggestedBundleName: String? = nil) {
         let names = chromosomes.map(\.name)
         guard !names.isEmpty else { return }
         guard let bundleURL = currentReferenceBundle?.url,
@@ -772,7 +772,7 @@ extension ViewerViewController {
             return
         }
 
-        let suggestedName = names.count == 1 ? names[0] : "selected-sequences"
+        let suggestedName = suggestedBundleName ?? (names.count == 1 ? String(names[0].prefix(100)) : "selected-sequences")
         let arguments = FASTASelectionReferenceBundleCLI.arguments(
             sourceURL: sourceURL,
             sequenceIDs: names,

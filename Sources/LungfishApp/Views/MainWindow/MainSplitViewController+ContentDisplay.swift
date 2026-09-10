@@ -374,6 +374,10 @@ extension MainSplitViewController {
                     self.inspectorController.genotypeResultDisplaySectionViewModel
                         .updateMatrixVisibilityCapability(capability)
                 }
+                controller.onLocusDisplayOrderPersistenceWarningChanged = { [weak self] warning in
+                    self?.inspectorController.genotypeResultDisplaySectionViewModel
+                        .updateLocusDisplayOrderPersistenceWarning(warning)
+                }
                 controller.onCandidatePersistenceWarningChanged = { [weak self] warning in
                     self?.inspectorController.genotypeResultDisplaySectionViewModel
                         .updateMHCCandidatePersistenceWarning(warning)

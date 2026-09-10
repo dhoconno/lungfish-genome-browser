@@ -242,12 +242,14 @@ struct GenotypeCallEvidenceView: View {
     struct HaplotypeOverrideRequest: Identifiable, Equatable {
         let slot: HaplotypeSlot
         let haplotypeName: String
+        var rationale: String? = nil
+        var reasonTag: GenotypeAnnotationSidecar.OverrideReasonTag? = nil
 
         var id: String { "\(slot.rawValue)-\(haplotypeName)" }
     }
 
     struct PendingOverrides: Equatable {
-        private var targets: [HaplotypeSlot: String] = [:]
+        private var targets: [HaplotypeSlot: HaplotypeOverrideRequest] = [:]
 
         var isEmpty: Bool {
             targets.isEmpty
@@ -255,13 +257,12 @@ struct GenotypeCallEvidenceView: View {
 
         var requests: [HaplotypeOverrideRequest] {
             HaplotypeSlot.allCases.compactMap { slot in
-                guard let haplotypeName = targets[slot] else { return nil }
-                return HaplotypeOverrideRequest(slot: slot, haplotypeName: haplotypeName)
+                targets[slot]
             }
         }
 
         mutating func stage(_ request: HaplotypeOverrideRequest) {
-            targets[request.slot] = request.haplotypeName
+            targets[request.slot] = request
         }
 
         mutating func clear() {
@@ -269,7 +270,7 @@ struct GenotypeCallEvidenceView: View {
         }
 
         func target(for slot: HaplotypeSlot) -> String? {
-            targets[slot]
+            targets[slot]?.haplotypeName
         }
     }
 
@@ -385,6 +386,9 @@ struct GenotypeCallEvidenceView: View {
 
     @State private var pendingOverrides = PendingOverrides()
     @State private var hiddenGenotypeSections: Set<String> = []
+    @State private var expandedHaplotypeAssociations: Set<String> = []
+    @State private var customOverrideSlot: HaplotypeSlot?
+    @State private var customOverrideDraft = GenotypeOverrideSection.OverrideDraft()
 
     init(
         evidence: Evidence?,
@@ -621,6 +625,38 @@ struct GenotypeCallEvidenceView: View {
             }
             .padding(14)
         }
+        .sheet(isPresented: Binding(
+            get: { customOverrideSlot != nil },
+            set: { if !$0 { customOverrideSlot = nil } }
+        )) {
+            if let evidence, let slot = customOverrideSlot {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Override \(evidence.sample) · \(evidence.locus) · \(slot.displayName)")
+                        .font(.headline)
+                    Text("Enter any haplotype name. This changes the analyst assignment and preserves the original call in the audit history.")
+                        .font(.caption)
+                    GenotypeOverrideSection(
+                        draft: $customOverrideDraft,
+                        originalCall: Self.currentHaplotypeName(in: evidence, slot: slot),
+                        allowedTargets: evidence.availableHaplotypeNames,
+                        requiresAcknowledgement: true,
+                        saveTitle: "Stage override",
+                        onSave: { draft in
+                            pendingOverrides.stage(.init(
+                                slot: slot,
+                                haplotypeName: draft.target.trimmingCharacters(in: .whitespacesAndNewlines),
+                                rationale: draft.rationale.trimmingCharacters(in: .whitespacesAndNewlines),
+                                reasonTag: draft.reason
+                            ))
+                            customOverrideSlot = nil
+                        },
+                        onCancel: { customOverrideSlot = nil }
+                    )
+                }
+                .padding(20)
+                .frame(width: 520)
+            }
+        }
     }
 
     private var emptyState: some View {
@@ -792,13 +828,18 @@ struct GenotypeCallEvidenceView: View {
                     overrideMenuButton(action)
                 }
             }
+            Divider()
+            Button("Enter haplotype name…") {
+                customOverrideDraft = .init(reason: .analystJudgment)
+                customOverrideSlot = slot
+            }
+            .accessibilityIdentifier("genotype-call-evidence-custom-\(slot.rawValue)")
         } label: {
             Label("Change", systemImage: "arrow.left.arrow.right")
                 .labelStyle(.iconOnly)
         }
         .menuStyle(.borderlessButton)
         .controlSize(.small)
-        .disabled(sections.isEmpty)
         .help("Change \(slot.displayName) assignment")
     }
 
@@ -934,11 +975,27 @@ struct GenotypeCallEvidenceView: View {
                             )
                     }
                     if row.associatedHaplotypes.count > 5 {
-                        Text("+\(row.associatedHaplotypes.count - 5)")
-                            .font(contentCaptionFont.monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                        Button(expandedHaplotypeAssociations.contains(row.id) ? "Show fewer" : "Show all \(row.associatedHaplotypes.count) haplotypes") {
+                            if !expandedHaplotypeAssociations.insert(row.id).inserted {
+                                expandedHaplotypeAssociations.remove(row.id)
+                            }
+                        }
+                        .buttonStyle(.link)
+                        .font(contentCaptionFont)
+                        .accessibilityIdentifier("genotype-evidence-associated-haplotypes-\(row.id)")
+                        .accessibilityLabel(expandedHaplotypeAssociations.contains(row.id) ? "Show fewer associated haplotypes for \(row.genotype)" : "Show all \(row.associatedHaplotypes.count) associated haplotypes for \(row.genotype)")
                     }
                 }
+            }
+            if expandedHaplotypeAssociations.contains(row.id) {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(row.associatedHaplotypes.dropFirst(5)), id: \.self) { name in
+                        Text(name)
+                            .font(contentCaptionFont.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.leading, 8)
             }
         }
         .padding(.vertical, 4)
@@ -1217,6 +1274,11 @@ struct GenotypeCallEvidenceView: View {
                         .textSelection(.enabled)
                     Spacer()
                 }
+                if let rationale = request.rationale {
+                    Text("Reason: \(rationale)")
+                        .font(contentCaptionFont)
+                        .foregroundStyle(.secondary)
+                }
             }
             HStack {
                 Spacer()
@@ -1228,8 +1290,7 @@ struct GenotypeCallEvidenceView: View {
                     title: "Apply pending",
                     accessibilityIdentifier:
                         "genotype-call-evidence-apply-pending",
-                    isEnabled: !pendingOverrides.isEmpty,
-                    keyEquivalent: "\r"
+                    isEnabled: !pendingOverrides.isEmpty
                 ) {
                     let requests = pendingOverrides.requests
                     let outcome: GenotypeHaplotypeMutationOutcome

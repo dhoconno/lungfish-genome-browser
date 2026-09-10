@@ -1195,6 +1195,8 @@ final class FastqGenotypingCommandTests: XCTestCase {
             "--default-haplotype-definition", "mcm-mhc",
             "--output", "/tmp/MCM-MHC.lungfishmhcref",
             "--name", "MCM MHC",
+            "--genotype-locus-display-order", "MHC-F",
+            "--genotype-locus-display-order", "MHC-A2/A3/A4/A5",
             "--source-file", "/tmp/build.log",
             "--force",
         ])
@@ -1205,8 +1207,11 @@ final class FastqGenotypingCommandTests: XCTestCase {
         XCTAssertEqual(command.output, "/tmp/MCM-MHC.lungfishmhcref")
         XCTAssertEqual(command.name, "MCM MHC")
         XCTAssertEqual(command.sourceFiles, ["/tmp/build.log"])
+        XCTAssertEqual(command.configurationForTesting().genotypeLocusDisplayOrder, ["MHC-F", "MHC-A2/A3/A4/A5"])
+        XCTAssertTrue(command.configurationForTesting().argv.contains("--genotype-locus-display-order"))
         XCTAssertTrue(command.force)
         XCTAssertEqual(command.configurationForTesting().defaultHaplotypeDefinitionID, "mcm-mhc")
+        XCTAssertEqual(command.configurationForTesting().provenanceToolVersion, LungfishAppVersion.cliToolVersion)
     }
 
     func testMHCReferenceBundleFormatsRecoverableAnnotationWarning() {

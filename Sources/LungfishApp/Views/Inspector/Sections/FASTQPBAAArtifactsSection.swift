@@ -84,7 +84,7 @@ public struct FASTQPBAAArtifactsSection: View {
                 VStack(alignment: .leading, spacing: 10) {
                     if let loadError = viewModel.loadError {
                         Text(loadError)
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(Color.lungfishOrangeFallback)
                     }
                     ForEach(viewModel.artifacts) { artifact in
@@ -94,10 +94,10 @@ public struct FASTQPBAAArtifactsSection: View {
             } label: {
                 HStack {
                     Text("pbAA Artifacts")
-                        .font(.headline)
+                        .font(LungfishInspectorStyle.sectionTitleFont)
                     Spacer()
                     Text("\(viewModel.artifacts.count)")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -110,18 +110,18 @@ public struct FASTQPBAAArtifactsSection: View {
             Text(artifact.displayName)
                 .font(.subheadline.weight(.medium))
             Text("\(artifact.clusterCountText), \(artifact.clusteredReadCountText)")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text("Guide: \(artifact.guideDisplayPath)")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Text("Clusters: \(artifact.passedConsensusFASTAPath)")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Text("Provenance: \(artifact.provenancePath)")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }

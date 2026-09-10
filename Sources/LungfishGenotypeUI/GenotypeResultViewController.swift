@@ -246,6 +246,7 @@ public final class GenotypeResultViewController: NSViewController {
         ((GenotypeMatrixVisibilityCapabilitySnapshot) -> Void)?
     public var onMatrixAnnotationCommandError: ((Error) -> Void)?
     public var onCandidatePersistenceWarningChanged: ((String?) -> Void)?
+    public var onLocusDisplayOrderPersistenceWarningChanged: ((String?) -> Void)?
     public var onCurrentWorkbookSyncRequested: ((GenotypeCurrentWorkbookUIRequest) -> Void)?
     public var onDeferredMatrixAnnotationMutationsDrained: (() -> Void)?
 
@@ -286,6 +287,7 @@ public final class GenotypeResultViewController: NSViewController {
         onMatrixVisibilityCapabilityChanged = nil
         onMatrixAnnotationCommandError = nil
         onCandidatePersistenceWarningChanged = nil
+        onLocusDisplayOrderPersistenceWarningChanged = nil
         onAIHaplotypingRequested = nil
     }
 
@@ -304,7 +306,6 @@ public final class GenotypeResultViewController: NSViewController {
         action: nil
     )
     private let viewportControlStack = NSStackView()
-    private let presentationActionsButton = NSButton()
     private let contentHost = NSView()
     private var contentHostTopConstraint: NSLayoutConstraint!
 
@@ -508,6 +509,7 @@ public final class GenotypeResultViewController: NSViewController {
     /// One immutable effective-call read model for applicable haplotyped miSeq
     /// results. Legacy and genotype-only workflows intentionally leave this
     /// nil so their established manual-assignment behavior remains unchanged.
+    private var alleleHaplotypeEvidenceIndex = GenotypeAlleleHaplotypeEvidenceIndex.empty
     private var effectiveHaplotypeProjection: GenotypeEffectiveHaplotypeProjection?
     private var effectiveHaplotypeProjectionInput: EffectiveHaplotypeProjectionInput?
     private var effectiveHaplotypeProjectionGeneration: UInt64 = 0
@@ -635,7 +637,6 @@ public final class GenotypeResultViewController: NSViewController {
         view = root
 
         configureLensControl()
-        configurePresentationActionsButton()
         configureViewportControlStack()
         configureContentHost()
         configureSplitView()
@@ -959,6 +960,7 @@ public final class GenotypeResultViewController: NSViewController {
         // Replace any outline-built fallback index before applying quick search.
         invalidateGenotypeSearchIndex()
         comparisonMatrix.applyMatrixReviewCapability(matrixReviewCapability)
+        rebuildAlleleHaplotypeEvidenceIndex()
         comparisonMatrix.applyDisplayState(displayState)
         applyComparisonMatrixCohortFilter()
     }
@@ -1008,7 +1010,8 @@ public final class GenotypeResultViewController: NSViewController {
             referenceRecordStore: source.referenceRecordStore,
             alignmentArtifacts: source.alignmentArtifacts,
             provisionalExon2Artifacts: source.provisionalExon2Artifacts,
-            reviewableRowCatalog: source.reviewableRowCatalog
+            reviewableRowCatalog: source.reviewableRowCatalog,
+            genotypeLocusDisplayOrder: source.genotypeLocusDisplayOrder
         )
         return ONTGenotypeResultBundleData(
             bundleURL: result.bundleURL,
@@ -1351,6 +1354,8 @@ public final class GenotypeResultViewController: NSViewController {
             author: annotationAuthorProvider(),
             seedBuiltInSmartCohorts: result.haplotypeAnalysis != nil
         )
+        displayState.genotypeLocusDisplayOrder = annotationStore?.sidecar.settings.genotypeLocusDisplayOrder
+        onLocusDisplayOrderPersistenceWarningChanged?(nil)
         currentWorkbookIsReadOnly = annotationStore?.isReadOnly ?? false
         refreshPresentationPolicy()
         rebuildMatrixAnnotationIndexes()
@@ -1697,6 +1702,10 @@ public final class GenotypeResultViewController: NSViewController {
             }
             return
         }
+        if state.genotypeLocusDisplayOrder != displayState.genotypeLocusDisplayOrder {
+            persistLocusDisplayOrder(state)
+            return
+        }
         if state.mhcCandidateDisplaySettings != displayState.mhcCandidateDisplaySettings,
            let result,
            validatedMHCCandidateDocument(from: result) != nil,
@@ -1800,6 +1809,9 @@ public final class GenotypeResultViewController: NSViewController {
            currentSelectionState?.matrixTargets.isEmpty == false {
             refreshCurrentSelectionDetails()
         }
+        if previousDisplayState.diagnosticAllelesOnly != state.diagnosticAllelesOnly {
+            updateCallEvidence()
+        }
         if candidateSearchProjectionChanged {
             invalidateGenotypeSearchIndex()
             refreshActiveSharedSearchAfterDependencyChange()
@@ -1815,6 +1827,37 @@ public final class GenotypeResultViewController: NSViewController {
         return previous.showKnown != next.showKnown
             || previous.showSharedCandidates != next.showSharedCandidates
             || previous.showSingletonCandidates != next.showSingletonCandidates
+    }
+
+    private func persistLocusDisplayOrder(_ requestedState: GenotypeResultDisplayState) {
+        guard let store = annotationStore, !store.isReadOnly else {
+            onLocusDisplayOrderPersistenceWarningChanged?("Locus display order could not be saved because this bundle is read-only.")
+            onDisplayStateChanged?(displayState)
+            return
+        }
+        do {
+            try store.updateGenotypeLocusDisplayOrder(
+                requestedState.genotypeLocusDisplayOrder,
+                bundleDefault: result?.genotypeLocusDisplayOrder,
+                author: annotationAuthorProvider()
+            )
+            var persisted = requestedState
+            persisted.genotypeLocusDisplayOrder = store.sidecar.settings.genotypeLocusDisplayOrder
+            comparisonMatrix.applyAnnotationSidecar(store.sidecar, reload: false)
+            applyDisplayStateImmediately(persisted)
+            onLocusDisplayOrderPersistenceWarningChanged?(nil)
+            onAnnotationSidecarChanged?(store.sidecar)
+            onDisplayStateChanged?(persisted)
+        } catch {
+            var restored = displayState
+            restored.genotypeLocusDisplayOrder = store.sidecar.settings.genotypeLocusDisplayOrder
+            _ = rebuildMatrixAnnotationIndexes()
+            comparisonMatrix.applyAnnotationSidecar(store.sidecar)
+            applyDisplayStateImmediately(restored)
+            onLocusDisplayOrderPersistenceWarningChanged?(error.localizedDescription)
+            onAnnotationSidecarChanged?(store.sidecar)
+            onDisplayStateChanged?(restored)
+        }
     }
 
     private func persistCandidateDisplaySettings(
@@ -1862,6 +1905,7 @@ public final class GenotypeResultViewController: NSViewController {
                 self.onCandidatePersistenceWarningChanged?(nil)
                 var persistedState = requestedState
                 persistedState.mhcCandidateDisplaySettings = published.settings.mhcCandidateDisplay
+                persistedState.genotypeLocusDisplayOrder = published.settings.genotypeLocusDisplayOrder
                 self.applyDisplayStateImmediately(persistedState)
                 self.comparisonMatrix.applyAnnotationSidecar(published, reload: false)
                 self.onAnnotationSidecarChanged?(published)
@@ -1900,6 +1944,7 @@ public final class GenotypeResultViewController: NSViewController {
                 )
                 var restoredState = self.displayState
                 restoredState.mhcCandidateDisplaySettings = latest.settings.mhcCandidateDisplay
+                restoredState.genotypeLocusDisplayOrder = latest.settings.genotypeLocusDisplayOrder
                 self.applyDisplayStateImmediately(restoredState)
                 self.comparisonMatrix.applyAnnotationSidecar(latest, reload: false)
                 self.onAnnotationSidecarChanged?(latest)
@@ -2319,12 +2364,15 @@ public final class GenotypeResultViewController: NSViewController {
             let candidateDisplayChanged =
                 sidecarBeforeAttempt.settings.mhcCandidateDisplay
                     != store.sidecar.settings.mhcCandidateDisplay
+            let locusDisplayOrderChanged = sidecarBeforeAttempt.settings.genotypeLocusDisplayOrder
+                != store.sidecar.settings.genotypeLocusDisplayOrder
             let searchDependenciesChanged = rebuildMatrixAnnotationIndexes()
-            if candidateDisplayChanged {
+            if candidateDisplayChanged || locusDisplayOrderChanged {
                 comparisonMatrix.applyAnnotationSidecar(store.sidecar, reload: false)
                 var reconciledDisplayState = displayState
                 reconciledDisplayState.mhcCandidateDisplaySettings =
                     store.sidecar.settings.mhcCandidateDisplay
+                reconciledDisplayState.genotypeLocusDisplayOrder = store.sidecar.settings.genotypeLocusDisplayOrder
                 applyDisplayStateImmediately(reconciledDisplayState)
                 onDisplayStateChanged?(reconciledDisplayState)
                 refreshCandidateSelectionDetails()
@@ -2660,41 +2708,12 @@ public final class GenotypeResultViewController: NSViewController {
         lensControl.setAccessibilityIdentifier("genotype-result-lens-control")
     }
 
-    private func configurePresentationActionsButton() {
-        presentationActionsButton.translatesAutoresizingMaskIntoConstraints = false
-        presentationActionsButton.title = "Actions"
-        presentationActionsButton.bezelStyle = .rounded
-        presentationActionsButton.controlSize = .small
-        presentationActionsButton.target = self
-        presentationActionsButton.action = #selector(showPresentationActions(_:))
-        presentationActionsButton.setAccessibilityIdentifier(
-            "genotype-result-actions-menu"
-        )
-        presentationActionsButton.setAccessibilityLabel(
-            "Haplotype analysis actions"
-        )
-        let menu = NSMenu(title: "Haplotype analysis actions")
-        menu.delegate = self
-        menu.addItem(withTitle: "AI Discovery", action: #selector(runAIHaplotypingDiscovery), keyEquivalent: "")
-        menu.addItem(withTitle: "AI Refinement", action: #selector(runAIHaplotypingRefinement), keyEquivalent: "")
-        menu.addItem(withTitle: "Export Excel View…", action: #selector(exportExcelView(_:)), keyEquivalent: "")
-        menu.items.forEach { $0.target = self }
-        presentationActionsButton.menu = menu
-    }
-
     private func configureViewportControlStack() {
         viewportControlStack.translatesAutoresizingMaskIntoConstraints = false
         viewportControlStack.orientation = .horizontal
         viewportControlStack.alignment = .centerY
         viewportControlStack.spacing = 8
         viewportControlStack.addArrangedSubview(lensControl)
-        viewportControlStack.addArrangedSubview(presentationActionsButton)
-    }
-
-    @objc private func showPresentationActions(_ sender: NSButton) {
-        guard let menu = sender.menu else { return }
-        let point = NSPoint(x: 0, y: sender.bounds.minY - 4)
-        menu.popUp(positioning: nil, at: point, in: sender)
     }
 
     private func configureAvailableLensSegments() {
@@ -2715,7 +2734,6 @@ public final class GenotypeResultViewController: NSViewController {
         lensControl.controlSize = isGenotypeOnlyResult ? .small : .regular
         lensControl.selectedSegment = segmentIndex(for: selectedLens)
         lensControl.isHidden = isGenotypeOnlyResult || viewportSelectionCount <= 1
-        presentationActionsButton.isHidden = choices.isEmpty
         lensControl.setAccessibilityLabel(
             choices.isEmpty ? "Genotype result viewport" : "View presentation"
         )
@@ -2942,7 +2960,6 @@ public final class GenotypeResultViewController: NSViewController {
             constant: viewportHeaderHeight
         )
         lensControl.isHidden = isGenotypeOnlyResult || viewportSelectionCount <= 1
-        presentationActionsButton.isHidden = presentationChoices.isEmpty
 
         NSLayoutConstraint.activate([
             viewportControlStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
@@ -2958,7 +2975,6 @@ public final class GenotypeResultViewController: NSViewController {
     private func applyViewportHeaderVisibility() {
         guard isViewLoaded else { return }
         lensControl.isHidden = isGenotypeOnlyResult || viewportSelectionCount <= 1
-        presentationActionsButton.isHidden = presentationChoices.isEmpty
         contentHostTopConstraint.constant = viewportHeaderHeight
     }
 
@@ -3293,7 +3309,10 @@ public final class GenotypeResultViewController: NSViewController {
             locusFraction: nil
         )
         let omittedGenotypes = omittedHaplotypeGenotypes(
-            from: locusCalls,
+            from: locusCalls.filter { call in
+                !displayState.diagnosticAllelesOnly
+                    || alleleHaplotypeEvidenceIndex.isDiagnostic(locus: call.locusGroup, genotype: call.genotype)
+            },
             locusDefinition: locusDefinition,
             observedSet: observedSet,
             sampleTotal: sampleTotal,
@@ -3306,6 +3325,10 @@ public final class GenotypeResultViewController: NSViewController {
             locusCall.matchedHaplotypes.flatMap(\.diagnosticAlleles).map(Self.genotypeIdentifier)
         )
         let diagnostic = locusCalls
+            .filter { call in
+                !displayState.diagnosticAllelesOnly
+                    || alleleHaplotypeEvidenceIndex.isDiagnostic(locus: call.locusGroup, genotype: call.genotype)
+            }
             .filter { (call: ONTGenotypeCall) -> Bool in
                 let identifier = Self.genotypeIdentifier(call.genotype)
                 if observedIdentifiers.contains(identifier) || observedSet.contains(call.genotype) { return true }
@@ -3374,7 +3397,17 @@ public final class GenotypeResultViewController: NSViewController {
             sampleId: sampleId,
             for: sampleCalls,
             sampleAnalysis: sampleAnalysis
-        )
+        ).filter { row in
+            !displayState.diagnosticAllelesOnly
+                || (row.reads > 0 && alleleHaplotypeEvidenceIndex.isDiagnostic(locus: row.locus, genotype: row.genotype))
+        }
+        let diagnosticObservedIdentifiers = Set(sampleCalls.filter {
+            alleleHaplotypeEvidenceIndex.isDiagnostic(locus: $0.locusGroup, genotype: $0.genotype)
+        }.map { Self.genotypeIdentifier($0.genotype) })
+        let visibleObservedGenotypes = locusCall.observedGenotypes.filter {
+            !displayState.diagnosticAllelesOnly
+                || diagnosticObservedIdentifiers.contains(Self.genotypeIdentifier($0))
+        }
         let selectedSlot = requestedSlot
             ?? (
                 currentSelectedSample == sampleId
@@ -3390,7 +3423,7 @@ public final class GenotypeResultViewController: NSViewController {
             callName: displayedCall,
             status: effectiveCall.status,
             observedGenotypeCount: locusCall.observedGenotypeCount,
-            observedGenotypes: locusCall.observedGenotypes,
+            observedGenotypes: visibleObservedGenotypes,
             diagnosticAlleles: Array(diagnostic),
             omittedHaplotypeGenotypes: omittedGenotypes,
             sampleTotalReads: sampleResult?.sampleTotalReads,
@@ -5741,6 +5774,7 @@ public final class GenotypeResultViewController: NSViewController {
         rebuildMatrixAnnotationIndexes()
         publishMatrixReviewCapability(for: currentSelectionState?.matrixTargets ?? [])
         displayState.summaryViewMode = initialSummaryViewMode(for: updatedResult)
+        displayState.genotypeLocusDisplayOrder = annotationStore?.sidecar.settings.genotypeLocusDisplayOrder
         aiHaplotypingStatus = "AI haplotype revision created. Calls require manual review."
         if hasHaplotypingResult {
             rebuildActiveHaplotypeAnalysisIndexes()
@@ -6465,6 +6499,7 @@ public final class GenotypeResultViewController: NSViewController {
     private func applyComparisonMatrixHaplotypeBandProjection(
         invalidatedKeys: Set<GenotypeEffectiveHaplotypeKey>? = nil
     ) {
+        rebuildAlleleHaplotypeEvidenceIndex()
         if presentationPolicy?.appliesToHaplotypedMiSeq == true,
            let effectiveHaplotypeProjection,
            let analysis = activeHaplotypeAnalysis() {
@@ -6494,6 +6529,44 @@ public final class GenotypeResultViewController: NSViewController {
         } else {
             comparisonMatrix.setHaplotypeBand(mode: .none, snapshot: nil)
         }
+    }
+
+    private func alleleEvidenceDefinitionSet(
+        for result: ONTGenotypeResultBundleData,
+        analysis: GenotypeHaplotypeAnalysis
+    ) -> GenotypeHaplotypeDefinitionSet? {
+        let context = haplotypeDefinitionContext(for: result)
+        if let context, context.source != .synthesizedBundleAnalysis && context.source != .inferredPreview {
+            return context.definition
+        }
+        return GenotypeHaplotypeAnalysisResolver.recordedReferenceDefinition(
+            for: result, definitionSetID: analysis.definitionSetID, assayID: analysis.assayID
+        ) ?? context?.definition
+    }
+
+    private func rebuildAlleleHaplotypeEvidenceIndex() {
+        guard let result, let analysis = activeHaplotypeAnalysis(),
+              let definitionSet = alleleEvidenceDefinitionSet(for: result, analysis: analysis) else {
+            alleleHaplotypeEvidenceIndex = .empty
+            comparisonMatrix.configureHaplotypeEvidence(.empty)
+            return
+        }
+        let effectiveCalls = analysis.samples.flatMap { sample in
+            sample.calls.map { call in
+                let effective = effectiveHaplotypeCall(sample: sample.sample, call: call)
+                return GenotypeAlleleHaplotypeEvidenceIndex.EffectiveCall(
+                    sample: sample.sample,
+                    locus: call.locus,
+                    haplotypeNames: [effective.h1, effective.h2]
+                )
+            }
+        }
+        alleleHaplotypeEvidenceIndex = GenotypeAlleleHaplotypeEvidenceIndex(
+            calls: result.calls,
+            definitionSet: definitionSet,
+            effectiveCalls: effectiveCalls
+        )
+        comparisonMatrix.configureHaplotypeEvidence(alleleHaplotypeEvidenceIndex)
     }
 
     private func resultWithActiveHaplotypeAnalysis(_ result: ONTGenotypeResultBundleData) -> ONTGenotypeResultBundleData {
@@ -7823,6 +7896,11 @@ public final class GenotypeResultViewController: NSViewController {
             settings: settings,
             usesBiologicalAlleleOrder:
                 result.manifest.kind == "full-length-ont-mhc-genotype"
+                || result.calls.contains { !MHCReferenceGenotypeDisplay.alleleNames(for: $0.genotype).isEmpty },
+            locusDisplayOrder: displayState.genotypeLocusDisplayOrder ?? result.genotypeLocusDisplayOrder,
+            usesNumericReferenceOrder: result.referenceMetadata == nil
+                && !result.calls.contains { !MHCReferenceGenotypeDisplay.alleleNames(for: $0.genotype).isEmpty }
+                && result.calls.contains { GenotypeReferenceNumericPrefixOrder.hasPrefix($0.genotype) }
         )
         let referenceMetadata = result.referenceMetadata
         let visibleReferenceFieldKeys =
@@ -7839,7 +7917,7 @@ public final class GenotypeResultViewController: NSViewController {
                       let alleleFieldKey = referenceMetadata?.alleleFieldKey,
                       let value = record[alleleFieldKey],
                       !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return row.genotype
+                    return MHCReferenceGenotypeDisplay.alleleName(for: row.genotype)
                 }
                 return value
             }()
@@ -8140,31 +8218,13 @@ public final class GenotypeResultViewController: NSViewController {
     ) -> [GenotypeHaplotypeTapeView.Slot] {
         let callsByLocus = Dictionary(uniqueKeysWithValues: sample.calls.map { ($0.locus, $0) })
         let observedForSample = observed?.observedCallsBySampleAndLocus[sample.sample] ?? [:]
-        let sampleCalls = callsBySample[sample.sample] ?? []
-        let sampleCallIndex = callIndexBySample[sample.sample] ?? callIndex(for: sampleCalls)
-        let locusDefinitionsByName = (result.flatMap(definitionSetForResult)?.locusDefinitions ?? [])
-            .reduce(into: [String: GenotypeHaplotypeLocusDefinition]()) { definitions, locusDefinition in
-                definitions[locusDefinition.locus] = locusDefinition
-            }
-        let readTotalsByLocus = sampleCalls.reduce(into: [String: Int]()) { totals, call in
-            totals[call.locusGroup, default: 0] += max(0, call.passedUniqueReads)
-        }
         return loci.map { locus -> GenotypeHaplotypeTapeView.Slot in
             if let call = callsByLocus[locus] {
                 let effective = effectiveHaplotypeCall(sample: sample.sample, call: call)
                 let h1Manual = hasManualHaplotypeAssignment(sample: sample.sample, locus: call.locus, slot: .h1)
-                let h1Overridden = hasCallOverride(sample: sample.sample, locus: call.locus, slot: .h1)
                 let h1 = outlineCell(
                     for: effective.h1,
                     status: effective.h1Status,
-                    isWeakSupport: !h1Manual && !h1Overridden && isWeakAutomatedHaplotype(
-                        effective.h1,
-                        in: call,
-                        sampleCalls: sampleCalls,
-                        sampleCallIndex: sampleCallIndex,
-                        locusDefinition: locusDefinitionsByName[call.locus],
-                        locusTotal: readTotalsByLocus[call.locus, default: 0]
-                    ),
                     isManual: h1Manual
                 )
                 let displayedH2 = normalizedHomozygousSecondHaplotype(
@@ -8173,18 +8233,9 @@ public final class GenotypeResultViewController: NSViewController {
                     status: effective.h2Status
                 )
                 let h2Manual = hasManualHaplotypeAssignment(sample: sample.sample, locus: call.locus, slot: .h2)
-                let h2Overridden = hasCallOverride(sample: sample.sample, locus: call.locus, slot: .h2)
                 let h2 = outlineCell(
                     for: displayedH2,
                     status: effective.h2Status,
-                    isWeakSupport: !h2Manual && !h2Overridden && call.haplotype2 == displayedH2 && isWeakAutomatedHaplotype(
-                        displayedH2,
-                        in: call,
-                        sampleCalls: sampleCalls,
-                        sampleCallIndex: sampleCallIndex,
-                        locusDefinition: locusDefinitionsByName[call.locus],
-                        locusTotal: readTotalsByLocus[call.locus, default: 0]
-                    ),
                     isManual: h2Manual
                 )
                 let isEditable = !(annotationStore?.isReadOnly ?? true)
@@ -8289,7 +8340,6 @@ public final class GenotypeResultViewController: NSViewController {
     private func outlineCell(
         for name: String,
         status: GenotypeHaplotypeCallStatus,
-        isWeakSupport: Bool = false,
         isManual: Bool = false
     ) -> GenotypeHaplotypeTapeView.Cell {
         if status == .notAssayed {
@@ -8308,45 +8358,7 @@ public final class GenotypeResultViewController: NSViewController {
         if isManual {
             return .manual(tokenIndex: token.canonicalIndex, label: name)
         }
-        if isWeakSupport {
-            return .weakReference(tokenIndex: token.canonicalIndex, label: name)
-        }
         return .reference(tokenIndex: token.canonicalIndex, label: name)
-    }
-
-    private func isWeakAutomatedHaplotype(
-        _ haplotypeName: String,
-        in locusCall: GenotypeHaplotypeLocusCall,
-        sampleCalls: [ONTGenotypeCall],
-        sampleCallIndex: CallIndex,
-        locusDefinition: GenotypeHaplotypeLocusDefinition?,
-        locusTotal: Int
-    ) -> Bool {
-        guard locusCall.status == .called || locusCall.status == .specialCase else { return false }
-        guard !haplotypeName.isEmpty,
-              haplotypeName != "-",
-              !haplotypeName.hasPrefix("ERR:"),
-              haplotypeName != GenotypeHaplotypeOverrideTargets.unresolved else {
-            return false
-        }
-        guard let matched = locusCall.matchedHaplotypes.first(where: { $0.name == haplotypeName }) else {
-            return false
-        }
-        let supportReads = matched.observedDiagnosticAlleles.reduce(0) { total, allele in
-            let identifier = Self.genotypeIdentifier(allele)
-            let indexedReads = sampleCallIndex.readsByIdentifier[identifier]
-            return total + (indexedReads ?? diagnosticReads(
-                for: allele,
-                in: sampleCalls,
-                locusDefinition: locusDefinition
-            ))
-        }
-        guard supportReads > 0 else { return false }
-        if supportReads < 5 {
-            return true
-        }
-        guard locusTotal > 0 else { return false }
-        return Double(supportReads) / Double(locusTotal) < 0.05
     }
 
     /// Count of distinct review-worthy notes on a sample's calls. Used by the
@@ -8554,7 +8566,11 @@ public final class GenotypeResultViewController: NSViewController {
         presentErrors: Bool = true
     ) -> EffectiveHaplotypeMutationOutcome {
         guard let evidence = callEvidence else { return .unchanged }
-        let requests = requests.filter { !$0.haplotypeName.isEmpty }
+        let requests = requests.compactMap { request -> GenotypeCallEvidenceView.HaplotypeOverrideRequest? in
+            let name = request.haplotypeName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            return .init(slot: request.slot, haplotypeName: name, rationale: request.rationale, reasonTag: request.reasonTag)
+        }
         guard !requests.isEmpty else { return .unchanged }
         let rawCall = rawLocusCall(sample: evidence.sample, locus: evidence.locus)
         let analysisIdentity = activeCallOverrideAnalysisIdentity()
@@ -8571,8 +8587,9 @@ public final class GenotypeResultViewController: NSViewController {
                 ),
                 baseline: originalCall,
                 after: request.haplotypeName,
-                reason: .misCall,
-                rationale: "Replaced \(evidence.locus) \(request.slot.displayName) \(displayOriginal) -> \(request.haplotypeName) from Review inspector candidate matrix."
+                reason: request.reasonTag ?? (request.rationale == nil ? .misCall : .analystJudgment),
+                rationale: "Replaced \(evidence.locus) \(request.slot.displayName) \(displayOriginal) -> \(request.haplotypeName) from Review inspector."
+                    + (request.rationale.map { " Analyst rationale: \($0)" } ?? "")
             )
         }
         return commitEffectiveHaplotypeMutation(
@@ -10352,24 +10369,6 @@ extension GenotypeResultViewController: NSSplitViewDelegate {
     }
 }
 
-extension GenotypeResultViewController: NSMenuDelegate {
-    public func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === presentationActionsButton.menu else { return }
-        let isReadOnly = annotationStore?.isReadOnly ?? false
-        let hasAnalysis = activeHaplotypeAnalysis() != nil
-        for item in menu.items {
-            switch item.action {
-            case #selector(runAIHaplotypingDiscovery):
-                item.isEnabled = !isReadOnly
-            case #selector(runAIHaplotypingRefinement):
-                item.isEnabled = hasAnalysis && !isReadOnly
-            default:
-                break
-            }
-        }
-    }
-}
-
 #if DEBUG
 enum GenotypeGeneratedContentSurface: CaseIterable {
     case detail
@@ -10589,6 +10588,8 @@ extension GenotypeResultViewController {
     var testingDetailPaneHidden: Bool {
         detailContainer.isHidden
     }
+
+    var testingCurrentCallEvidence: GenotypeCallEvidenceView.Evidence? { callEvidence }
 
     func testingCallEvidenceRootView(
         pendingRequests: [

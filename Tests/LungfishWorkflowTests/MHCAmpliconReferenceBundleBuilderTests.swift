@@ -15,7 +15,7 @@ final class MHCAmpliconReferenceBundleBuilderTests: XCTestCase {
         try ">M1\nACGT\n>M2\nTTTT\n".write(to: fastaURL, atomically: true, encoding: .utf8)
         let definition = Self.definition(id: "mcm-mhc")
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(definition).write(to: definitionURL)
 
         let result = try await MHCAmpliconReferenceBundleBuilder().build(
@@ -25,6 +25,7 @@ final class MHCAmpliconReferenceBundleBuilderTests: XCTestCase {
                 outputURL: bundleURL,
                 name: "MCM MHC",
                 defaultHaplotypeDefinitionID: definition.id,
+                genotypeLocusDisplayOrder: ["MHC-F", "MHC-A2/A3/A4/A5", "MHC-B"],
                 forceOverwrite: true,
                 argv: [
                     "lungfish-cli", "fastq", "mhc-reference-bundle",
@@ -32,8 +33,12 @@ final class MHCAmpliconReferenceBundleBuilderTests: XCTestCase {
                     "--haplotype-definition", definitionURL.path,
                     "--output", bundleURL.path,
                     "--default-haplotype-definition", definition.id,
+                    "--genotype-locus-display-order", "MHC-F",
+                    "--genotype-locus-display-order", "MHC-A2/A3/A4/A5",
+                    "--genotype-locus-display-order", "MHC-B",
                     "--force",
-                ]
+                ],
+                provenanceToolVersion: "lungfish-cli test-release"
             )
         )
 
@@ -41,9 +46,12 @@ final class MHCAmpliconReferenceBundleBuilderTests: XCTestCase {
         let manifest = try MHCAmpliconReferenceBundle.loadManifest(from: bundleURL)
         XCTAssertEqual(manifest.schemaVersion, 2)
         XCTAssertEqual(manifest.name, "MCM MHC")
+        XCTAssertEqual(manifest.genotypeLocusDisplayOrder, ["MHC-F", "MHC-A2/MHC-A3/MHC-A4/MHC-A5", "MHC-B"])
+        XCTAssertEqual(try ONTBarcodeDemuxGenotypingPipeline.referenceGenotypeLocusDisplayOrder(bundleURL), manifest.genotypeLocusDisplayOrder)
         XCTAssertEqual(manifest.metrics.referenceCount, 2)
         XCTAssertEqual(manifest.metrics.haplotypeDefinitionCount, 1)
         XCTAssertEqual(manifest.defaultHaplotypeDefinitionID, definition.id)
+        XCTAssertEqual(try Data(contentsOf: bundleURL.appendingPathComponent(manifest.haplotypeDefinitionPaths[0])), try Data(contentsOf: definitionURL))
         XCTAssertEqual(try MHCAmpliconReferenceBundle.defaultHaplotypeDefinition(in: bundleURL)?.id, definition.id)
         let embeddedReferenceURL = try XCTUnwrap(MHCAmpliconReferenceBundle.referenceBundleURL(in: bundleURL))
         let embeddedManifest = try BundleManifest.load(from: embeddedReferenceURL)
@@ -55,6 +63,21 @@ final class MHCAmpliconReferenceBundleBuilderTests: XCTestCase {
 
         let provenance = try XCTUnwrap(ProvenanceEnvelopeReader.load(fromSidecar: result.provenanceURL))
         XCTAssertEqual(provenance.workflowName, "lungfish fastq mhc-reference-bundle")
+        XCTAssertEqual(provenance.toolVersion, "lungfish-cli test-release")
+        XCTAssertEqual(provenance.steps.first?.toolVersion, "lungfish-cli test-release")
+        let container = try XCTUnwrap(provenance.outputs.first { $0.path == bundleURL.path })
+        XCTAssertNil(container.checksumSHA256, "A container must not claim a stale digest that predates its provenance sidecars")
+        XCTAssertNil(container.fileSize)
+        let payloadFiles = provenance.outputs.filter { $0.path != bundleURL.path }
+        XCTAssertFalse(payloadFiles.isEmpty)
+        for descriptor in payloadFiles {
+            let path = URL(fileURLWithPath: descriptor.path)
+            XCTAssertEqual(descriptor.checksumSHA256, try ProvenanceFileHasher.sha256(of: path))
+            XCTAssertEqual(descriptor.fileSize, try ProvenanceFileHasher.fileSize(of: path))
+        }
+        XCTAssertNotNil(provenance.options.explicit["genotypeLocusDisplayOrder"])
+        XCTAssertNotNil(provenance.options.resolvedDefaults["genotypeLocusDisplayOrder"])
+        XCTAssertEqual(provenance.argv.filter { $0 == "--genotype-locus-display-order" }.count, 3)
         XCTAssertTrue(provenance.files.contains { $0.path == fastaURL.path })
         XCTAssertTrue(provenance.files.contains { $0.path == definitionURL.path })
         XCTAssertTrue(provenance.outputs.contains { $0.path == bundleURL.path })

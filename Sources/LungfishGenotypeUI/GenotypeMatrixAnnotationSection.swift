@@ -1,8 +1,13 @@
 import AppKit
 import LungfishCore
 import SwiftUI
+import LungfishKit
 
 public struct GenotypeMatrixAnnotationSection: View {
+    private let typographyModel = ContentTypographyModel.shared
+    private var contentBodyFont: Font { typographyModel.font(for: .body) }
+    private var contentHeadingFont: Font { typographyModel.font(for: .emphasizedBody) }
+
     @Bindable var viewModel: GenotypeResultDisplaySectionViewModel
 
     public init(viewModel: GenotypeResultDisplaySectionViewModel) {
@@ -12,13 +17,13 @@ public struct GenotypeMatrixAnnotationSection: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Matrix Annotations")
-                .font(.headline)
+                .font(contentHeadingFont)
 
             if viewModel.hasMatrixSelection {
                 selectedControls
             } else {
                 Text("Select a matrix row, sample column, or cell to edit saved annotations.")
-                    .font(.caption)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -32,8 +37,8 @@ public struct GenotypeMatrixAnnotationSection: View {
             appearanceControls
 
             Text("Edits are saved to annotations.json and synced to current.xlsx.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(contentBodyFont)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -41,18 +46,18 @@ public struct GenotypeMatrixAnnotationSection: View {
     private var reviewControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Review Annotation")
-                .font(.subheadline.weight(.semibold))
+                .font(contentHeadingFont)
 
             Text(viewModel.matrixSelectionSummary)
-                .font(.caption)
+                .font(contentBodyFont)
                 .accessibilityIdentifier("genotype-annotation-review-selection-summary")
             Text(viewModel.matrixEvidenceSummary)
-                .font(.caption)
+                .font(contentBodyFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("genotype-annotation-review-evidence-summary")
             valueRow(label: "Current", value: viewModel.matrixCurrentReviewSummary)
-                .font(.caption)
+                .font(contentBodyFont)
                 .accessibilityIdentifier("genotype-annotation-review-current-state")
 
             HStack(spacing: 8) {
@@ -70,7 +75,7 @@ public struct GenotypeMatrixAnnotationSection: View {
                 .help(viewModel.matrixFalseNegativeAvailability.disabledReason ?? "Mark as false negative")
                 .accessibilityIdentifier("genotype-annotation-review-false-negative-button")
             }
-            .controlSize(.small)
+            .controlSize(.regular)
 
             Button {
                 viewModel.clearMatrixReview()
@@ -78,14 +83,14 @@ public struct GenotypeMatrixAnnotationSection: View {
                 Label("Clear Review Mark", systemImage: "xmark.circle")
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
+            .controlSize(.regular)
             .disabled(!viewModel.matrixClearReviewAvailability.isEnabled)
             .help(viewModel.matrixClearReviewAvailability.disabledReason ?? "Clear review mark")
             .accessibilityIdentifier("genotype-annotation-review-clear-button")
 
             if let reason = viewModel.matrixReviewDisabledReason {
                 Text(reason)
-                    .font(.caption2)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("genotype-annotation-review-disabled-reason")
@@ -98,7 +103,7 @@ public struct GenotypeMatrixAnnotationSection: View {
     private var commentCards: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Comments")
-                .font(.subheadline.weight(.semibold))
+                .font(contentHeadingFont)
             ForEach(viewModel.matrixCommentCards, id: \.scope) { card in
                 commentCard(card)
             }
@@ -109,22 +114,22 @@ public struct GenotypeMatrixAnnotationSection: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline) {
                 Text(card.scope.displayName)
-                    .font(.caption.weight(.semibold))
+                    .font(contentHeadingFont)
                 Spacer(minLength: 4)
                 if card.targetCount > 1 {
                     Text("\(card.targetCount) targets")
-                        .font(.caption2)
+                        .font(contentBodyFont)
                         .foregroundStyle(.secondary)
                 }
             }
 
             Text(card.currentValueSummary)
-                .font(.caption2)
+                .font(contentBodyFont)
                 .foregroundStyle(card.valueState == .mixed ? .primary : .secondary)
 
             if !card.currentComments.isEmpty {
                 Text(commentMetadataText(card))
-                    .font(.caption2)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
@@ -135,13 +140,13 @@ public struct GenotypeMatrixAnnotationSection: View {
             ), axis: .vertical)
             .textFieldStyle(.roundedBorder)
             .lineLimit(2...5)
-            .controlSize(.small)
+            .controlSize(.regular)
             .disabled(!viewModel.isMatrixCommentEditorEnabled)
             .accessibilityIdentifier(commentFieldAccessibilityIdentifier(card.scope))
 
             if let reason = viewModel.matrixCommentMutationDisabledReason {
                 Text(reason)
-                    .font(.caption2)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier(
@@ -161,7 +166,7 @@ public struct GenotypeMatrixAnnotationSection: View {
                     )
                 }
                 .buttonStyle(.borderless)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .disabled(
                     !viewModel.matrixReviewCapability.upsertComment.isEnabled
                         || viewModel.matrixCommentDraft(scope: card.scope)
@@ -182,7 +187,7 @@ public struct GenotypeMatrixAnnotationSection: View {
                         )
                     }
                     .buttonStyle(.borderless)
-                    .controlSize(.small)
+                    .controlSize(.regular)
                     .disabled(
                         !viewModel.matrixCommentRemovalAvailability(scope: card.scope).isEnabled
                     )
@@ -217,9 +222,9 @@ public struct GenotypeMatrixAnnotationSection: View {
                         ),
                         onChange: { viewModel.setMatrixFillColor($0) }
                     )
-                    .frame(width: 34, height: 22)
+                    .frame(minWidth: 34, minHeight: 28)
                     Text("Fill")
-                        .font(.caption)
+                        .font(contentBodyFont)
 
                     MatrixAnnotationColorWell(
                         color: GenotypeResultDisplaySectionViewModel.nsColor(
@@ -227,9 +232,9 @@ public struct GenotypeMatrixAnnotationSection: View {
                         ),
                         onChange: { viewModel.setMatrixTextColor($0) }
                     )
-                    .frame(width: 34, height: 22)
+                    .frame(minWidth: 34, minHeight: 28)
                     Text("Text")
-                        .font(.caption)
+                        .font(contentBodyFont)
                 }
 
                 HStack(spacing: 10) {
@@ -239,23 +244,23 @@ public struct GenotypeMatrixAnnotationSection: View {
                         ),
                         onChange: { viewModel.setMatrixBorderColor($0) }
                     )
-                    .frame(width: 34, height: 22)
+                    .frame(minWidth: 34, minHeight: 28)
                     Text("Border")
-                        .font(.caption)
+                        .font(contentBodyFont)
 
                     Toggle("B", isOn: Binding(
                         get: { viewModel.matrixIsBold },
                         set: { viewModel.setMatrixBold($0) }
                     ))
                     .toggleStyle(.button)
-                    .controlSize(.small)
+                    .controlSize(.regular)
 
                     Toggle("I", isOn: Binding(
                         get: { viewModel.matrixIsItalic },
                         set: { viewModel.setMatrixItalic($0) }
                     ))
                     .toggleStyle(.button)
-                    .controlSize(.small)
+                    .controlSize(.regular)
                 }
 
                 paletteControls
@@ -266,7 +271,7 @@ public struct GenotypeMatrixAnnotationSection: View {
                     Label("Clear Style", systemImage: "eraser")
                 }
                 .buttonStyle(.borderless)
-                .controlSize(.small)
+                .controlSize(.regular)
 
                 if viewModel.canUseSupportedCellThreshold {
                     Stepper(
@@ -277,7 +282,7 @@ public struct GenotypeMatrixAnnotationSection: View {
                         ),
                         in: 0...100_000
                     )
-                    .controlSize(.small)
+                    .controlSize(.regular)
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -289,7 +294,7 @@ public struct GenotypeMatrixAnnotationSection: View {
     private var paletteControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Quick Colors")
-                .font(.caption)
+                .font(contentBodyFont)
                 .foregroundStyle(.secondary)
             Picker("Palette Target", selection: $viewModel.matrixPaletteTarget) {
                 ForEach(GenotypeMatrixPaletteTarget.allCases) { target in
@@ -298,7 +303,7 @@ public struct GenotypeMatrixAnnotationSection: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .controlSize(.small)
+            .controlSize(.regular)
 
             paletteGrid(
                 title: "mcm",
@@ -314,7 +319,7 @@ public struct GenotypeMatrixAnnotationSection: View {
     private func paletteGrid(title: String, colors: [AnnotationColor]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption2)
+                .font(contentBodyFont)
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(18), spacing: 4), count: 8), spacing: 4) {
                 ForEach(Array(colors.enumerated()), id: \.offset) { index, color in
@@ -327,7 +332,7 @@ public struct GenotypeMatrixAnnotationSection: View {
                                 RoundedRectangle(cornerRadius: 3)
                                     .stroke(Color(nsColor: NSColor.separatorColor), lineWidth: 0.5)
                             )
-                            .frame(width: 18, height: 18)
+                            .frame(width: 26, height: 26)
                     }
                     .buttonStyle(.plain)
                     .help("\(title) color \(index + 1) \(color.hexString)")

@@ -338,6 +338,18 @@ public class ReferenceBundleViewportController: NSViewController, SampleMetadata
             self.showDetailPlaceholder("Select a mapped contig to inspect mapped reads.")
         }
 
+        sequenceTableView.onCopySequences = { [weak self] rows, asFASTA in
+            self?.copyReferenceSequences(rows, asFASTA: asFASTA)
+        }
+        sequenceTableView.onExtractSequences = { [weak self] rows in
+            guard let self, let manifest = self.currentInput?.manifest else { return }
+            let selectedNames = Set(rows.map(\.summary.name))
+            let chromosomes = (manifest.genome?.chromosomes ?? []).filter { selectedNames.contains($0.name) }
+            let name = rows.count == 1
+                ? String(ReferenceBundleRecordTable.alleleName(for: rows[0]).prefix(100))
+                : "selected-sequences"
+            self.embeddedViewerController.extractSelectedChromosomesToNewBundle(chromosomes, suggestedBundleName: name)
+        }
         sequenceTableView.onRowSelected = { [weak self] row in
             self?.displaySelectedSequence(row)
         }
@@ -510,6 +522,10 @@ public class ReferenceBundleViewportController: NSViewController, SampleMetadata
     }
 
     private func configure(input: ReferenceBundleViewportInput, preferredSelectionName: String?) throws {
+        // SwiftUI's NSViewControllerRepresentable can configure this controller
+        // before AppKit first requests its view. Selection immediately loads the
+        // embedded viewer, whose progress overlay is created by loadView().
+        _ = view
         clearAlignmentActionContext()
         currentInput = input
         currentResult = input.mappingResult
@@ -584,6 +600,31 @@ public class ReferenceBundleViewportController: NSViewController, SampleMetadata
         }
     }
 
+    private func copyReferenceSequences(_ rows: [ReferenceBundleRecordRow], asFASTA: Bool) {
+        guard let input = currentInput, let bundleURL = input.renderedBundleURL,
+              let manifest = input.manifest else { return }
+        let provider = BundleDataProvider(bundleURL: bundleURL, manifest: manifest)
+        Task { [weak self] in
+            do {
+                var sequences: [String] = []
+                for row in rows {
+                    guard let length = Int(exactly: row.summary.length) else { continue }
+                    let bases = try await provider.fetchSequence(chromosome: row.summary.name, start: 0, end: length)
+                    sequences.append(asFASTA ? ">\(ReferenceBundleRecordTable.fullReferenceName(for: row))\n\(bases)" : bases)
+                }
+                guard !sequences.isEmpty else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(sequences.joined(separator: "\n"), forType: .string)
+            } catch {
+                guard let self else { return }
+                let alert = NSAlert()
+                alert.messageText = "Copy Sequences Failed"
+                alert.informativeText = error.localizedDescription
+                if let window = self.view.window { alert.beginSheetModal(for: window, completionHandler: nil) }
+            }
+        }
+    }
+
     private func configureDirectBundleRows(input: ReferenceBundleViewportInput, preferredSelectionName: String?) throws {
         usesRecordStoreTable = false
         contigTableView.configure(rows: [])
@@ -617,6 +658,9 @@ public class ReferenceBundleViewportController: NSViewController, SampleMetadata
         usesRecordStoreTable = manifest.recordStore != nil
         recordStoreWarning = tableContent.warning
         updateSummaryBar()
+        sequenceTableView.displaysAlleles = bundleURL.pathComponents.contains {
+            $0.lowercased().hasSuffix(".lungfishmhcref")
+        }
         sequenceTableView.bundleDisplayName = manifest.name
         sequenceTableView.configure(dynamicFields: tableContent.fields, rows: sequenceRows)
         refreshSequenceSelection(preferredSelectionName: preferredSelectionName)

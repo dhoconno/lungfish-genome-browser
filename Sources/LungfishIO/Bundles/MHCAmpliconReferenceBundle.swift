@@ -56,6 +56,7 @@ public struct MHCAmpliconReferenceBundleManifest: ReferenceBundleManifesting {
     public let referenceBundlePath: String?
     public let haplotypeDefinitionPaths: [String]
     public let defaultHaplotypeDefinitionID: String?
+    public let genotypeLocusDisplayOrder: [String]?
     public let sourceFiles: [MHCAmpliconReferenceBundleSourceFile]
     public let metrics: MHCAmpliconReferenceBundleMetrics
     public let provenancePath: String?
@@ -75,6 +76,7 @@ public struct MHCAmpliconReferenceBundleManifest: ReferenceBundleManifesting {
         metrics: MHCAmpliconReferenceBundleMetrics,
         provenancePath: String? = nil,
         warnings: [MHCReferenceBundleWarning] = [],
+        genotypeLocusDisplayOrder: [String]? = nil,
         createdAt: String
     ) {
         self.schemaVersion = schemaVersion
@@ -84,6 +86,7 @@ public struct MHCAmpliconReferenceBundleManifest: ReferenceBundleManifesting {
         self.referenceBundlePath = referenceBundlePath
         self.haplotypeDefinitionPaths = haplotypeDefinitionPaths
         self.defaultHaplotypeDefinitionID = defaultHaplotypeDefinitionID
+        self.genotypeLocusDisplayOrder = genotypeLocusDisplayOrder
         self.sourceFiles = sourceFiles
         self.metrics = metrics
         self.provenancePath = provenancePath
@@ -123,7 +126,7 @@ public struct MHCAmpliconReferenceBundleManifest: ReferenceBundleManifesting {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, kind, name, referenceFastaPath, referenceBundlePath
         case haplotypeDefinitionPaths, defaultHaplotypeDefinitionID, sourceFiles
-        case metrics, provenancePath, warnings, createdAt
+        case metrics, provenancePath, warnings, createdAt, genotypeLocusDisplayOrder
     }
 
     public init(from decoder: Decoder) throws {
@@ -142,6 +145,7 @@ public struct MHCAmpliconReferenceBundleManifest: ReferenceBundleManifesting {
         metrics = try container.decode(MHCAmpliconReferenceBundleMetrics.self, forKey: .metrics)
         provenancePath = try container.decodeIfPresent(String.self, forKey: .provenancePath)
         warnings = try container.decodeIfPresent([MHCReferenceBundleWarning].self, forKey: .warnings) ?? []
+        genotypeLocusDisplayOrder = try container.decodeIfPresent([String].self, forKey: .genotypeLocusDisplayOrder)
         createdAt = try container.decode(String.self, forKey: .createdAt)
     }
 }
@@ -205,6 +209,7 @@ public enum MHCAmpliconReferenceBundle {
                 )
             )
         }
+        _ = try manifest.genotypeLocusDisplayOrder.map(MHCAlleleDisplayOrder.validatedLocusDisplayOrder)
         let referenceURL = try validatedBundleMemberURL(
             manifest.referenceFastaPath,
             in: bundleURL,

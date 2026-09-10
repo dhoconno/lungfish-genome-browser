@@ -880,6 +880,8 @@ public extension GenotypeAnnotationSidecar {
         /// Candidate-row visibility and tint preferences scoped to this result bundle.
         /// Legacy sidecars synthesize the defaults when this section is absent.
         public var mhcCandidateDisplay: ONTMHCCandidateDisplaySettings
+        /// Analyst override for genotype row ordering; nil uses the reference/result default.
+        public var genotypeLocusDisplayOrder: [String]?
 
         public static let `default` = Settings(
             viewMode: "outline",
@@ -903,7 +905,8 @@ public extension GenotypeAnnotationSidecar {
                     activeHaplotypeDefinitionSetID: String? = nil,
                     activeHaplotypeAssayID: String? = nil,
                     preferredSummaryViewMode: String? = nil,
-                    mhcCandidateDisplay: ONTMHCCandidateDisplaySettings = .default) {
+                    mhcCandidateDisplay: ONTMHCCandidateDisplaySettings = .default,
+                    genotypeLocusDisplayOrder: [String]? = nil) {
             self.viewMode = viewMode
             self.panelLayout = panelLayout
             self.cardDensity = cardDensity
@@ -916,6 +919,7 @@ public extension GenotypeAnnotationSidecar {
             self.activeHaplotypeAssayID = activeHaplotypeAssayID
             self.preferredSummaryViewMode = preferredSummaryViewMode
             self.mhcCandidateDisplay = mhcCandidateDisplay
+            self.genotypeLocusDisplayOrder = genotypeLocusDisplayOrder
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -931,6 +935,7 @@ public extension GenotypeAnnotationSidecar {
             case activeHaplotypeAssayID
             case preferredSummaryViewMode
             case mhcCandidateDisplay
+            case genotypeLocusDisplayOrder
         }
 
         public init(from decoder: Decoder) throws {
@@ -953,6 +958,7 @@ public extension GenotypeAnnotationSidecar {
             )
             activeHaplotypeAssayID = try container.decodeIfPresent(String.self, forKey: .activeHaplotypeAssayID)
             preferredSummaryViewMode = try container.decodeIfPresent(String.self, forKey: .preferredSummaryViewMode)
+            genotypeLocusDisplayOrder = try container.decodeIfPresent([String].self, forKey: .genotypeLocusDisplayOrder)
             mhcCandidateDisplay = try container.decodeIfPresent(
                 ONTMHCCandidateDisplaySettings.self,
                 forKey: .mhcCandidateDisplay

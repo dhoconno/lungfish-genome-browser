@@ -7,6 +7,29 @@ import SQLite3
 
 @MainActor
 final class ReferenceBundleViewportControllerTests: XCTestCase {
+    func testConfigureDirectBundleBeforeViewLoadingInitializesEmbeddedViewer() throws {
+        let bundleURL = try ReferenceViewportFixture.makeReferenceBundle(
+            name: "Reference",
+            chromosomes: [.init(name: "chr1", length: 100)],
+            includeAlignment: false,
+            includeVariant: false
+        )
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let controller = ReferenceBundleViewportController()
+
+        // SwiftUI's NSViewControllerRepresentable configures the controller
+        // before AppKit first asks for its view. That lifecycle must be safe.
+        try controller.configure(
+            input: .directBundle(
+                bundleURL: bundleURL,
+                manifest: try BundleManifest.load(from: bundleURL)
+            )
+        )
+
+        XCTAssertTrue(controller.isViewLoaded)
+        XCTAssertEqual(controller.testSelectedSequenceName, "chr1")
+    }
+
     func testGenBankRecordTableExposesAndFiltersDynamicFields() throws {
         let table = ReferenceBundleRecordTable(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
         let fields = [

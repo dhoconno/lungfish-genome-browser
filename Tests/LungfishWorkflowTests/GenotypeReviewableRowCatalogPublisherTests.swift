@@ -234,6 +234,31 @@ final class GenotypeReviewableRowCatalogPublisherTests: XCTestCase {
         }
     }
 
+    func testMiSeqPlainReferenceBundleAcceptsLegacyAndArbitraryFASTANames() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".lungfishref")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fasta = root.appendingPathComponent("reference.fasta")
+        try Data(">05_M4_A1_031_01\nACGT\n>16_A102\nAACC\n>unclassified-control\nCCAA\n".utf8).write(to: fasta)
+        let manifest = root.appendingPathComponent("manifest.json")
+        try Data("{\"genome\":{\"path\":\"reference.fasta\"}}".utf8).write(to: manifest)
+
+        let authority = try ONTBarcodeDemuxGenotypingPipeline.reviewableReferenceAuthority(
+            referenceFASTAURL: fasta, sourceReferenceBundleURL: root
+        )
+        XCTAssertEqual(authority.records.map(\.sequenceID), ["05_M4_A1_031_01", "16_A102", "unclassified-control"])
+        XCTAssertEqual(authority.records.map(\.alleleName), authority.records.map(\.sequenceID))
+        XCTAssertEqual(authority.records.map(\.sequenceLength), [4, 4, 4])
+        XCTAssertEqual(authority.records[0].locus, "MHC-A")
+        XCTAssertEqual(authority.records[1].locus, "Unknown")
+        XCTAssertEqual(Set(authority.descriptors.map(\.path)), Set([fasta.path, manifest.path]))
+        XCTAssertTrue(authority.descriptors.allSatisfy { $0.checksumSHA256 != nil && $0.fileSize != nil })
+        // Full-length scientific consumers must still require resolvable MHC metadata.
+        XCTAssertThrowsError(try MHCReferenceRecordCatalog.load(from: root)) { error in
+            XCTAssertEqual(error as? MHCReferenceRecordCatalogError, .unresolvedAlleleOrLocus(sequenceID: "05_M4_A1_031_01"))
+        }
+    }
+
     func testMiSeqReferenceAuthorityDescriptorsCoverManifestAndRecordStoreMutation() throws {
         let fixture = try AnnotatedReferenceFixture()
         defer { fixture.remove() }
@@ -525,6 +550,14 @@ final class GenotypeReviewableRowCatalogPublisherTests: XCTestCase {
                 .sampleOutsideRoster("outside")
             )
         }
+
+        let unknownCandidate = GenotypeReviewableRowCandidate(
+            kind: .candidate, stableID: "unknown-candidate", displayName: "unknown_candidate",
+            locus: "Unknown", supportBySample: ["S1": 1]
+        )
+        XCTAssertThrowsError(try fixture.publisher.publish(
+            fixture.inputs(candidates: [unknownCandidate]), to: fixture.outputDirectory
+        ))
 
         let duplicate = GenotypeReviewableRowCandidate(
             kind: .candidate,

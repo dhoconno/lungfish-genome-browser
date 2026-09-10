@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import SwiftUI
+import LungfishKit
 import LungfishCore
 import LungfishIO
 
@@ -12,6 +13,10 @@ import LungfishIO
 /// and a contextual delete button. Tapping a row selects the cohort; the "+ Add" affordance at the
 /// bottom invokes `onAdd` so the caller can present a "Save current filter" sheet.
 public struct GenotypeSmartCohortSection: View {
+    private let typographyModel = ContentTypographyModel.shared
+    private var contentBodyFont: Font { typographyModel.font(for: .body) }
+    private var contentHeadingFont: Font { typographyModel.font(for: .emphasizedBody) }
+
     public struct DisplayedCohort: Identifiable, Equatable {
         public let filter: GenotypeCohortSmartFilter
         public let count: Int
@@ -47,7 +52,7 @@ public struct GenotypeSmartCohortSection: View {
             VStack(alignment: .leading, spacing: 6) {
                 if cohorts.isEmpty {
                     Text("No saved cohorts.")
-                        .font(.caption)
+                        .font(contentBodyFont)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
@@ -58,16 +63,16 @@ public struct GenotypeSmartCohortSection: View {
 
                 Button(action: onAdd) {
                     Label("Save Current Filter\u{2026}", systemImage: "plus.circle")
-                        .font(.caption)
+                        .font(contentBodyFont)
                 }
                 .buttonStyle(.borderless)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .padding(.top, 4)
                 .accessibilityIdentifier("genotypeSmartCohortAddButton")
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     @ViewBuilder
@@ -83,12 +88,12 @@ public struct GenotypeSmartCohortSection: View {
                         )
                         .accessibilityIdentifier("genotypeSmartCohortStar")
                     Text(cohort.filter.name)
-                        .font(.caption)
+                        .font(contentBodyFont)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(cohort.count)")
-                        .font(.caption.monospacedDigit())
+                        .font(contentBodyFont.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
@@ -101,7 +106,7 @@ public struct GenotypeSmartCohortSection: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
+            .controlSize(.regular)
             .help("Delete cohort")
             .accessibilityIdentifier("genotypeSmartCohortDeleteButton")
         }

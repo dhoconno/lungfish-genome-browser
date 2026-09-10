@@ -1004,6 +1004,37 @@ public final class GenotypeAnnotationStore {
         try persist(action: "updateSettings")
     }
 
+    func updateGenotypeLocusDisplayOrder(
+        _ requestedOrder: [String]?,
+        bundleDefault: [String]?,
+        author editAuthor: String? = nil
+    ) throws {
+        guard !isReadOnly else { return }
+        let order = try requestedOrder.map(MHCAlleleDisplayOrder.validatedLocusDisplayOrder)
+        let before = sidecar.settings.genotypeLocusDisplayOrder
+        guard before != order else { return }
+        let author = editAuthor ?? self.author
+        sidecar.settings.genotypeLocusDisplayOrder = order
+        sidecar.append(audit: .init(
+            action: "updateGenotypeLocusDisplayOrder", sample: "bundle", locus: nil, slot: nil,
+            before: before?.joined(separator: ", ") ?? "bundle-default",
+            after: order?.joined(separator: ", ") ?? "bundle-default",
+            color: nil, reason: "genotype-row-display-order", rationale: nil,
+            author: author, timestamp: now()
+        ))
+        try persist(action: "updateGenotypeLocusDisplayOrder", editContext: .init(
+            explicitOptions: [
+                "genotypeLocusDisplayOrder": order.map { .array($0.map(ParameterValue.string)) } ?? .string("bundle-default"),
+            ],
+            resolvedDefaults: [
+                "bundleLocusDisplayOrder": .array((bundleDefault ?? []).map(ParameterValue.string)),
+                "effectiveLocusDisplayOrder": .array((order ?? bundleDefault ?? []).map(ParameterValue.string)),
+                "unlistedLoci": .string("after-specified-groups"),
+            ],
+            resolvedAuthor: author
+        ))
+    }
+
     func updateMHCCandidateDisplaySettings(
         _ display: ONTMHCCandidateDisplaySettings,
         author editAuthor: String? = nil
@@ -1845,6 +1876,7 @@ public final class GenotypeAnnotationStore {
             "activeHaplotypeAssayID=\(optional(settings.activeHaplotypeAssayID))",
             "preferredSummaryViewMode=\(optional(settings.preferredSummaryViewMode))",
             "mhcCandidateDisplay=\(mhcCandidateDisplaySummary(settings.mhcCandidateDisplay))",
+            "genotypeLocusDisplayOrder=\(settings.genotypeLocusDisplayOrder?.joined(separator: ",") ?? "bundle-default")",
         ].joined(separator: "; ")
     }
 

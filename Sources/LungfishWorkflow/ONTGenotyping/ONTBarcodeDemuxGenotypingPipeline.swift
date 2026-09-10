@@ -3601,7 +3601,8 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
             haplotypeDefinitionSetID: definitionSetID,
             haplotypeAssayID: assayID,
             presetID: request.presetID,
-            presetVersion: request.presetVersion
+            presetVersion: request.presetVersion,
+            genotypeLocusDisplayOrder: try Self.referenceGenotypeLocusDisplayOrder(request.referenceSourceURL)
         )
         let result = try ONTGenotypeResultBundle.loadResult(from: request.outputDirectory, manifest: manifest)
         let analysis = GenotypeHaplotypeAnalyzer.analyze(
@@ -3653,7 +3654,8 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
             provenancePath: relativePath(
                 from: request.outputDirectory,
                 to: request.provenanceURL
-            )
+            ),
+            genotypeLocusDisplayOrder: try Self.referenceGenotypeLocusDisplayOrder(request.referenceSourceURL)
         )
         let csvAuthority = try GenotypeReviewCSVSemanticAuthority.capture(
             sampleSummaryURL: request.sampleSummaryCSVURL,
@@ -3918,6 +3920,24 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
         _ snapshots: [GenotypeReviewAuthorityFileSnapshot],
         catalogBundleURL: URL
     ) throws -> [MHCReferenceRecord] {
+        let manifestURL = catalogBundleURL.appendingPathComponent(BundleManifest.filename).standardizedFileURL
+        if let manifestSnapshot = snapshots.first(where: { $0.url.standardizedFileURL == manifestURL }) {
+            let manifest = try JSONDecoder().decode(
+                GenotypeReviewableReferenceManifestProjection.self, from: manifestSnapshot.data
+            )
+            // A FASTA imported as .lungfishref has no allele record store. Its
+            // names remain valid genotyping identities, just as with bare FASTA.
+            // Annotated MHC references retain the strict catalog validation below.
+            if manifest.recordStore == nil, let genomePath = manifest.genome?.path {
+                let genomeURL = try BundleManifest.validatedBundleMemberURL(
+                    for: genomePath, in: catalogBundleURL, field: "genome.path"
+                ).standardizedFileURL
+                guard let fastaSnapshot = snapshots.first(where: { $0.url.standardizedFileURL == genomeURL }) else {
+                    throw GenotypeReviewableRowCatalogPublisherError.invalidInputDescriptor(genomeURL.path)
+                }
+                return try recordsFromRetainedFASTASnapshot(fastaSnapshot)
+            }
+        }
         let fileManager = FileManager.default
         let temporaryRoot = fileManager.temporaryDirectory.appendingPathComponent(
             "lungfish-review-reference-\(UUID().uuidString)",
@@ -4355,7 +4375,8 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
             haplotypeDefinitionSetID: definitionSet.id,
             haplotypeAssayID: definitionSet.assayID,
             presetID: request.presetID,
-            presetVersion: request.presetVersion
+            presetVersion: request.presetVersion,
+            genotypeLocusDisplayOrder: try Self.referenceGenotypeLocusDisplayOrder(request.referenceSourceURL)
         )
         let result = try ONTGenotypeResultBundle.loadResult(from: request.outputDirectory, manifest: manifest)
         let analysis = GenotypeHaplotypeAnalyzer.analyze(
@@ -4514,6 +4535,7 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
             "resultWorkflowKind": resultWorkflowKind?.rawValue as Any? ?? NSNull(),
             "resultWorkflowMode": resultWorkflowMode?.rawValue as Any? ?? NSNull(),
             "reference": request.referenceSourceURL.path,
+            "genotypeLocusDisplayOrder": try Self.referenceGenotypeLocusDisplayOrder(request.referenceSourceURL) as Any? ?? NSNull(),
             "barcodes": request.barcodeDefinitionsURL?.path as Any? ?? NSNull(),
             "demuxManifest": demuxManifestURL.path,
             "outputDirectory": request.outputDirectory.path,
@@ -4552,6 +4574,7 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
             "extraArguments": request.extraArguments,
         ]
         let resolvedDefaults: [String: Any] = [
+            "genotypeLocusDisplayOrder": try Self.referenceGenotypeLocusDisplayOrder(request.referenceSourceURL) as Any? ?? NSNull(),
             "analysisName": request.outputName,
             "comparisonName": "Illumina-31262",
             "mode": AmpliconGenotypingMode.auto.rawValue,
@@ -5229,6 +5252,12 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
         )
     }
 
+    static func referenceGenotypeLocusDisplayOrder(_ referenceURL: URL) throws -> [String]? {
+        guard MHCAmpliconReferenceBundle.isBundleURL(referenceURL) else { return nil }
+        return try MHCAmpliconReferenceBundle.loadManifest(from: referenceURL).genotypeLocusDisplayOrder
+            .map(MHCAlleleDisplayOrder.validatedLocusDisplayOrder)
+    }
+
     private func writeBundleManifest(
         request: ONTBarcodeDemuxGenotypingRunRequest,
         resolvedMode: AmpliconGenotypingMode,
@@ -5272,7 +5301,8 @@ public struct ONTBarcodeDemuxGenotypingPipeline: Sendable {
             referenceRecordStore: referenceRecordStore,
             alignmentArtifacts: scientificArtifactPublication?.alignmentArtifacts,
             provisionalExon2Artifacts: scientificArtifactPublication?.provisionalExon2Artifacts,
-            reviewableRowCatalog: reviewableRowCatalogPublication?.artifact
+            reviewableRowCatalog: reviewableRowCatalogPublication?.artifact,
+            genotypeLocusDisplayOrder: try Self.referenceGenotypeLocusDisplayOrder(request.referenceSourceURL)
         )
         try ONTGenotypeResultBundle.writeManifest(manifest, to: request.outputDirectory)
 

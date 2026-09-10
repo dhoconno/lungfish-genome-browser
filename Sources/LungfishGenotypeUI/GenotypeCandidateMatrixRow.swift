@@ -76,7 +76,9 @@ enum GenotypeCandidateMatrixProjection {
         candidateDocument: ONTMHCCandidateAllelesDocument?,
         unnameableDocument: ONTMHCUnnameableClustersDocument? = nil,
         settings: ONTMHCCandidateDisplaySettings,
-        usesBiologicalAlleleOrder: Bool = false
+        usesBiologicalAlleleOrder: Bool = false,
+        locusDisplayOrder: [String]? = nil,
+        usesNumericReferenceOrder: Bool = false
     ) -> [GenotypeCandidateMatrixRow] {
         var rows: [GenotypeCandidateMatrixRow] = settings.showKnown
             ? knownRows.map(GenotypeCandidateMatrixRow.known)
@@ -163,7 +165,7 @@ enum GenotypeCandidateMatrixProjection {
         }
 
         return rows.sorted {
-            rowComesBefore($0, $1, usesBiologicalAlleleOrder: usesBiologicalAlleleOrder)
+            rowComesBefore($0, $1, usesBiologicalAlleleOrder: usesBiologicalAlleleOrder, locusDisplayOrder: locusDisplayOrder, usesNumericReferenceOrder: usesNumericReferenceOrder)
         }
     }
 
@@ -208,14 +210,21 @@ enum GenotypeCandidateMatrixProjection {
     private static func rowComesBefore(
         _ lhs: GenotypeCandidateMatrixRow,
         _ rhs: GenotypeCandidateMatrixRow,
-        usesBiologicalAlleleOrder: Bool
+        usesBiologicalAlleleOrder: Bool,
+        locusDisplayOrder: [String]?,
+        usesNumericReferenceOrder: Bool
     ) -> Bool {
-        if usesBiologicalAlleleOrder {
+        if usesNumericReferenceOrder, locusDisplayOrder == nil,
+           let order = GenotypeReferenceNumericPrefixOrder.compare(lhs.genotype, rhs.genotype), order != .orderedSame {
+            return order == .orderedAscending
+        }
+        if usesBiologicalAlleleOrder || locusDisplayOrder != nil {
             return MHCAlleleDisplayOrder.compare(
-                lhs.alleleName,
-                rhs.alleleName,
+                MHCReferenceGenotypeDisplay.alleleName(for: lhs.alleleName),
+                MHCReferenceGenotypeDisplay.alleleName(for: rhs.alleleName),
                 lhsStableID: lhs.biologicalSortTieID,
-                rhsStableID: rhs.biologicalSortTieID
+                rhsStableID: rhs.biologicalSortTieID,
+                locusDisplayOrder: locusDisplayOrder
             ) == .orderedAscending
         }
         let locusOrder = lhs.locus.localizedStandardCompare(rhs.locus)

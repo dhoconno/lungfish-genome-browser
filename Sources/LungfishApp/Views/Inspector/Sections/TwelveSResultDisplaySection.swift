@@ -251,7 +251,7 @@ struct TwelveSResultDisplaySection: View {
                 .padding(.top, 4)
             } label: {
                 Label("12S Results", systemImage: "tablecells")
-                    .font(.headline)
+                    .font(LungfishInspectorStyle.sectionTitleFont)
             }
         }
     }
@@ -260,14 +260,14 @@ struct TwelveSResultDisplaySection: View {
         VStack(alignment: .leading, spacing: 4) {
             LabeledContent(viewModel.summaryRowLabel, value: "\(viewModel.visibleRowCount) of \(viewModel.totalRowCount)")
         }
-        .font(.callout)
+        .font(LungfishInspectorStyle.controlFont)
     }
 
     private var filterControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Minimum Exact Reads")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 HStack {
                     TextField("Minimum", value: Binding(
@@ -303,7 +303,7 @@ struct TwelveSResultDisplaySection: View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Attributes")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 FlowingPillRow {
                     BooleanFilterPill(
@@ -324,7 +324,7 @@ struct TwelveSResultDisplaySection: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Taxon Groups")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 FlowingPillRow {
                     ForEach(viewModel.taxonGroupOptions, id: \.self) { group in
@@ -344,7 +344,7 @@ struct TwelveSResultDisplaySection: View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Minimum Unresolved Reads")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 HStack {
                     TextField("Minimum", value: Binding(
@@ -410,7 +410,7 @@ private struct BooleanFilterPill: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
@@ -450,10 +450,10 @@ private struct TaxonGroupPill: View {
             HStack(spacing: 3) {
                 if let glyph = leadingGlyph {
                     Image(systemName: glyph)
-                        .font(.caption2.weight(.bold))
+                        .font(LungfishInspectorStyle.controlFont.weight(.bold))
                 }
                 Text(title)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .lineLimit(1)
                     .strikethrough(state == .excluded, color: Color.lungfishOrangeFallback)
             }

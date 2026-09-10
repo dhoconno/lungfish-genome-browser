@@ -1361,6 +1361,7 @@ MCM_ALLELE_SECTION_ORDER = [
     "Mafa-70 alleles",
     "Mafa-E alleles",
     "Mafa-B alleles",
+    "Mafa-K alleles",
     "Mafa-DRB alleles",
     "Mafa-DQA/DQB alleles",
     "Mafa-DPA/DPB alleles",
@@ -1711,6 +1712,13 @@ def compact_genotype_label(genotype):
     return compact_genotype_identifier(genotype)
 
 
+def mcm_allele_sort_key(genotype):
+    label = compact_genotype_label(genotype).casefold()
+    natural = tuple((1, int(part)) if part.isdigit() else (0, part)
+                    for part in re.split(r"(\d+)", label))
+    return natural, str(genotype)
+
+
 def genotype_comment_text(genotype):
     text = str(genotype or "").strip()
     if "|" in text:
@@ -1732,6 +1740,14 @@ def mcm_allele_section_from_metadata(genotype):
     tokens = source_locus_tokens(genotype)
     if not tokens:
         return None
+    # Class II loci also end in A1 or B (DQA1, DPA1, DRB).
+    # Resolve them before the historical class I suffix rules.
+    if any("DR" in token for token in tokens):
+        return "Mafa-DRB alleles"
+    if any("DQA" in token or "DQB" in token or token == "MHC-DQ" for token in tokens):
+        return "Mafa-DQA/DQB alleles"
+    if any("DPA" in token or "DPB" in token or token == "MHC-DP" for token in tokens):
+        return "Mafa-DPA/DPB alleles"
     if any(token.endswith("F") or token == "MHC-F" for token in tokens):
         return "Mafa-F alleles"
     if any(token.endswith("G") or token == "MHC-G" for token in tokens):
@@ -1746,14 +1762,10 @@ def mcm_allele_section_from_metadata(genotype):
         return "Mafa-70 alleles"
     if any(token.endswith("E") or token == "MHC-E" for token in tokens):
         return "Mafa-E alleles"
-    if any(token.endswith("B") or token == "MHC-B" for token in tokens):
+    if any(re.search(r"(?:^|-)B(?:[0-9]+[A-Z]*)?$", token) for token in tokens):
         return "Mafa-B alleles"
-    if any("DR" in token for token in tokens):
-        return "Mafa-DRB alleles"
-    if any("DQA" in token or "DQB" in token or token == "MHC-DQ" for token in tokens):
-        return "Mafa-DQA/DQB alleles"
-    if any("DPA" in token or "DPB" in token or token == "MHC-DP" for token in tokens):
-        return "Mafa-DPA/DPB alleles"
+    if any(token == "K" or token.endswith("-K") for token in tokens):
+        return "Mafa-K alleles"
     return None
 
 
@@ -1796,6 +1808,7 @@ def mcm_locus_for_allele_section(section):
         "Mafa-A minor alleles",
         "Mafa-70 alleles",
         "Mafa-E alleles",
+        "Mafa-K alleles",
     }:
         return "MHC-A"
     if section == "Mafa-B alleles":
@@ -2032,6 +2045,9 @@ def write_full_sequencing_results(ws, samples, sample_stats, genotype_counts, or
             continue
         section = mcm_allele_section_label(genotype)
         observed_genotypes_by_section.setdefault(section, []).append(genotype)
+
+    for section_genotypes in observed_genotypes_by_section.values():
+        section_genotypes.sort(key=mcm_allele_sort_key)
 
     allele_row_info = []
     for section in MCM_ALLELE_SECTION_ORDER:

@@ -143,7 +143,7 @@ final class FASTACollectionViewControllerTests: XCTestCase {
 
         XCTAssertEqual(
             vc.testContextMenuTitles.filter { !$0.isEmpty },
-            ["Extract Sequence…", "Verify with BLAST…", "Copy FASTA", "Export FASTA…", "Extract to New Bundle…", "Align with MAFFT…", "Run Operation…"]
+            ["Extract Sequence…", "Verify with BLAST…", "Copy Name", "Copy Sequence", "Copy FASTA", "Export FASTA…", "Extract to New Bundle…", "Align with MAFFT…", "Run Operation…"]
         )
     }
 
@@ -201,6 +201,10 @@ final class FASTACollectionViewControllerTests: XCTestCase {
         XCTAssertFalse(vc.testContextMenuItem(titled: "Align with MAFFT…")?.isEnabled ?? true)
         vc.testInvokeContextMenuItem(titled: "Copy FASTA")
         XCTAssertEqual(pasteboard.lastString, ">seq2\nATATAT\n")
+        vc.testInvokeContextMenuItem(titled: "Copy Name")
+        XCTAssertEqual(pasteboard.lastString, "seq2")
+        vc.testInvokeContextMenuItem(titled: "Copy Sequence")
+        XCTAssertEqual(pasteboard.lastString, "ATATAT")
 
         captured.removeAll()
         vc.testSelectRows([1, 0])
@@ -213,6 +217,10 @@ final class FASTACollectionViewControllerTests: XCTestCase {
         }
         vc.testInvokeContextMenuItem(titled: "Copy FASTA")
         XCTAssertEqual(pasteboard.lastString, ">seq1\nAACCGGTT\n\n>seq2\nATATAT\n")
+        vc.testInvokeContextMenuItem(titled: "Copy Names")
+        XCTAssertEqual(pasteboard.lastString, "seq1\nseq2")
+        vc.testInvokeContextMenuItem(titled: "Copy Sequences")
+        XCTAssertEqual(pasteboard.lastString, "AACCGGTT\nATATAT")
     }
 
     func testContextMenuReconcilesClickedRowAndKeepsCurrentSelectionWithoutOne() throws {

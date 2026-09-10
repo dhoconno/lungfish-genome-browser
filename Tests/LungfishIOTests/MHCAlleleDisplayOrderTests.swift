@@ -3,6 +3,39 @@ import XCTest
 @testable import LungfishIO
 
 final class MHCAlleleDisplayOrderTests: XCTestCase {
+    func testCustomOrderRecognizesLociBehindNumericPrefixes() throws {
+        let order = try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(["F", "A1", "B"])
+        let names = ["02_Mafa-B_001:01", "05_M4_A1", "09_Mafa-F_001:01", "01_control"]
+        XCTAssertEqual(names.sorted { MHCAlleleDisplayOrder.lessThan($0, $1, locusDisplayOrder: order) },
+                       [names[2], names[1], names[0], names[3]])
+        XCTAssertEqual(names.sorted(by: MHCAlleleDisplayOrder.lessThan),
+                       [names[3], names[0], names[1], names[2]])
+    }
+
+    func testCustomMiSeqOrderGroupsAliasesAndRetainsUnlistedFallback() throws {
+        let order = try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(MHCAlleleDisplayOrder.miseqLocusDisplayOrder)
+        let labels = ["Mafa-DPB1_1", "Mafa-B21Ps_1", "Mafa-A3_1", "Mafa-F_1", "Mafa-DRB1_1", "Mafa-AG5_1", "Mafa-A1_1", "Mafa-DQA1_1", "Mafa-K_1", "Mafa-A2_1", "Mafa-L_1", "Mafa-E_1", "Mafa-G_1", "Mafa-DQB1_1", "Mafa-DPA1_1", "Mafa-Z_1"]
+        XCTAssertEqual(labels.sorted { MHCAlleleDisplayOrder.lessThan($0, $1, locusDisplayOrder: order) }, [
+            "Mafa-F_1", "Mafa-G_1", "Mafa-AG5_1", "Mafa-A1_1", "Mafa-A2_1", "Mafa-A3_1", "Mafa-K_1", "Mafa-L_1", "Mafa-E_1", "Mafa-B21Ps_1", "Mafa-DRB1_1", "Mafa-DQA1_1", "Mafa-DQB1_1", "Mafa-DPA1_1", "Mafa-DPB1_1", "Mafa-Z_1",
+        ])
+        XCTAssertEqual(MHCAlleleDisplayOrder.compare("Mafa-B_1", "Mafa-B_1", lhsStableID: "raw1", rhsStableID: "raw2", locusDisplayOrder: order), .orderedAscending)
+        XCTAssertThrowsError(try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(["MHC-DQA", "DQA1"]))
+        XCTAssertThrowsError(try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(["A2//A3"]))
+    }
+
+    func testMiSeqEAndNumberedAGStayWithClassI() {
+        let names = ["Mafa-DQA1_01:04", "Mafa-K_07:01", "Mafa-AG1_03:01", "Mafa-G_01:01", "Mafa-F_01:01", "Mafa-E_02:17", "Mafa-I_01:01"]
+        XCTAssertEqual(names.sorted(by: MHCAlleleDisplayOrder.lessThan), [
+            "Mafa-I_01:01", "Mafa-E_02:17", "Mafa-F_01:01", "Mafa-G_01:01", "Mafa-AG1_03:01", "Mafa-K_07:01", "Mafa-DQA1_01:04",
+        ])
+    }
+
+    func testUnderscoreAllelesUseBiologicalOrder() {
+        XCTAssertEqual(["Mafa-DQA1_01:04", "Mafa-B_002", "Mafa-A1_063:01"].sorted(by: MHCAlleleDisplayOrder.lessThan),
+                       ["Mafa-A1_063:01", "Mafa-B_002", "Mafa-DQA1_01:04"])
+        XCTAssertEqual(MHCAlleleDisplayOrder.compare("Mafa-K_001", "Mafa-DRB_001"), .orderedAscending)
+    }
+
     func testSortsCompleteMamuDisplayOrder() {
         let names = [
             "",

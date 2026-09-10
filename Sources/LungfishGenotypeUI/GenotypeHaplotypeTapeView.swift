@@ -7,7 +7,6 @@ import LungfishKit
 final class GenotypeHaplotypeTapeView: NSView {
     enum Cell: Equatable {
         case reference(tokenIndex: Int, label: String)
-        case weakReference(tokenIndex: Int, label: String)
         case manual(tokenIndex: Int, label: String)
         case recombinant(tokenIndexA: Int, tokenIndexB: Int, label: String)
         case error(label: String)
@@ -55,6 +54,10 @@ final class GenotypeHaplotypeTapeView: NSView {
         let status: GenotypeHaplotypeCallStatus
         let source: GenotypeEffectiveHaplotypeValue.Source
         let isEditable: Bool
+    }
+
+    var labelFont: NSFont = ContentTypography.current().font(for: .body) {
+        didSet { needsDisplay = true }
     }
 
     private(set) var swatchCount: Int = 0
@@ -177,9 +180,6 @@ final class GenotypeHaplotypeTapeView: NSView {
         case .reference(let i, _), .manual(let i, _):
             tokenNSColor(tokenIndex: i).setFill()
             path.fill()
-        case .weakReference(let i, _):
-            weakSupportColor(forTokenIndex: i).setFill()
-            path.fill()
         case .recombinant(let a, let b, _):
             drawStripedFill(a: a, b: b, in: rect, path: path)
         case .error(let label):
@@ -214,6 +214,43 @@ final class GenotypeHaplotypeTapeView: NSView {
         if isOverridden {
             drawHatchOverlay(in: rect)
         }
+        switch cell {
+        case .reference(let token, let label), .manual(let token, let label):
+            drawAssignmentLabel(label, in: rect, background: tokenNSColor(tokenIndex: token))
+        case .recombinant(_, _, let label):
+            // A neutral inset preserves readability over both stripe colors.
+            let labelRect = rect.insetBy(dx: 4, dy: 2)
+            NSColor.controlBackgroundColor.setFill()
+            NSBezierPath(roundedRect: labelRect, xRadius: 2, yRadius: 2).fill()
+            drawAssignmentLabel(label, in: labelRect, background: .controlBackgroundColor)
+        default:
+            break
+        }
+    }
+
+    private func drawAssignmentLabel(_ label: String, in rect: NSRect, background: NSColor) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        let text = NSAttributedString(string: label, attributes: [
+            .font: labelFont,
+            .foregroundColor: Self.readableLabelColor(on: background),
+            .paragraphStyle: paragraph,
+        ])
+        let textHeight = ceil(labelFont.boundingRectForFont.height)
+        text.draw(with: NSRect(x: rect.minX + 4, y: rect.midY - textHeight / 2,
+                              width: max(0, rect.width - 8), height: textHeight),
+                  options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+
+    static func readableLabelColor(on background: NSColor) -> NSColor {
+        guard let color = background.usingColorSpace(.sRGB) else { return .labelColor }
+        func linear(_ value: CGFloat) -> CGFloat {
+            value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear(color.redComponent)
+            + 0.7152 * linear(color.greenComponent) + 0.0722 * linear(color.blueComponent)
+        return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? .black : .white
     }
 
     private func drawStripedFill(a: Int, b: Int, in rect: NSRect, path: NSBezierPath) {
@@ -237,7 +274,7 @@ final class GenotypeHaplotypeTapeView: NSView {
     private func drawErrorGlyph(label: String, in rect: NSRect) {
         let symbol = errorSymbol(forLabel: label)
         guard rect.height >= 8 else { return }
-        let fontSize = max(7, min(11, rect.height * 0.65))
+        let fontSize = labelFont.pointSize
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
             .foregroundColor: NSColor.lungfishDanger,
@@ -251,7 +288,7 @@ final class GenotypeHaplotypeTapeView: NSView {
 
     private func drawObservedGlyph(count: Int, in rect: NSRect) {
         guard rect.height >= 10 else { return }
-        let fontSize = max(7, min(10, rect.height * 0.55))
+        let fontSize = labelFont.pointSize
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
             .foregroundColor: NSColor.secondaryLabelColor,
@@ -265,7 +302,7 @@ final class GenotypeHaplotypeTapeView: NSView {
 
     private func drawUnavailableGlyph(label: String, in rect: NSRect) {
         guard rect.height >= 10 else { return }
-        let fontSize = max(7, min(10, rect.height * 0.55))
+        let fontSize = labelFont.pointSize
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
             .foregroundColor: NSColor.systemOrange,
@@ -315,10 +352,6 @@ final class GenotypeHaplotypeTapeView: NSView {
         }()
         let color: AnnotationColor = isDark ? token.darkFillColor : token.fillColor
         return color.nsColor
-    }
-
-    private func weakSupportColor(forTokenIndex tokenIndex: Int) -> NSColor {
-        tokenNSColor(tokenIndex: tokenIndex).withAlphaComponent(0.5)
     }
 
     private func selectionSeparatorColor() -> NSColor {
@@ -423,6 +456,7 @@ final class GenotypeHaplotypeTapeView: NSView {
                     .filter { !$0.isEmpty }
                     .joined(separator: " ")
                 )
+                button.toolTip = "\(sampleAccessibilityLabel) · \(value.locus) · \(slot.displayName): \(effectiveValue)"
                 button.setAccessibilitySelected(selected)
                 button.setAccessibilityHelp(
                     semantics?.isEditable == false
@@ -450,7 +484,7 @@ final class GenotypeHaplotypeTapeView: NSView {
             return .noHaplotype
         case .unanalyzed:
             return .noHaplotype
-        case .empty, .reference, .weakReference, .manual, .recombinant:
+        case .empty, .reference, .manual, .recombinant:
             return .called
         }
     }
@@ -467,7 +501,7 @@ final class GenotypeHaplotypeTapeView: NSView {
     private func cellLabel(_ cell: Cell) -> String {
         switch cell {
         case .empty: return "not observed"
-        case .reference(_, let l), .weakReference(_, let l), .manual(_, let l): return l
+        case .reference(_, let l), .manual(_, let l): return l
         case .recombinant(_, _, let l): return l
         case .error(let l): return l
         case .notAssayed(let l): return l
@@ -552,8 +586,6 @@ extension GenotypeHaplotypeTapeView {
             return tokenNSColor(tokenIndex: 0)
         case .reference(let i, _), .manual(let i, _):
             return tokenNSColor(tokenIndex: i)
-        case .weakReference(let i, _):
-            return weakSupportColor(forTokenIndex: i)
         case .error, .notAssayed, .unanalyzed:
             return NSColor.controlBackgroundColor
         case .recombinant:

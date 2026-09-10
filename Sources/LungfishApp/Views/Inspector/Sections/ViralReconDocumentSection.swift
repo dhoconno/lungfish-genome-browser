@@ -50,10 +50,10 @@ struct ViralReconDocumentSection: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(state.title)
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             if let subtitle = state.subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -80,7 +80,7 @@ struct ViralReconDocumentSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func fileRow(_ row: ViralReconDocumentFileRow) -> some View {
@@ -92,19 +92,19 @@ struct ViralReconDocumentSection: View {
                 NSWorkspace.shared.open(row.fileURL)
             }
             .buttonStyle(.link)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier(rowIdentifier(for: row.label))
             .help("Open \(row.fileURL.lastPathComponent)")
 
             Text(row.detail)
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(row.fileURL.lastPathComponent)
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.tertiary)
                 .textSelection(.enabled)
                 .lineLimit(1)

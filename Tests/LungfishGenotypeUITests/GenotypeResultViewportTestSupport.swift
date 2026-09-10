@@ -1710,7 +1710,6 @@ extension GenotypeHaplotypeTapeView.Cell {
     var testingLabel: String? {
         switch self {
         case .reference(_, let label),
-             .weakReference(_, let label),
              .manual(_, let label),
              .recombinant(_, _, let label),
              .notAssayed(let label),
@@ -1726,8 +1725,8 @@ extension GenotypeHaplotypeTapeView.Cell {
         return false
     }
 
-    var testingIsWeakSupport: Bool {
-        if case .weakReference = self { return true }
+    var testingIsAssignedReference: Bool {
+        if case .reference = self { return true }
         return false
     }
 }

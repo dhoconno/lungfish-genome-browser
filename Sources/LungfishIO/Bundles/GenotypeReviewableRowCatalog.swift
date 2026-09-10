@@ -231,7 +231,7 @@ public struct GenotypeReviewableRowCatalog: Codable, Equatable, Sendable {
             }
 
             let canonicalLocus = GenotypeHaplotypeLocusResolver.canonicalLocusName(row.locus)
-            guard canonicalLocus != "Unknown", canonicalLocus == row.locus else {
+            guard (canonicalLocus != "Unknown" || row.kind == .reference), canonicalLocus == row.locus else {
                 throw ValidationError.nonCanonicalLocus(row: index, value: row.locus)
             }
 

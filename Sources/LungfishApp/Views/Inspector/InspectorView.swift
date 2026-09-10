@@ -45,6 +45,8 @@ public struct InspectorView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
+        .font(LungfishInspectorStyle.controlFont)
+        .controlSize(.regular)
     }
 
     // MARK: - Tab Picker
@@ -89,9 +91,9 @@ public struct InspectorView: View {
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("AI Assistant")
-                        .font(.headline)
+                        .font(LungfishInspectorStyle.sectionTitleFont)
                     Text("Enable AI services in Settings > AI Services to use the assistant.")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -178,12 +180,12 @@ struct GenotypeAnnotationIdentitySection: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(savingAsText)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(InspectorAccessibilityID.analystIdentityLabel)
             Spacer(minLength: 0)
             Button("Settings", action: openSettingsPane)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .accessibilityIdentifier(InspectorAccessibilityID.analystIdentitySettingsButton)
         }
     }
@@ -275,7 +277,7 @@ private struct InspectorReadStyleSection: View {
         case .annotations:
             if let capabilities = viewModel.readStyleSectionViewModel.classifierEvidenceCapabilities {
                 Text(capabilities.availability(of: .annotationAppearance).reason)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             } else {
                 InspectorAnnotationDisplaySection(viewModel: viewModel)
@@ -290,9 +292,9 @@ private struct ClassifierEvidenceInventorySection: View {
     let capabilities: ClassifierAlignmentInspectorCapabilities
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Classifier alignment evidence").font(.headline)
+            Text("Classifier alignment evidence").font(LungfishInspectorStyle.sectionTitleFont)
             ForEach(capabilities.inventoryRows, id: \.self) { Text($0).textSelection(.enabled) }
-            ForEach(capabilities.unavailableReasons, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+            ForEach(capabilities.unavailableReasons, id: \.self) { Text($0).font(LungfishInspectorStyle.controlFont).foregroundStyle(.secondary) }
         }
         .accessibilityIdentifier("classifier-evidence-inventory")
     }
@@ -334,7 +336,7 @@ private struct InspectorAnnotationDisplaySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Sequence, annotation, and sample display controls are grouped here so the main View tab stays easier to scan.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -368,7 +370,7 @@ private struct InspectorAlignmentVisibilitySection: View {
 
             if readStyleViewModel.hasAlignmentTracks {
                 Text("Choose whether the viewer shows every alignment track together or just one alignment track at a time.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -381,7 +383,7 @@ private struct InspectorAlignmentVisibilitySection: View {
                 .disabled(readStyleViewModel.visibleAlignmentTrackOptions.isEmpty)
 
                 Text(visibleAlignmentSummary)
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -402,7 +404,7 @@ private struct InspectorAlignmentVisibilitySection: View {
                     }
 
                 Text("Read Inclusion")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
 
                 Toggle("Include duplicate-marked reads", isOn: $readStyleViewModel.showDuplicates)
@@ -426,11 +428,11 @@ private struct InspectorAlignmentVisibilitySection: View {
                 }
             } else {
                 Text("No alignment tracks loaded.")
-                    .font(.callout)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 Text("Import a BAM or CRAM file via File > Import Center to enable alignment-specific view controls.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(LungfishInspectorStyle.controlFont)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -460,7 +462,7 @@ private struct InspectorAlignmentVisibilitySection: View {
     private var readGroupControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Read Groups")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             ForEach(readStyleViewModel.readGroups) { rg in
@@ -486,10 +488,10 @@ private struct InspectorAlignmentVisibilitySection: View {
                 )) {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(rg.rgId)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(LungfishInspectorStyle.controlFont.monospaced())
                         if let sample = rg.sample {
                             Text(sample)
-                                .font(.caption2)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -579,7 +581,7 @@ private struct InspectorReadRenderingSection: View {
             }
         } else {
             Text("No alignment tracks loaded.")
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
         }
     }
@@ -592,14 +594,14 @@ private struct InspectorFilteringWorkflowSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Creates a new alignment in this bundle. The original alignment stays unchanged.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let latestDerivedAlignmentMessage = viewModel.latestDerivedAlignmentMessage,
                !latestDerivedAlignmentMessage.isEmpty {
                 Text(latestDerivedAlignmentMessage)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
@@ -610,7 +612,7 @@ private struct InspectorFilteringWorkflowSection: View {
 
             if viewModel.hasAlignmentTracks {
                 Text("Duplicate handling")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
 
                 Button("Mark Duplicates in Bundle Tracks") {
@@ -623,7 +625,7 @@ private struct InspectorFilteringWorkflowSection: View {
                         ProgressView()
                             .scaleEffect(0.7)
                         Text("Running duplicate workflow...")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -671,7 +673,7 @@ private struct InspectorFilteringWorkflowSection: View {
                         Text("Minimum alignment confidence")
                         Spacer()
                         Text("MAPQ \(viewModel.alignmentFilterMinimumMAPQ)")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                             .frame(minWidth: 56, alignment: .trailing)
@@ -689,7 +691,7 @@ private struct InspectorFilteringWorkflowSection: View {
                         .labelsHidden()
                     }
                     Text("Uses SAM MAPQ. Set to 0 to keep every alignment confidence level.")
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
 
@@ -715,7 +717,7 @@ private struct InspectorFilteringWorkflowSection: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Minimum identity to reference (%)")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                     TextField(
                         viewModel.alignmentFilterExactMatchOnly ? "Disabled while exact-match filtering is on" : "Leave blank to keep all",
@@ -733,7 +735,7 @@ private struct InspectorFilteringWorkflowSection: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Name for New Alignment")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                     TextField(
                         "Filtered alignment name",
@@ -764,24 +766,24 @@ private struct InspectorFilteringWorkflowSection: View {
                         ProgressView()
                             .scaleEffect(0.7)
                         Text("Running BAM filter workflow...")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 if let alignmentFilterValidationMessage, !alignmentFilterValidationMessage.isEmpty {
                     Text(alignmentFilterValidationMessage)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(Color.lungfishDangerFallback)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 Text("No alignment tracks loaded.")
-                    .font(.callout)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 Text("Import a BAM or CRAM file before creating a filtered alignment.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(LungfishInspectorStyle.controlFont)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -794,7 +796,7 @@ private struct InspectorConsensusWorkflowSection: View {
         if viewModel.hasAlignmentTracks {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Consensus controls live under Analysis so the View tab stays focused on reversible display settings.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -889,19 +891,19 @@ private struct InspectorConsensusWorkflowSection: View {
 
                 if let message = viewModel.consensusExtractionAvailabilityMessage {
                     Text(message)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
 
                 if !viewModel.supportsConsensusExtraction {
                     Text("Consensus extraction is available from the active mapping viewer.")
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
         } else {
             Text("No alignment tracks loaded.")
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
         }
     }
@@ -914,18 +916,18 @@ private struct InspectorVariantCallingWorkflowSection: View {
         if viewModel.hasAlignmentTracks {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Run BAM-backed variant calling from the current bundle.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
                 if viewModel.hasVariantCallableAlignmentTracks {
                     Text("Use this when you want site-by-site sequence differences summarized as a reusable variant track.")
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("Variant calling is unavailable until this bundle includes an indexed BAM alignment track.")
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -937,11 +939,11 @@ private struct InspectorVariantCallingWorkflowSection: View {
             }
         } else {
             Text("No alignment tracks loaded.")
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text("Import a BAM or CRAM file before running variant-calling workflows.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(LungfishInspectorStyle.controlFont)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -953,12 +955,12 @@ private struct InspectorExportWorkflowSection: View {
         if viewModel.hasAlignmentTracks {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Create a separate bundle-level output from the current alignment tracks.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
                 Text("Use export when you want a new bundle for downstream work without changing the original mapping bundle.")
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -972,18 +974,18 @@ private struct InspectorExportWorkflowSection: View {
                         ProgressView()
                             .scaleEffect(0.7)
                         Text("Running duplicate workflow...")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
         } else {
             Text("No alignment tracks loaded.")
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text("Import a BAM or CRAM file before exporting a deduplicated bundle.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(LungfishInspectorStyle.controlFont)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -997,7 +999,7 @@ private struct MappingViewSettingsSection: View {
                 .font(LungfishInspectorStyle.sectionTitleFont)
 
             Text("Choose how the contig list and genome detail panes share the mapping viewer.")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -1079,11 +1081,11 @@ private struct MetagenomicsResultSummarySection: View {
 
             if viewModel.hasAnyContent {
                 Text("See the viewer for detailed results. Use the bottom drawer for BLAST verification and sample navigation.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             } else {
                 Text("Select a metagenomics result in the sidebar to view its summary here.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
 
@@ -1092,7 +1094,7 @@ private struct MetagenomicsResultSummarySection: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Panel Layout")
-                    .font(.caption.weight(.semibold))
+                    .font(LungfishInspectorStyle.controlFont.weight(.semibold))
 
                 Picker("Layout", selection: Binding(
                     get: { viewModel.metagenomicsPanelLayout },
@@ -1134,7 +1136,7 @@ private struct MetagenomicsResultSummarySection: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Sample Filter")
-                            .font(.caption.weight(.semibold))
+                            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
 
                         ClassifierSamplePickerView(
                             samples: viewModel.classifierSampleEntries,
@@ -1162,7 +1164,7 @@ private struct MetagenomicsResultSummarySection: View {
                             userInfo: windowScopedUserInfo()
                         )
                     }
-                    .controlSize(.small)
+                    .controlSize(.regular)
                 }
 
                 // Sample Metadata section
@@ -1177,7 +1179,7 @@ private struct MetagenomicsResultSummarySection: View {
                     AttachmentsSection(store: attachmentStore)
                 }
             }
-            .font(.caption.weight(.semibold))
+            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
 
             if !viewModel.batchSourceSampleURLs.isEmpty {
                 Divider()
@@ -1212,11 +1214,11 @@ private struct MetagenomicsResultSummarySection: View {
                 if !twelveSViewModel.sampleMetadataSourceDetails.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Sources")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                         ForEach(twelveSViewModel.sampleMetadataSourceDetails, id: \.self) { detail in
                             Text(detail)
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
@@ -1225,11 +1227,11 @@ private struct MetagenomicsResultSummarySection: View {
                 if !twelveSViewModel.sampleMetadataWarnings.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Warnings")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                         ForEach(twelveSViewModel.sampleMetadataWarnings, id: \.self) { warning in
                             Text(warning)
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
@@ -1243,20 +1245,20 @@ private struct MetagenomicsResultSummarySection: View {
                     )
                 } else {
                     Text("Sample IDs are frozen in this result. No FASTQ or analysis metadata fields were attached.")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     @ViewBuilder
     private func naoMgsSection(_ manifest: NaoMgsManifest) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("NAO-MGS Result")
-                .font(.caption.weight(.semibold))
+                .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                 .foregroundStyle(.primary)
 
             metadataRow("Sample", value: manifest.sampleName)
@@ -1285,7 +1287,7 @@ private struct MetagenomicsResultSummarySection: View {
     private func nvdSection(_ manifest: NvdManifest) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("NVD Result")
-                .font(.caption.weight(.semibold))
+                .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                 .foregroundStyle(.primary)
 
             metadataRow("Experiment", value: manifest.experiment)
@@ -1311,11 +1313,11 @@ private struct MetagenomicsResultSummarySection: View {
     private func metadataRow(_ label: String, value: String) -> some View {
         HStack(alignment: .top) {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 80, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .textSelection(.enabled)
         }
     }

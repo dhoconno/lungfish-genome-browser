@@ -1044,7 +1044,7 @@ public struct GenotypeReviewableRowCatalogPublisher: Sendable {
         bySequenceID.reserveCapacity(records.count)
         for record in records {
             let locus = GenotypeHaplotypeLocusResolver.canonicalLocusName(record.locus)
-            guard locus != "Unknown", isCanonicalNonempty(record.alleleName) else {
+            guard isCanonicalNonempty(record.locus), isCanonicalNonempty(record.alleleName) else {
                 throw GenotypeReviewableRowCatalogPublisherError.invalidCandidate(
                     record.sequenceID
                 )
@@ -1183,9 +1183,8 @@ public struct GenotypeReviewableRowCatalogPublisher: Sendable {
                 stableID: nil
             )
             let candidateIdentities = candidatesByDisplay[displayIdentity] ?? []
-            guard displayIdentity.locus != "Unknown",
-                  rowsByIdentity[referenceIdentity] != nil
-                    || candidateIdentities.count == 1 else {
+            guard rowsByIdentity[referenceIdentity] != nil
+                    || (displayIdentity.locus != "Unknown" && candidateIdentities.count == 1) else {
                 throw GenotypeReviewableRowCatalogPublisherError
                     .callWithoutAuthoritativeRow(locus: locus, genotype: call.genotype)
             }

@@ -8,6 +8,23 @@ import LungfishWorkflow
 
 @MainActor
 final class GenotypeAnnotationStoreTests: XCTestCase {
+    func testLocusDisplayOrderPersistsWithAuditAndProvenanceAndResetsToBundleDefault() throws {
+        let dir = try makeBundleURL()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try GenotypeAnnotationStore(bundleURL: dir, author: "analyst")
+        let defaultOrder = ["MHC-F", "MHC-A1", "MHC-B"]
+        try store.updateGenotypeLocusDisplayOrder(["B", "A1", "F"], bundleDefault: defaultOrder)
+        let reopened = try GenotypeAnnotationStore(bundleURL: dir, author: "analyst")
+        XCTAssertEqual(reopened.sidecar.settings.genotypeLocusDisplayOrder, ["MHC-B", "MHC-A1", "MHC-F"])
+        XCTAssertEqual(reopened.sidecar.auditLog.last?.action, "updateGenotypeLocusDisplayOrder")
+        let provenanceURL = ProvenanceRecorder.fileSidecarURL(for: dir.appendingPathComponent(GenotypeAnnotationSidecar.filename))
+        let provenance = try String(contentsOf: provenanceURL, encoding: .utf8)
+        XCTAssertTrue(provenance.contains("genotypeLocusDisplayOrder"))
+        XCTAssertTrue(provenance.contains("effectiveLocusDisplayOrder"))
+        try reopened.updateGenotypeLocusDisplayOrder(nil, bundleDefault: defaultOrder)
+        XCTAssertNil(try GenotypeAnnotationStore(bundleURL: dir, author: "analyst").sidecar.settings.genotypeLocusDisplayOrder)
+    }
+
     private struct InjectedPublicationFailure: Error {}
 
     private final class PublicationCounter: @unchecked Sendable {

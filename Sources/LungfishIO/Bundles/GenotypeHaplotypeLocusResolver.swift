@@ -30,6 +30,7 @@ public enum GenotypeHaplotypeLocusResolver {
         }
         token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let uppercased = token.uppercased()
+        if uppercased == "UNKNOWN" { return "Unknown" }
         if uppercased.hasPrefix("AG") {
             return "MHC-AG"
         }

@@ -118,7 +118,7 @@ struct MHCReferenceBundleDocumentSection: View {
                             .foregroundStyle(.orange)
                         if !row.context.isEmpty {
                             Text(row.context)
-                                .font(.caption2)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
@@ -127,20 +127,20 @@ struct MHCReferenceBundleDocumentSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     @ViewBuilder
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(state.name)
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
                 .lineLimit(2)
             Text("MHC reference bundle")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text("\(state.referenceCount) reference\(state.referenceCount == 1 ? "" : "s") • \(state.haplotypeDefinitionCount) haplotype set\(state.haplotypeDefinitionCount == 1 ? "" : "s")")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
         }
     }
@@ -154,7 +154,7 @@ struct MHCReferenceBundleDocumentSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private var definitionsSection: some View {
@@ -170,7 +170,7 @@ struct MHCReferenceBundleDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private var artifactSection: some View {
@@ -186,17 +186,17 @@ struct MHCReferenceBundleDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func contextRow(label: String, value: String) -> some View {
         HStack(alignment: .top) {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 112, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -210,13 +210,13 @@ struct MHCReferenceBundleDocumentSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Reveal in Finder")
                 pathCaption(fileURL.path)
             } else {
                 Text(row.label)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 pathCaption(row.fileURL?.path ?? "Missing")
@@ -226,15 +226,15 @@ struct MHCReferenceBundleDocumentSection: View {
 
     private func pathCaption(_ text: String) -> some View {
         Text(text)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+            .font(LungfishInspectorStyle.controlFont)
+            .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func emptyMessage(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.secondary)
             .padding(.vertical, 4)
     }

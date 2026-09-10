@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: MIT
 
 import SwiftUI
+import LungfishKit
 
+@MainActor
 enum LungfishInspectorStyle {
-    static let sectionTitleFont: Font = .caption.weight(.semibold)
-    static let controlFont: Font = .caption
+    static var sectionTitleFont: Font { ContentTypographyModel.shared.font(for: .emphasizedBody) }
+    static var controlFont: Font { ContentTypographyModel.shared.font(for: .body) }
 
     static func segmentedControlFont(isSelected: Bool) -> Font {
-        .caption.weight(isSelected ? .semibold : .regular)
+        controlFont.weight(isSelected ? .semibold : .regular)
     }
 }
 
@@ -34,9 +36,9 @@ struct LungfishInspectorSegmentedButtonGrid<Option: Hashable>: View {
                 } label: {
                     Text(label(option))
                         .font(LungfishInspectorStyle.segmentedControlFont(isSelected: selection == option))
-                        .lineLimit(1)
+                        .lineLimit(2)
                         .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .frame(maxWidth: .infinity, minHeight: max(28, ContentTypographyModel.shared.resolvedNSFont(for: .body).pointSize * 2))
                         .padding(.horizontal, 4)
                         .background(background(for: option))
                         .foregroundStyle(selection == option ? Color.white : Color.primary)

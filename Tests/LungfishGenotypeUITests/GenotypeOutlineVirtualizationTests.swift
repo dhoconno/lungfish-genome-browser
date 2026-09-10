@@ -10,7 +10,34 @@ import LungfishIO
 /// sample stays reachable and a small cohort renders exactly as before.
 @MainActor
 final class GenotypeOutlineVirtualizationTests: XCTestCase {
-    func testContentTypographyGrowsOrdinaryOutlineTextButKeepsTapeGeometryFixed() {
+    func testDensityChangesPreserveSelectionAndRestoreComfortableTargets() {
+        let key = GenotypeOutlineView.densityPreferenceKey
+        let original = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let original { UserDefaults.standard.set(original, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+            NotificationCenter.default.post(name: GenotypeOutlineView.densityChanged, object: nil)
+        }
+        UserDefaults.standard.set(false, forKey: key)
+        let view = GenotypeOutlineView()
+        view.configure(rows: [makeRow("AnimalA")])
+        let window = host(view, size: NSSize(width: 800, height: 300))
+        view.setReviewSelection(sample: "AnimalA", locus: "MHC-B")
+        let comfortableHeight = view.testingTapeHeight
+        UserDefaults.standard.set(true, forKey: key)
+        NotificationCenter.default.post(name: GenotypeOutlineView.densityChanged, object: nil)
+        view.testingForceRowMaterialization()
+        XCTAssertLessThan(view.testingTapeHeight, comfortableHeight)
+        XCTAssertEqual(view.testingReviewSelectedSample, "AnimalA")
+        XCTAssertEqual(view.testingReviewSelectedLocus, "MHC-B")
+        UserDefaults.standard.set(false, forKey: key)
+        NotificationCenter.default.post(name: GenotypeOutlineView.densityChanged, object: nil)
+        view.testingForceRowMaterialization()
+        XCTAssertEqual(view.testingTapeHeight, comfortableHeight)
+        withExtendedLifetime(window) {}
+    }
+
+    func testContentTypographyGrowsOutlineTextAndComfortableTapeTargets() {
         let settings = AppSettings.shared
         let typographySuiteName = "LungfishTypographyTests.\(UUID().uuidString)"
         let typographyDefaults = UserDefaults(suiteName: typographySuiteName)!
@@ -29,6 +56,7 @@ final class GenotypeOutlineVirtualizationTests: XCTestCase {
         let baselineFont = view.testingAnimalFontPointSize
         let baselineRowHeight = view.testingRowHeight
         let baselineTapeHeight = view.testingTapeHeight
+        XCTAssertGreaterThanOrEqual(baselineTapeHeight / 2, 24)
 
         settings.contentTextSizePreference = .custom(200)
         settings.save()
@@ -36,7 +64,7 @@ final class GenotypeOutlineVirtualizationTests: XCTestCase {
 
         XCTAssertEqual(view.testingAnimalFontPointSize, baselineFont * 2, accuracy: 0.01)
         XCTAssertGreaterThan(view.testingRowHeight, baselineRowHeight)
-        XCTAssertEqual(view.testingTapeHeight, baselineTapeHeight, accuracy: 0.01)
+        XCTAssertGreaterThan(view.testingTapeHeight, baselineTapeHeight)
         XCTAssertLessThanOrEqual(
             GenotypeOutlineView.testingRowViewConstructionCount,
             12,
@@ -49,6 +77,25 @@ final class GenotypeOutlineVirtualizationTests: XCTestCase {
         XCTAssertEqual(view.testingAnimalFontPointSize, baselineFont, accuracy: 0.01)
         XCTAssertEqual(view.testingRowHeight, baselineRowHeight, accuracy: 0.01)
         XCTAssertEqual(view.testingTapeHeight, baselineTapeHeight, accuracy: 0.01)
+    }
+
+    func testAssignedLabelContrastChoosesReadableForegroundAcrossPalette() {
+        for token in HaplotypeColorToken.canonicalPalette {
+            for fill in [token.fillColor, token.darkFillColor] {
+                let background = fill.nsColor
+                let foreground = GenotypeHaplotypeTapeView.readableLabelColor(on: background)
+                func linear(_ channel: Double) -> Double {
+                    channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+                }
+                let luminance = 0.2126 * linear(fill.red)
+                    + 0.7152 * linear(fill.green) + 0.0722 * linear(fill.blue)
+                let contrast = foreground == .black
+                    ? (luminance + 0.05) / 0.05 : 1.05 / (luminance + 0.05)
+                XCTAssertGreaterThanOrEqual(contrast, 4.5)
+            }
+        }
+        XCTAssertEqual(GenotypeHaplotypeTapeView.readableLabelColor(on: .black), .white)
+        XCTAssertEqual(GenotypeHaplotypeTapeView.readableLabelColor(on: .white), .black)
     }
 
     /// Hosts the outline view in an off-screen window so the backing

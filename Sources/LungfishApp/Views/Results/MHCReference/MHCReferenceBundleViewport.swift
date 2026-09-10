@@ -166,9 +166,9 @@ struct MHCReferenceBundleViewport: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.title)
-                    .font(.headline)
+                    .font(ContentTypographyModel.shared.font(for: .emphasizedBody))
                 Text("\(model.referenceCount) FASTA record\(model.referenceCount == 1 ? "" : "s") / \(model.definitionSummaries.count) haplotype definition\(model.definitionSummaries.count == 1 ? "" : "s")")
-                    .font(.caption)
+                    .font(ContentTypographyModel.shared.font(for: .body))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -180,7 +180,7 @@ struct MHCReferenceBundleViewport: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 210)
+                .frame(minWidth: 210, idealWidth: 280)
                 .accessibilityIdentifier("mhc-reference-mode-picker")
             }
             Button(action: onEditHaplotypes) {
@@ -223,7 +223,7 @@ struct MHCReferenceBundleViewport: View {
                     "Showing the first 64 KB of \(ByteCountFormatter.string(fromByteCount: Int64(model.fastaFileSize), countStyle: .file)).",
                     systemImage: "info.circle"
                 )
-                .font(.caption)
+                .font(ContentTypographyModel.shared.font(for: .body))
                 .foregroundStyle(.secondary)
             }
             ScrollView([.vertical, .horizontal]) {
@@ -279,7 +279,7 @@ struct MHCReferenceBundleViewport: View {
                 }
                 Spacer()
                 Text("\(summary.diagnosticAlleleCount) alleles")
-                    .font(.caption)
+                    .font(ContentTypographyModel.shared.font(for: .body))
                     .foregroundStyle(.secondary)
             }
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
@@ -302,7 +302,7 @@ struct MHCReferenceBundleViewport: View {
                         .textSelection(.enabled)
                 }
             }
-            .font(.caption)
+            .font(ContentTypographyModel.shared.font(for: .body))
         }
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor))

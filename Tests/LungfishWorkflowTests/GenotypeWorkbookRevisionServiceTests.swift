@@ -7,6 +7,49 @@ import LungfishIO
 @testable import LungfishWorkflow
 
 final class GenotypeWorkbookRevisionServiceTests: XCTestCase {
+    func testAnnotationUpdateAcceptsInitialMiSeqReportProvenanceAndPreservesIt() throws {
+        XCTAssertTrue(pythonCanImportOpenpyxl())
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try makeMCMWorkbookBundle(in: root, outputName: "miseq-report")
+        let provenancePath = "artifacts/workbooks/current-workbook-provenance.json"
+        let provenanceURL = fixture.bundleURL.appendingPathComponent(provenancePath)
+        // The Python miSeq report writer predates the canonical Swift envelope.
+        let legacy = Data(#"""
+        {"toolName":"lungfish fastq ont-barcode-genotype workbook report",
+         "toolVersion":"1", "mode":"mcm-client-current",
+         "startedAt":"2026-09-09T19:35:38.440118+00:00",
+         "completedAt":"2026-09-09T19:35:38.510885+00:00",
+         "exitStatus":0, "argv":["write-retained-demux-workbook.py"],
+         "options":{"client_current_workbook":true},
+         "runtimeIdentity":{"python":"3.12.13","openpyxl":"3.1.5"},
+         "inputs":[], "outputs":[], "wallClockSeconds":0.08, "stderr":""}
+        """#.utf8)
+        try legacy.write(to: provenanceURL)
+        let manifestURL = ONTGenotypeResultBundle.manifestURL(in: fixture.bundleURL)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any])
+        var revisions = try XCTUnwrap(object["workbookRevisions"] as? [[String: Any]])
+        revisions[0]["provenancePath"] = provenancePath
+        object["workbookRevisions"] = revisions
+        try JSONSerialization.data(withJSONObject: object).write(to: manifestURL)
+        let annotationURL = fixture.bundleURL.appendingPathComponent("annotations.json")
+        try GenotypeAnnotationSidecar.empty(generatedAt: "2026-09-09T19:35:38Z").encoded().write(to: annotationURL)
+
+        let updated = try GenotypeWorkbookRevisionService(
+            pythonExecutableURL: testPythonExecutableURL,
+            workbookAttestationRootURL: root.appendingPathComponent("attestations")
+        ).applyHaplotypeOverrides([], annotationSidecarURL: annotationURL,
+                                  into: fixture.bundleURL, annotationOnly: true)
+
+        XCTAssertEqual(try Data(contentsOf: provenanceURL), legacy)
+        let latest = try XCTUnwrap(updated.workbookRevisions?.last)
+        let envelope = try ProvenanceJSON.decoder.decode(ProvenanceEnvelope.self, from: Data(
+            contentsOf: fixture.bundleURL.appendingPathComponent(try XCTUnwrap(latest.provenancePath))))
+        XCTAssertEqual(latest.sha256, try ProvenanceFileHasher.sha256(of:
+            fixture.bundleURL.appendingPathComponent(try XCTUnwrap(updated.currentWorkbookPath))))
+        XCTAssertFalse(envelope.options.explicit.isEmpty)
+    }
+
     func testPublicWorkbookRevisionOutcomeAndLegacyWrapperMatchCommittedManifest() throws {
         XCTAssertTrue(pythonCanImportOpenpyxl(), "The managed test runtime must provide openpyxl")
         let outcomeRoot = try temporaryDirectory()

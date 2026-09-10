@@ -63,7 +63,7 @@ public struct AppearanceSection: View {
             .padding(.top, 8)
         } label: {
             Text("Sequence Style")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -80,14 +80,14 @@ public struct AppearanceSection: View {
                 Spacer()
 
                 Text("\(Int(viewModel.trackHeight)) pt")
-                    .font(.callout)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
 
             HStack(spacing: 8) {
                 Image(systemName: "minus")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
 
                 Slider(
@@ -100,7 +100,7 @@ public struct AppearanceSection: View {
                 }
 
                 Image(systemName: "plus")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }

@@ -314,6 +314,10 @@ enum GenotypeResultDocumentComponent: Equatable {
 }
 
 public struct GenotypeResultDocumentSection: View {
+    private let typographyModel = ContentTypographyModel.shared
+    private var contentBodyFont: Font { typographyModel.font(for: .body) }
+    private var contentHeadingFont: Font { typographyModel.font(for: .emphasizedBody) }
+
     let state: GenotypeResultDocumentState
     var onViewModeChange: ((GenotypeSummaryViewMode) -> Void)? = nil
     var onShowsAncillaryLociChange: ((Bool) -> Void)? = nil
@@ -416,32 +420,32 @@ public struct GenotypeResultDocumentSection: View {
             GenotypeAuditTimelineSection(entries: state.auditEntries)
                 .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private var includedLociSection: some View {
         DisclosureGroup("Included Loci", isExpanded: $isIncludedLociExpanded) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Included loci appear in Outline. Workbook-supported loci are written to current.xlsx when you update the workbook.")
-                    .font(.caption2)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Button("All") {
                         onIncludedLociChange?(Set(state.availableHaplotypeLoci))
                     }
-                    .controlSize(.small)
+                    .controlSize(.regular)
                     .disabled(state.availableHaplotypeLoci.isEmpty)
                     Button("Default") {
                         onIncludedLociChange?(state.defaultIncludedHaplotypeLoci)
                     }
-                    .controlSize(.small)
+                    .controlSize(.regular)
                     .disabled(state.availableHaplotypeLoci.isEmpty)
                 }
                 if state.availableHaplotypeLoci.isEmpty {
                     Text("No deterministic haplotype loci are available.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(contentBodyFont)
+                        .foregroundStyle(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(state.availableHaplotypeLoci, id: \.self) { locus in
@@ -458,7 +462,7 @@ public struct GenotypeResultDocumentSection: View {
                                 }
                             )) {
                                 Text(locus)
-                                    .font(.caption)
+                                    .font(contentBodyFont)
                             }
                             .toggleStyle(.checkbox)
                         }
@@ -467,7 +471,7 @@ public struct GenotypeResultDocumentSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private var smartCohortsSection: some View {
@@ -500,28 +504,28 @@ public struct GenotypeResultDocumentSection: View {
                             userInfo: windowScopedUserInfo()
                         )
                     }
-                    .controlSize(.small)
+                    .controlSize(.regular)
                     if let folderURL = state.haplotypeDefinitionsFolderURL {
                         Button("Reveal Folder") {
                             NSWorkspace.shared.activateFileViewerSelecting([folderURL])
                         }
-                        .controlSize(.small)
+                        .controlSize(.regular)
                     }
                 }
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(state.title)
-                .font(.headline)
+                .font(contentHeadingFont)
                 .lineLimit(2)
             if let subtitle = state.subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -532,7 +536,7 @@ public struct GenotypeResultDocumentSection: View {
             rowStack(state.summaryRows)
                 .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private var qcSection: some View {
@@ -540,7 +544,7 @@ public struct GenotypeResultDocumentSection: View {
             rowStack(state.qcRows)
                 .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private var samplesSection: some View {
@@ -548,11 +552,12 @@ public struct GenotypeResultDocumentSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top) {
                     Text("Samples")
-                        .font(.caption)
+                        .font(contentBodyFont)
                         .foregroundStyle(.secondary)
-                        .frame(width: 118, alignment: .trailing)
+                        .frame(maxWidth: 118, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("\(state.sampleIds.count)")
-                        .font(.caption)
+                        .font(contentBodyFont)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -563,7 +568,7 @@ public struct GenotypeResultDocumentSection: View {
                         userInfo: windowScopedUserInfo()
                     )
                 }
-                .controlSize(.small)
+                .controlSize(.regular)
                 .disabled(state.sampleIds.isEmpty)
 
                 if let store = state.sampleMetadataStore {
@@ -572,7 +577,7 @@ public struct GenotypeResultDocumentSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private var currentWorkbookSection: some View {
@@ -580,24 +585,24 @@ public struct GenotypeResultDocumentSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let update = state.currentWorkbookUpdate {
                     Text(update.statusText)
-                        .font(.caption)
+                        .font(contentBodyFont)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Update and View Current Excel Version") {
                         onCurrentWorkbookUpdateRequested?()
                     }
-                    .controlSize(.small)
+                    .controlSize(.regular)
                     .disabled(!update.isEnabled)
                     .help("Open current.xlsx immediately when current; otherwise update it once and open the successful revision.")
                     Text("Writes displayed haplotype calls, matrix annotations, Overrides, and Audit Log worksheets.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(contentBodyFont)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private var artifactsSection: some View {
@@ -609,19 +614,20 @@ public struct GenotypeResultDocumentSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     private func rowStack(_ rows: [(String, String)]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(row.0)
-                        .font(.caption)
+                        .font(contentBodyFont)
                         .foregroundStyle(.secondary)
-                        .frame(width: 118, alignment: .trailing)
+                        .frame(maxWidth: 118, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(row.1)
-                        .font(.caption)
+                        .font(contentBodyFont)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -637,13 +643,13 @@ public struct GenotypeResultDocumentSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(contentBodyFont)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Reveal in Finder")
                 pathCaption(fileURL.path)
             } else {
                 Text(row.label)
-                    .font(.caption)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 pathCaption(row.fileURL?.path ?? "Missing")
@@ -653,8 +659,8 @@ public struct GenotypeResultDocumentSection: View {
 
     private func pathCaption(_ text: String) -> some View {
         Text(text)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+            .font(contentBodyFont)
+            .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

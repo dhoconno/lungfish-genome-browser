@@ -1,6 +1,78 @@
 import Foundation
 
 public enum MHCAlleleDisplayOrder {
+    public static let miseqLocusDisplayOrder = [
+        "MHC-F", "MHC-G", "MHC-AG", "MHC-A1", "MHC-A2/A3/A4/A5",
+        "MHC-K", "MHC-L", "MHC-E", "MHC-B", "MHC-DRB", "MHC-DQA",
+        "MHC-DQB", "MHC-DPA", "MHC-DPB",
+    ]
+
+    public enum LocusDisplayOrderError: Error, LocalizedError {
+        case invalid(String)
+        case duplicate(String)
+        public var errorDescription: String? {
+            switch self {
+            case .invalid(let value): return "Invalid genotype locus display order entry: \(value)"
+            case .duplicate(let value): return "Genotype locus appears more than once in the display order: \(value)"
+            }
+        }
+    }
+
+    /// Canonicalizes ordered loci and slash-delimited groups without selecting haplotyping loci.
+    public static func validatedLocusDisplayOrder(_ order: [String]) throws -> [String] {
+        var seen = Set<String>()
+        return try order.map { group in
+            let members = group.split(separator: "/", omittingEmptySubsequences: false)
+            let normalized = try members.map { member -> String in
+                let token = displayLocus(String(member))
+                guard !token.isEmpty,
+                      token.range(of: "^[A-Z][A-Z0-9]*$", options: .regularExpression) != nil else {
+                    throw LocusDisplayOrderError.invalid(group)
+                }
+                guard seen.insert(token).inserted else { throw LocusDisplayOrderError.duplicate(token) }
+                return "MHC-" + token
+            }
+            return normalized.joined(separator: "/")
+        }
+    }
+
+    private static func displayLocus(_ input: String) -> String {
+        let token = input.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            .components(separatedBy: "-").last ?? ""
+        for prefix in ["AG", "DRB", "DQA", "DQB", "DPA", "DPB", "B"] {
+            if token == prefix || token.range(of: "^" + prefix + "[0-9]+[A-Z]*$", options: .regularExpression) != nil {
+                return prefix
+            }
+        }
+        return token
+    }
+
+    private static func customRank(_ locus: String, order: [String]) -> Int {
+        let target = displayLocus(locus)
+        return order.firstIndex { group in
+            group.split(separator: "/").contains { displayLocus(String($0)) == target }
+        } ?? order.count
+    }
+
+    /// Numeric FASTA prefixes control the default view, but an explicit locus
+    /// order addresses the underlying allele (05_Mafa-F_...) or locus token
+    /// (05_M4_A1). Only custom group assignment uses this interpretation.
+    private static func customRank(_ name: String, parsedLocus: String, order: [String]) -> Int {
+        let ordinaryRank = customRank(parsedLocus, order: order)
+        guard ordinaryRank == order.count, name.first?.isASCII == true,
+              name.first?.isNumber == true else { return ordinaryRank }
+        let withoutNumber = name.drop(while: { $0.isASCII && $0.isNumber })
+            .drop(while: { $0 == "_" || $0 == "-" || $0 == " " })
+        let parsedRank = customRank(ParsedName(String(withoutNumber)).locus, order: order)
+        if parsedRank != order.count { return parsedRank }
+        for token in withoutNumber.split(whereSeparator: { $0 == "_" || $0 == "|" || $0 == " " }) {
+            let locus = token.prefix(while: { $0 != "*" })
+            let rank = customRank(String(locus), order: order)
+            if rank != order.count { return rank }
+        }
+        return order.count
+    }
+
     /// Compares two MHC allele display names in biological display order.
     /// Natural fields are tokenized into ASCII digit and non-digit runs. Digit runs sort
     /// before non-digit runs and compare by overflow-free numeric magnitude; non-digit
@@ -15,10 +87,19 @@ public enum MHCAlleleDisplayOrder {
         _ lhs: String,
         _ rhs: String,
         lhsStableID: String = "",
-        rhsStableID: String = ""
+        rhsStableID: String = "",
+        locusDisplayOrder: [String]? = nil
     ) -> ComparisonResult {
         let left = ParsedName(lhs)
         let right = ParsedName(rhs)
+
+        if let locusDisplayOrder, !locusDisplayOrder.isEmpty {
+            let leftRank = customRank(lhs, parsedLocus: left.locus, order: locusDisplayOrder)
+            let rightRank = customRank(rhs, parsedLocus: right.locus, order: locusDisplayOrder)
+            if leftRank != rightRank {
+                return leftRank < rightRank ? .orderedAscending : .orderedDescending
+            }
+        }
 
         if left.groupRank != right.groupRank {
             return left.groupRank < right.groupRank ? .orderedAscending : .orderedDescending
@@ -52,6 +133,10 @@ public enum MHCAlleleDisplayOrder {
 
     public static func lessThan(_ lhs: String, _ rhs: String) -> Bool {
         compare(lhs, rhs, lhsStableID: "", rhsStableID: "") == .orderedAscending
+    }
+
+    public static func lessThan(_ lhs: String, _ rhs: String, locusDisplayOrder: [String]?) -> Bool {
+        compare(lhs, rhs, locusDisplayOrder: locusDisplayOrder) == .orderedAscending
     }
 
     private static func naturalCompare(_ lhs: String, _ rhs: String) -> ComparisonResult {
@@ -146,19 +231,19 @@ public enum MHCAlleleDisplayOrder {
                 locus = ""
                 allele = ""
                 completeName = ""
-                groupRank = 10
+                groupRank = 11
                 return
             }
 
             guard
-                let star = name.firstIndex(of: "*"),
+                let star = name.firstIndex(where: { $0 == "*" || $0 == "_" }),
                 let separator = name[..<star].lastIndex(of: "-")
             else {
                 speciesPrefix = ""
                 locus = name
                 allele = ""
                 completeName = name
-                groupRank = 9
+                groupRank = 10
                 return
             }
 
@@ -177,7 +262,7 @@ public enum MHCAlleleDisplayOrder {
                 locus = name
                 allele = ""
                 completeName = name
-                groupRank = 9
+                groupRank = 10
                 return
             }
 
@@ -193,14 +278,21 @@ public enum MHCAlleleDisplayOrder {
             if locus == "B" { return 1 }
             if isNumberedLocus(locus, prefix: "B", allowsLetterSuffix: true) { return 2 }
 
+            if locus.hasPrefix("AG"),
+               !locus.dropFirst(2).isEmpty,
+               locus.dropFirst(2).allSatisfy({ $0.isASCII && $0.isNumber }) {
+                return 7
+            }
+
             switch locus {
             case "I": return 3
-            case "F": return 4
-            case "G": return 5
-            case "AG": return 6
-            case "J": return 7
-            case "K": return 8
-            default: return 9
+            case "E": return 4
+            case "F": return 5
+            case "G": return 6
+            case "AG": return 7
+            case "J": return 8
+            case "K": return 9
+            default: return 10
             }
         }
 

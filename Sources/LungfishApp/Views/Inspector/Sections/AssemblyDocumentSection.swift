@@ -70,10 +70,10 @@ struct AssemblyDocumentSection: View {
     private func header(_ assembly: AssemblyDocumentState) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(assembly.title)
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             if let subtitle = assembly.subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -92,7 +92,7 @@ struct AssemblyDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func sourceDataRow(_ row: AssemblyDocumentSourceRow) -> some View {
@@ -103,7 +103,7 @@ struct AssemblyDocumentSection: View {
                     viewModel.navigateToSourceData?(targetURL)
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Show in project sidebar")
                 pathCaption(targetURL.path)
@@ -112,13 +112,13 @@ struct AssemblyDocumentSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Reveal in Finder")
                 pathCaption(fileURL.path)
             case .missing(let name, let originalPath):
                 Text(name)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let originalPath, !originalPath.isEmpty {
@@ -137,11 +137,11 @@ struct AssemblyDocumentSection: View {
                     ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                         HStack(alignment: .top) {
                             Text(row.0)
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                                 .frame(width: 110, alignment: .trailing)
                             Text(row.1)
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -150,7 +150,7 @@ struct AssemblyDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func sourceArtifactsSection(_ rows: [AssemblyDocumentArtifactRow]) -> some View {
@@ -166,7 +166,7 @@ struct AssemblyDocumentSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func artifactRow(_ row: AssemblyDocumentArtifactRow) -> some View {
@@ -176,13 +176,13 @@ struct AssemblyDocumentSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Reveal in Finder")
                 pathCaption(fileURL.path)
             } else {
                 Text(row.label)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let fileURL = row.fileURL {
@@ -196,7 +196,7 @@ struct AssemblyDocumentSection: View {
 
     private func pathCaption(_ text: String) -> some View {
         Text(text)
-            .font(.caption2)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.tertiary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -204,7 +204,7 @@ struct AssemblyDocumentSection: View {
 
     private func emptyMessage(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.secondary)
             .padding(.vertical, 4)
     }

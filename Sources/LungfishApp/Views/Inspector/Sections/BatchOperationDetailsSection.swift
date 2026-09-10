@@ -51,7 +51,7 @@ struct BatchOperationDetailsSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     @ViewBuilder
@@ -69,9 +69,9 @@ struct BatchOperationDetailsSection: View {
         HStack(spacing: 4) {
             Image(systemName: iconName)
                 .foregroundStyle(color)
-                .font(.system(size: 10))
+                .font(LungfishInspectorStyle.controlFont)
             Text(label)
-                .font(.system(size: 10))
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
         }
     }
@@ -80,11 +80,11 @@ struct BatchOperationDetailsSection: View {
     private func detailRow(_ label: String, value: String) -> some View {
         HStack(alignment: .top) {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 80, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

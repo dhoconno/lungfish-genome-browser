@@ -253,6 +253,7 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
     public let alignmentArtifacts: ONTGenotypeAlignmentArtifactManifest?
     public let provisionalExon2Artifacts: ONTGenotypeProvisionalExon2ArtifactManifest?
     public let reviewableRowCatalog: ONTMHCArtifactReference?
+    public let genotypeLocusDisplayOrder: [String]?
 
     public init(
         schemaVersion: Int = 1,
@@ -278,7 +279,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
         mhcCandidateArtifacts: ONTMHCCandidateArtifactManifest? = nil,
         mhcReferenceVisualizations: ONTMHCReferenceVisualizationArtifacts? = nil,
         referenceRecordStore: ONTGenotypeReferenceRecordStoreInfo? = nil,
-        reviewableRowCatalog: ONTMHCArtifactReference? = nil
+        reviewableRowCatalog: ONTMHCArtifactReference? = nil,
+        genotypeLocusDisplayOrder: [String]? = nil
     ) {
         self.init(
             schemaVersion: schemaVersion,
@@ -306,7 +308,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
             referenceRecordStore: referenceRecordStore,
             alignmentArtifacts: nil,
             provisionalExon2Artifacts: nil,
-            reviewableRowCatalog: reviewableRowCatalog
+            reviewableRowCatalog: reviewableRowCatalog,
+            genotypeLocusDisplayOrder: genotypeLocusDisplayOrder
         )
     }
 
@@ -336,7 +339,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
         referenceRecordStore: ONTGenotypeReferenceRecordStoreInfo? = nil,
         alignmentArtifacts: ONTGenotypeAlignmentArtifactManifest?,
         provisionalExon2Artifacts: ONTGenotypeProvisionalExon2ArtifactManifest?,
-        reviewableRowCatalog: ONTMHCArtifactReference? = nil
+        reviewableRowCatalog: ONTMHCArtifactReference? = nil,
+        genotypeLocusDisplayOrder: [String]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.kind = kind
@@ -366,6 +370,7 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
         self.alignmentArtifacts = alignmentArtifacts
         self.provisionalExon2Artifacts = provisionalExon2Artifacts
         self.reviewableRowCatalog = reviewableRowCatalog
+        self.genotypeLocusDisplayOrder = genotypeLocusDisplayOrder
     }
 
     public init(
@@ -391,7 +396,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
         haplotypeAnalysisRevisions: [ONTGenotypeHaplotypeAnalysisRevision]? = nil,
         mhcCandidateArtifacts: ONTMHCCandidateArtifactManifest? = nil,
         referenceRecordStore: ONTGenotypeReferenceRecordStoreInfo? = nil,
-        reviewableRowCatalog: ONTMHCArtifactReference? = nil
+        reviewableRowCatalog: ONTMHCArtifactReference? = nil,
+        genotypeLocusDisplayOrder: [String]? = nil
     ) {
         self.init(
             schemaVersion: schemaVersion,
@@ -419,7 +425,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
             referenceRecordStore: referenceRecordStore,
             alignmentArtifacts: nil,
             provisionalExon2Artifacts: nil,
-            reviewableRowCatalog: reviewableRowCatalog
+            reviewableRowCatalog: reviewableRowCatalog,
+            genotypeLocusDisplayOrder: genotypeLocusDisplayOrder
         )
     }
 
@@ -448,7 +455,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
         referenceRecordStore: ONTGenotypeReferenceRecordStoreInfo? = nil,
         alignmentArtifacts: ONTGenotypeAlignmentArtifactManifest?,
         provisionalExon2Artifacts: ONTGenotypeProvisionalExon2ArtifactManifest?,
-        reviewableRowCatalog: ONTMHCArtifactReference? = nil
+        reviewableRowCatalog: ONTMHCArtifactReference? = nil,
+        genotypeLocusDisplayOrder: [String]? = nil
     ) {
         self.init(
             schemaVersion: schemaVersion,
@@ -476,7 +484,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
             referenceRecordStore: referenceRecordStore,
             alignmentArtifacts: alignmentArtifacts,
             provisionalExon2Artifacts: provisionalExon2Artifacts,
-            reviewableRowCatalog: reviewableRowCatalog
+            reviewableRowCatalog: reviewableRowCatalog,
+            genotypeLocusDisplayOrder: genotypeLocusDisplayOrder
         )
     }
 
@@ -508,7 +517,8 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
         referenceRecordStore: ONTGenotypeReferenceRecordStoreInfo? = nil,
         alignmentArtifacts: ONTGenotypeAlignmentArtifactManifest? = nil,
         provisionalExon2Artifacts: ONTGenotypeProvisionalExon2ArtifactManifest? = nil,
-        reviewableRowCatalog: ONTMHCArtifactReference? = nil
+        reviewableRowCatalog: ONTMHCArtifactReference? = nil,
+        genotypeLocusDisplayOrder: [String]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.kind = kind
@@ -538,6 +548,7 @@ public struct ONTGenotypeResultBundleManifest: Codable, Equatable, Sendable {
         self.alignmentArtifacts = alignmentArtifacts
         self.provisionalExon2Artifacts = provisionalExon2Artifacts
         self.reviewableRowCatalog = reviewableRowCatalog
+        self.genotypeLocusDisplayOrder = genotypeLocusDisplayOrder
     }
 
     public func replacingWorkbookFields(
@@ -628,6 +639,7 @@ public struct ONTGenotypeCall: Codable, Equatable, Sendable {
         guard let token = locusToken?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
             return "Unknown"
         }
+        if token.caseInsensitiveCompare("Unknown") == .orderedSame { return "Unknown" }
         if let classIILocusGroup = Self.preciseClassIILocusGroup(from: token) {
             return classIILocusGroup
         }
@@ -673,8 +685,18 @@ public struct ONTGenotypeCall: Codable, Equatable, Sendable {
     }
 
     private static func inferLocusToken(from genotype: String) -> String? {
+        if let sourceLocus = MHCReferenceGenotypeDisplay.sourceLocus(for: genotype) {
+            return sourceLocus
+        }
         let parts = genotypeParts(genotype)
         guard !parts.isEmpty else { return nil }
+        // A numeric sort prefix plus an opaque identifier is not an allele:
+        // control names such as 16_A102 must not become a numbered MHC-A locus.
+        if let prefix = genotype.split(separator: "_").first,
+           prefix.allSatisfy(\.isNumber), parts.count == 1,
+           !parts[0].contains("*") {
+            return "Unknown"
+        }
         if !inferHaplotypeTokens(from: genotype).isEmpty, parts.count > 1 {
             return cleanLocusToken(parts[1])
         }
@@ -1224,6 +1246,13 @@ public struct ONTMHCAlignmentArtifactURLs: Codable, Equatable, Sendable {
 }
 
 public struct ONTGenotypeResultBundleData: Codable, Equatable, Sendable {
+    /// Portable result snapshot first; older results can use their explicitly recorded reference bundle.
+    public var genotypeLocusDisplayOrder: [String]? {
+        manifest.genotypeLocusDisplayOrder ?? ONTGenotypeResultBundle.referenceGenotypeLocusDisplayOrder(
+            manifest: manifest, in: bundleURL
+        )
+    }
+
     private struct SupportKey: Hashable {
         let sample: String
         let locus: String
@@ -2286,6 +2315,34 @@ public enum ONTGenotypeResultBundle {
             sizeBytes: Int64(after.st_size),
             sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         )
+    }
+
+    public static func referenceGenotypeLocusDisplayOrder(
+        manifest: ONTGenotypeResultBundleManifest,
+        in bundleURL: URL
+    ) -> [String]? {
+        guard let data = try? Data(contentsOf: resolvedURL(for: manifest.provenancePath, in: bundleURL)),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let options = object["options"] as? [String: Any]
+        let explicit = options?["explicit"] as? [String: Any] ?? options
+        var referencePath: String?
+        for key in ["reference", "referenceSource"] {
+            if let value = explicit?[key] as? String { referencePath = value; break }
+            if let value = explicit?[key] as? [String: Any], let path = value["value"] as? String {
+                referencePath = path; break
+            }
+        }
+        if referencePath == nil, let argv = object["argv"] as? [String],
+           let index = argv.firstIndex(of: "--reference"), argv.indices.contains(index + 1) {
+            referencePath = argv[index + 1]
+        }
+        guard let referencePath else { return nil }
+        let referenceURL = referencePath.hasPrefix("/")
+            ? URL(fileURLWithPath: referencePath) : bundleURL.appendingPathComponent(referencePath)
+        guard MHCAmpliconReferenceBundle.isBundleURL(referenceURL),
+              let reference = try? MHCAmpliconReferenceBundle.loadManifest(from: referenceURL),
+              let order = reference.genotypeLocusDisplayOrder else { return nil }
+        return try? MHCAlleleDisplayOrder.validatedLocusDisplayOrder(order)
     }
 
     private static func loadResult(

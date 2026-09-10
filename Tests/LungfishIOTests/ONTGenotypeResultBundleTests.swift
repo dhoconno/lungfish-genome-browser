@@ -7,6 +7,54 @@ import XCTest
 @testable import LungfishIO
 
 final class ONTGenotypeResultBundleTests: XCTestCase {
+    func testPortableGenotypeOrderSurvivesManifestRoundTripAndWorkbookRevision() throws {
+        let original = makeResult(calls: []).manifest
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        json["genotypeLocusDisplayOrder"] = ["MHC-F", "MHC-B"]
+        let manifest = try JSONDecoder().decode(ONTGenotypeResultBundleManifest.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(manifest.genotypeLocusDisplayOrder, ["MHC-F", "MHC-B"])
+        XCTAssertEqual(manifest.replacingWorkbookFields(currentWorkbookPath: "new.xlsx", workbookRevisions: []).genotypeLocusDisplayOrder, manifest.genotypeLocusDisplayOrder)
+        XCTAssertNil(original.genotypeLocusDisplayOrder)
+    }
+
+    func testLegacyResultResolvesOrderOnlyFromExplicitReferenceProvenance() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reference = root.appendingPathComponent("reference.lungfishmhcref")
+        try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+        try MHCAmpliconReferenceBundle.writeManifest(.init(
+            name: "Reference", referenceFastaPath: "ref.fa", referenceBundlePath: nil,
+            haplotypeDefinitionPaths: [], defaultHaplotypeDefinitionID: nil,
+            metrics: .init(referenceCount: 0, haplotypeDefinitionCount: 0),
+            genotypeLocusDisplayOrder: ["MHC-F", "MHC-DQA1"], createdAt: "2026-09-09"
+        ), to: reference)
+        let manifest = makeResult(calls: []).manifest
+        let provenanceURL = root.appendingPathComponent(manifest.provenancePath)
+        try JSONSerialization.data(withJSONObject: ["argv": ["lungfish-cli", "fastq", "genotype-cohort", "--reference", reference.path]]).write(to: provenanceURL)
+        XCTAssertEqual(ONTGenotypeResultBundle.referenceGenotypeLocusDisplayOrder(manifest: manifest, in: root), ["MHC-F", "MHC-DQA"])
+        try Data("{}".utf8).write(to: provenanceURL)
+        XCTAssertNil(ONTGenotypeResultBundle.referenceGenotypeLocusDisplayOrder(manifest: manifest, in: root))
+    }
+
+    func testMiSeqUnknownControlLocusRemainsUnknown() {
+        XCTAssertEqual(makeCall(sample: "S1", genotype: "control|source_loci=Unknown", uniqueReads: 1).locusGroup, "Unknown")
+    }
+
+    func testNumericSortPrefixDoesNotTurnOpaqueControlsIntoMHCLoci() {
+        for name in ["16_A102", "16_AO101", "16_B101", "99_unknown"] {
+            XCTAssertEqual(makeCall(sample: "S1", genotype: name, uniqueReads: 1).locusGroup, "Unknown")
+        }
+        XCTAssertEqual(makeCall(sample: "S1", genotype: "05_M4_A1_031_01", uniqueReads: 1).locusGroup, "MHC-A")
+        XCTAssertEqual(makeCall(sample: "S1", genotype: "05_Mafa-A1*031:01", uniqueReads: 1).locusGroup, "MHC-A")
+    }
+
+    func testMiSeqReferenceUsesSourceLocusInsteadOfOpaqueTargetPrefix() {
+        let raw = "MCM_MHC_MiSeq_0025|source_loci=MHC-DQA1|haplotype_groups=MHC-DQ|alleles=Mafa-DQA1_01:04:01:01"
+        let call = makeCall(sample: "S1", genotype: raw, uniqueReads: 7)
+        XCTAssertEqual(call.locusGroup, "MHC-DQA1")
+        XCTAssertEqual(call.genotype, raw)
+    }
+
     func testNativeGenotypeMatrixContentRecognizesConventionalCalls() {
         let result = makeResult(calls: [
             makeCall(sample: "S1", genotype: "Mafa-A1*001:01", uniqueReads: 7),

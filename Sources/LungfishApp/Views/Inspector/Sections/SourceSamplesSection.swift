@@ -21,7 +21,7 @@ struct SourceSamplesSection: View {
         DisclosureGroup("Source Samples", isExpanded: $isExpanded) {
             if samples.isEmpty {
                 Text("No source samples recorded.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else {
@@ -33,7 +33,7 @@ struct SourceSamplesSection: View {
                 .padding(.top, 4)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     @ViewBuilder
@@ -43,12 +43,12 @@ struct SourceSamplesSection: View {
                 onNavigateToBundle?(bundleURL)
             }
             .buttonStyle(.link)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .frame(maxWidth: .infinity, alignment: .leading)
             .help("Navigate to \(bundleURL.lastPathComponent)")
         } else {
             Text(entry.sampleId)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

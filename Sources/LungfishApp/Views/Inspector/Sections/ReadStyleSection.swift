@@ -1076,7 +1076,7 @@ public struct AlignmentBundleSection: View {
                 alignmentSummary
                     .padding(.top, 4)
             }
-            .font(.headline)
+            .font(LungfishInspectorStyle.sectionTitleFont)
 
             if let provenance = viewModel.primerTrimProvenance {
                 Divider()
@@ -1084,7 +1084,7 @@ public struct AlignmentBundleSection: View {
                     primerTrimDerivationSection(provenance: provenance)
                         .padding(.top, 4)
                 }
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             }
 
             if !viewModel.readGroups.isEmpty {
@@ -1093,7 +1093,7 @@ public struct AlignmentBundleSection: View {
                     readGroupsSection
                         .padding(.top, 4)
                 }
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             }
 
             if !viewModel.flagStats.isEmpty {
@@ -1102,7 +1102,7 @@ public struct AlignmentBundleSection: View {
                     flagStatsSection
                         .padding(.top, 4)
                 }
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             }
 
             if viewModel.chromosomeStats.count > 1 {
@@ -1111,7 +1111,7 @@ public struct AlignmentBundleSection: View {
                     chromosomeStatsSection
                         .padding(.top, 4)
                 }
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             }
 
             if !viewModel.programRecords.isEmpty {
@@ -1120,7 +1120,7 @@ public struct AlignmentBundleSection: View {
                     programRecordsSection
                         .padding(.top, 4)
                 }
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             }
 
             if !derivedMetadataEntries.isEmpty {
@@ -1129,7 +1129,7 @@ public struct AlignmentBundleSection: View {
                     derivedMetadataSection
                         .padding(.top, 4)
                 }
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             }
 
             if !viewModel.provenanceRecords.isEmpty {
@@ -1138,7 +1138,7 @@ public struct AlignmentBundleSection: View {
                     provenanceSection
                         .padding(.top, 4)
                 }
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             }
         }
     }
@@ -1150,10 +1150,10 @@ public struct AlignmentBundleSection: View {
                 ForEach(viewModel.trackNames, id: \.self) { name in
                     HStack(alignment: .top, spacing: 6) {
                         Text("Track")
-                            .font(.caption2)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                         Text(name)
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -1221,15 +1221,15 @@ public struct AlignmentBundleSection: View {
             ForEach(viewModel.flagStats) { stat in
                 HStack {
                     Text(stat.category)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .lineLimit(1)
                     Spacer()
                     Text(formatCount(stat.qcPass))
-                        .font(.system(.caption, design: .monospaced))
+                        .font(LungfishInspectorStyle.controlFont.monospaced())
                         .foregroundStyle(.primary)
                     if stat.qcFail > 0 {
                         Text("(\(formatCount(stat.qcFail)) fail)")
-                            .font(.system(.caption, design: .monospaced))
+                            .font(LungfishInspectorStyle.controlFont.monospaced())
                             .foregroundStyle(Color.lungfishOrangeFallback)
                     }
                 }
@@ -1243,15 +1243,15 @@ public struct AlignmentBundleSection: View {
             ForEach(viewModel.chromosomeStats) { stat in
                 HStack {
                     Text(stat.chromosome)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(LungfishInspectorStyle.controlFont.monospaced())
                         .lineLimit(1)
                         .frame(width: 80, alignment: .leading)
                     Spacer()
                     Text(formatCount(stat.mappedReads))
-                        .font(.system(.caption, design: .monospaced))
+                        .font(LungfishInspectorStyle.controlFont.monospaced())
                         .frame(width: 60, alignment: .trailing)
                     Text("reads")
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1262,7 +1262,7 @@ public struct AlignmentBundleSection: View {
     private var programRecordsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Commands are collapsed by default. Click \"Show command\" to view the full invocation.")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             ForEach(Array(viewModel.programRecords.enumerated()), id: \.element.id) { index, pg in
@@ -1272,7 +1272,7 @@ public struct AlignmentBundleSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Text("Step \(step)")
-                            .font(.caption2)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                         Divider()
                             .frame(height: 10)
@@ -1280,7 +1280,7 @@ public struct AlignmentBundleSection: View {
                             .font(.system(.caption, design: .monospaced).bold())
                         if let name = pg.name {
                             Text("(\(name))")
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1302,11 +1302,11 @@ public struct AlignmentBundleSection: View {
                             }
                         }
                         .buttonStyle(.link)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
 
                         if isExpanded {
                             Text(cmdLine)
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(LungfishInspectorStyle.controlFont.monospaced())
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
@@ -1327,7 +1327,7 @@ public struct AlignmentBundleSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Text("Step \(prov.stepOrder)")
-                            .font(.caption2)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                         Divider()
                             .frame(height: 10)
@@ -1335,18 +1335,18 @@ public struct AlignmentBundleSection: View {
                             .font(.system(.caption, design: .monospaced).bold())
                         if let sub = prov.subcommand {
                             Text(sub)
-                                .font(.system(.caption, design: .monospaced))
+                                .font(LungfishInspectorStyle.controlFont.monospaced())
                                 .foregroundStyle(.secondary)
                         }
                         if let ver = prov.version {
                             Text("v\(ver)")
-                                .font(.caption2)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.tertiary)
                         }
                     }
                     if let ts = prov.timestamp {
                         Text(ts)
-                            .font(.caption2)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                     }
                     if let dur = prov.duration {
@@ -1361,11 +1361,11 @@ public struct AlignmentBundleSection: View {
                             }
                         }
                         .buttonStyle(.link)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
 
                         if isExpanded {
                             Text(prov.command)
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(LungfishInspectorStyle.controlFont.monospaced())
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
@@ -1385,7 +1385,7 @@ public struct AlignmentBundleSection: View {
                     Text(entry.key)
                         .font(.system(.caption, design: .monospaced).bold())
                     Text(entry.value)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1399,11 +1399,11 @@ public struct AlignmentBundleSection: View {
     private func statRow(_ label: String, value: String) -> some View {
         HStack {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Spacer()
             Text(value)
-                .font(.system(.caption, design: .monospaced))
+                .font(LungfishInspectorStyle.controlFont.monospaced())
         }
     }
 
@@ -1411,10 +1411,10 @@ public struct AlignmentBundleSection: View {
     private func inlineField(_ label: String, value: String) -> some View {
         HStack(spacing: 4) {
             Text("\(label):")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .textSelection(.enabled)
         }
     }
@@ -1463,11 +1463,11 @@ public struct AlignmentBundleSection: View {
     private func primerTrimCaptionLine(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 130, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
@@ -1509,12 +1509,12 @@ public struct ReadSelectionSection: View {
                     .padding(.top, 4)
             } else {
                 Text("Select a read in the viewer to inspect it here.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
             }
         }
-        .font(.headline)
+        .font(LungfishInspectorStyle.sectionTitleFont)
     }
 
     @ViewBuilder
@@ -1573,7 +1573,7 @@ public struct ReadSelectionSection: View {
                 let maxQ = read.qualities.max() ?? 0
                 Divider()
                 Text("Base Quality")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 statRow("Mean Q", value: String(format: "%.1f", meanQ))
                 statRow("Range", value: "Q\(minQ)-Q\(maxQ)")
@@ -1586,7 +1586,7 @@ public struct ReadSelectionSection: View {
             if !insertions.isEmpty {
                 Divider()
                 Text("Insertions (\(insertions.count))")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 ForEach(Array(insertions.prefix(5).enumerated()), id: \.offset) { _, item in
                     HStack {
@@ -1600,7 +1600,7 @@ public struct ReadSelectionSection: View {
                 }
                 if insertions.count > 5 {
                     Text("... and \(insertions.count - 5) more")
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1610,7 +1610,7 @@ public struct ReadSelectionSection: View {
     @ViewBuilder
     private func flagBadge(_ label: String, active: Bool) -> some View {
         Text(label)
-            .font(.system(size: 9))
+            .font(LungfishInspectorStyle.controlFont)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
             .background(active ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.1))
@@ -1622,11 +1622,11 @@ public struct ReadSelectionSection: View {
     private func statRow(_ label: String, value: String) -> some View {
         HStack {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Spacer()
             Text(value)
-                .font(.system(.caption, design: .monospaced))
+                .font(LungfishInspectorStyle.controlFont.monospaced())
         }
     }
 }
@@ -1649,18 +1649,18 @@ public struct AlignmentViewSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let capabilities = viewModel.classifierEvidenceCapabilities {
                     Text("Current alignment: \(capabilities.selectedTrack.name)")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 } else {
                 Text("Choose whether the viewer shows every alignment track together or just one alignment track at a time.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if viewModel.classifierEvidenceCapabilities == nil {
                 Text("Visible Alignment")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 Picker("Visible Alignment", selection: visibleAlignmentSelection) {
                     Text("All Alignments").tag(allAlignmentsSelectionID)
@@ -1672,7 +1672,7 @@ public struct AlignmentViewSection: View {
                 .disabled(viewModel.visibleAlignmentTrackOptions.isEmpty)
 
                 Text(visibleAlignmentSummary)
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1694,7 +1694,7 @@ public struct AlignmentViewSection: View {
                     }
 
                 Text("Coverage scale")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 Picker("Coverage scale", selection: $viewModel.coverageScaleMode) {
                     ForEach(CoverageScaleMode.allCases, id: \.self) { mode in
@@ -1709,7 +1709,7 @@ public struct AlignmentViewSection: View {
                 .help("Compresses the coverage axis so low-coverage regions stay visible next to high-coverage peaks. Display only; depth values are unchanged.")
 
                 Text("Read Inclusion")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
 
                 Toggle("Include duplicate-marked reads", isOn: $viewModel.showDuplicates)
@@ -1744,7 +1744,7 @@ public struct AlignmentViewSection: View {
     private var multipleSequenceAlignmentControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Coordinate Numbering")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             Picker("Numbering", selection: $viewModel.msaNumberingMode) {
@@ -1758,14 +1758,14 @@ public struct AlignmentViewSection: View {
             }
 
             Text(viewModel.msaNumberingMode.detailText)
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
             Text("Consensus")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             HStack {
@@ -1810,7 +1810,7 @@ public struct AlignmentViewSection: View {
             Divider()
 
             Text("Reference Differences")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             Picker("Reference", selection: Binding(
@@ -1835,7 +1835,7 @@ public struct AlignmentViewSection: View {
             }
 
             Text(viewModel.msaResidueIdentityDisplayMode.detailText)
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1845,7 +1845,7 @@ public struct AlignmentViewSection: View {
     private var readGroupControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Read Groups")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
 
             ForEach(viewModel.readGroups) { rg in
@@ -1871,10 +1871,10 @@ public struct AlignmentViewSection: View {
                 )) {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(rg.rgId)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(LungfishInspectorStyle.controlFont.monospaced())
                         if let sample = rg.sample {
                             Text(sample)
-                                .font(.caption2)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1918,7 +1918,7 @@ public struct ReadStyleSection: View {
         if viewModel.hasAlignmentTracks {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Control how reads are packed, labeled, and colored in the active alignment view.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1968,7 +1968,7 @@ public struct ReadStyleSection: View {
                     .help("When on, matching bases are shown as dots and mismatches as colored letters. When off, all bases are shown as letters. Mismatches remain highlighted.")
                 } else if let reason = viewModel.classifierEvidenceCapabilities?.referenceMismatchExplanation {
                     Text("Reference mismatch display is unavailable: \(reason)")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("classifier-reference-mismatch-unavailable")
                 }
@@ -2040,7 +2040,7 @@ public struct AnalysisSection: View {
         } else if viewModel.hasAlignmentTracks {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Run alignment analysis workflows, create derived outputs, and export bundle-ready results.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -2066,10 +2066,10 @@ public struct AnalysisSection: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text("No alignment tracks loaded.")
-                    .font(.callout)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 Text("Import a BAM or CRAM file before creating derived alignments or running BAM-based workflows.")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -2079,9 +2079,9 @@ public struct AnalysisSection: View {
     private func classifierEvidenceSection(_ capabilities: ClassifierAlignmentInspectorCapabilities) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Classifier alignment evidence")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             Text(capabilities.coveragePolicy)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             switch capabilities.availability(of: .consensus) {
@@ -2089,7 +2089,7 @@ public struct AnalysisSection: View {
                 consensusSection
             case .disabled(let reason), .hidden(let reason):
                 Text(reason)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -2099,19 +2099,19 @@ public struct AnalysisSection: View {
     private var filteringSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Creates new outputs in this bundle. The original alignment stays unchanged.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("After creating a filtered alignment, find it under Bundle > Alignment Tracks and compare it separately under View > Alignment.")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let latestDerivedAlignmentMessage = viewModel.latestDerivedAlignmentMessage,
                !latestDerivedAlignmentMessage.isEmpty {
                 Text(latestDerivedAlignmentMessage)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.primary)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2131,7 +2131,7 @@ public struct AnalysisSection: View {
                     ProgressView()
                         .scaleEffect(0.7)
                     Text("Running duplicate workflow...")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -2139,7 +2139,7 @@ public struct AnalysisSection: View {
             Divider()
 
             Text("Build a new alignment track from an existing BAM without changing the source track.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -2184,7 +2184,7 @@ public struct AnalysisSection: View {
                     Text("Minimum alignment confidence")
                     Spacer()
                     Text("MAPQ \(viewModel.alignmentFilterMinimumMAPQ)")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .frame(minWidth: 56, alignment: .trailing)
@@ -2202,7 +2202,7 @@ public struct AnalysisSection: View {
                     .labelsHidden()
                 }
                 Text("Uses SAM MAPQ. Set to 0 to keep every alignment confidence level.")
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
 
@@ -2228,7 +2228,7 @@ public struct AnalysisSection: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Minimum identity to reference (%)")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 TextField(
                     viewModel.alignmentFilterExactMatchOnly ? "Disabled while exact-match filtering is on" : "Leave blank to keep all",
@@ -2246,7 +2246,7 @@ public struct AnalysisSection: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Name for New Alignment")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 TextField(
                     "Filtered alignment name",
@@ -2280,14 +2280,14 @@ public struct AnalysisSection: View {
                     ProgressView()
                         .scaleEffect(0.7)
                     Text("Running BAM filter workflow...")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
 
             if let alignmentFilterValidationMessage, !alignmentFilterValidationMessage.isEmpty {
                 Text(alignmentFilterValidationMessage)
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(Color.lungfishDangerFallback)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2298,14 +2298,14 @@ public struct AnalysisSection: View {
     private var mappedReadsAnnotationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Create an annotation track from mapped BAM reads so read fields can be sorted and filtered in the annotation table.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let latestMappedReadsAnnotationMessage = viewModel.latestMappedReadsAnnotationMessage,
                !latestMappedReadsAnnotationMessage.isEmpty {
                 Text(latestMappedReadsAnnotationMessage)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.primary)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2369,7 +2369,7 @@ public struct AnalysisSection: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Name for Annotation Track")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 TextField(
                     "Annotation track name",
@@ -2386,7 +2386,7 @@ public struct AnalysisSection: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Annotation Track ID")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 TextField(
                     "annotation_track_id",
@@ -2420,14 +2420,14 @@ public struct AnalysisSection: View {
                     ProgressView()
                         .scaleEffect(0.7)
                     Text("Converting mapped reads...")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
 
             if let mappedReadsAnnotationValidationMessage, !mappedReadsAnnotationValidationMessage.isEmpty {
                 Text(mappedReadsAnnotationValidationMessage)
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(Color.lungfishDangerFallback)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2438,7 +2438,7 @@ public struct AnalysisSection: View {
     private var consensusSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Adjust consensus evidence settings here. Consensus controls are intentionally separate from View so display settings stay lighter.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -2535,7 +2535,7 @@ public struct AnalysisSection: View {
 
                 if let message = viewModel.consensusExtractionAvailabilityMessage {
                     Text(message)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -2546,18 +2546,18 @@ public struct AnalysisSection: View {
     private var primerTrimSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Trim amplicon primers from the alignment before variant calling.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if viewModel.hasVariantCallableAlignmentTracks {
                 Text("Required for iVar variant calling on amplicon-sequenced BAMs; recommended for any amplicon panel.")
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Primer trim is unavailable until this bundle includes an eligible alignment track.")
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2573,18 +2573,18 @@ public struct AnalysisSection: View {
     private var variantCallingSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Call variants from the currently loaded alignment evidence.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if viewModel.hasVariantCallableAlignmentTracks {
                 Text("Use this when you want site-by-site differences summarized as variant calls rather than read-level evidence.")
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Variant calling is unavailable until this bundle includes an eligible alignment track.")
-                    .font(.caption2)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2600,12 +2600,12 @@ public struct AnalysisSection: View {
     private var exportSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Create bundle-level outputs that preserve the original source alignment.")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("Use export when you want a separate deliverable, not just another visible alignment inside the current bundle.")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -2630,14 +2630,15 @@ private struct AnalysisSubsectionGrid: View {
     }
 }
 
+@MainActor
 @ViewBuilder
 private func inspectorEmptyState(title: String, detail: String) -> some View {
     VStack(alignment: .leading, spacing: 6) {
         Text(title)
-            .font(.callout)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.secondary)
         Text(detail)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.tertiary)
     }
 }

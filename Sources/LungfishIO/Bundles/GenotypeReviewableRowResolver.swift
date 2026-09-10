@@ -81,7 +81,7 @@ public struct GenotypeReviewableRowResolver: Sendable {
             throw ResolutionError.sampleOutsideRoster(sample)
         }
         let locus = GenotypeHaplotypeLocusResolver.canonicalLocusName(rawLocus)
-        guard locus != "Unknown" else {
+        guard locus != "Unknown" || stableID == nil else {
             throw ResolutionError.invalidTargetIdentity
         }
 

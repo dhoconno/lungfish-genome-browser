@@ -1634,7 +1634,7 @@ final class GenotypeResultViewportSelectionAndComparisonTests: GenotypeResultVie
     }
 
 
-    func testWeakHaplotypeSlotIsTintedBelowFivePercent() throws {
+    func testAssignedHaplotypeStaysSolidBelowFivePercent() throws {
         let controller = GenotypeResultViewController()
         _ = controller.view
         let calls = [
@@ -1654,30 +1654,23 @@ final class GenotypeResultViewportSelectionAndComparisonTests: GenotypeResultVie
 
         let slot = try XCTUnwrap(controller.testingOutlineSlots(sample: "DW472").first { $0.locus == "MHC-B" })
 
-        XCTAssertFalse(slot.h1.testingIsWeakSupport)
-        XCTAssertTrue(slot.h2.testingIsWeakSupport)
+        XCTAssertTrue(slot.h1.testingIsAssignedReference)
+        XCTAssertTrue(slot.h2.testingIsAssignedReference)
     }
 
 
-    func testWeakHaplotypeTintUsesSameColorAtHalfOpacity() throws {
+    func testAssignedHaplotypeUsesOpaqueColor() throws {
         let view = GenotypeHaplotypeTapeView(frame: NSRect(x: 0, y: 0, width: 120, height: 40))
         view.appearance = NSAppearance(named: .aqua)
         let tokenIndex = HaplotypeColorToken.assigned(forName: "M2B").canonicalIndex
-        let referenceColor = try XCTUnwrap(
+        let color = try XCTUnwrap(
             view.testingFillColor(for: .reference(tokenIndex: tokenIndex, label: "M2B"))?.testingSRGBComponents
         )
-        let weakColor = try XCTUnwrap(
-            view.testingFillColor(for: .weakReference(tokenIndex: tokenIndex, label: "M2B"))?.testingSRGBComponents
-        )
-
-        XCTAssertEqual(weakColor.red, referenceColor.red, accuracy: 0.001)
-        XCTAssertEqual(weakColor.green, referenceColor.green, accuracy: 0.001)
-        XCTAssertEqual(weakColor.blue, referenceColor.blue, accuracy: 0.001)
-        XCTAssertEqual(weakColor.alpha, 0.5, accuracy: 0.001)
+        XCTAssertEqual(color.alpha, 1, accuracy: 0.001)
     }
 
 
-    func testWeakHaplotypeSlotIsTintedBelowFiveReads() throws {
+    func testAssignedHaplotypeStaysSolidBelowFiveReads() throws {
         let controller = GenotypeResultViewController()
         _ = controller.view
         let calls = [
@@ -1697,8 +1690,8 @@ final class GenotypeResultViewportSelectionAndComparisonTests: GenotypeResultVie
 
         let slot = try XCTUnwrap(controller.testingOutlineSlots(sample: "DW472").first { $0.locus == "MHC-B" })
 
-        XCTAssertFalse(slot.h1.testingIsWeakSupport)
-        XCTAssertTrue(slot.h2.testingIsWeakSupport)
+        XCTAssertTrue(slot.h1.testingIsAssignedReference)
+        XCTAssertTrue(slot.h2.testingIsAssignedReference)
     }
 
 
@@ -1742,8 +1735,8 @@ final class GenotypeResultViewportSelectionAndComparisonTests: GenotypeResultVie
 
         let slot = try XCTUnwrap(controller.testingOutlineSlots(sample: "DW472").first { $0.locus == "MHC-B" })
 
-        XCTAssertFalse(slot.h1.testingIsWeakSupport)
-        XCTAssertFalse(slot.h2.testingIsWeakSupport)
+        XCTAssertTrue(slot.h1.testingIsAssignedReference)
+        XCTAssertTrue(slot.h2.testingIsAssignedReference)
     }
 
 

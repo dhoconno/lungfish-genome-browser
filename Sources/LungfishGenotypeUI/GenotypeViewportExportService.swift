@@ -344,7 +344,8 @@ enum GenotypeViewProjectionSerializer {
                 }
             }
             return GenotypeViewProjectionRow(
-                label: row.genotype,
+                label: row.displayName,
+                rawGenotype: row.genotype,
                 locus: row.locus,
                 stableClusterID: row.stableClusterID,
                 cells: cells,
@@ -356,7 +357,13 @@ enum GenotypeViewProjectionSerializer {
             lens: snapshot.lens,
             sampleColumns: columns,
             rows: rows,
-            cellColorMode: snapshot.filters["cellColorMode"]
+            cellColorMode: snapshot.filters["cellColorMode"],
+            genotypeLocusDisplayOrder: snapshot.filters["genotypeLocusDisplayOrder"].flatMap {
+                $0.isEmpty ? nil : $0.split(separator: ",").map(String.init)
+            },
+            genotypeNumericPrefixOrder: snapshot.filters["genotypeNumericPrefixOrder"].flatMap { Bool($0) },
+            diagnosticAllelesOnly: snapshot.filters["diagnosticAllelesOnly"].flatMap { Bool($0) },
+            includeTotalReads: snapshot.filters["includeTotalReads"].flatMap { Bool($0) }
         )
     }
 

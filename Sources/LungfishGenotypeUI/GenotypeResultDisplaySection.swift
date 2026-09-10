@@ -54,6 +54,12 @@ public final class GenotypeResultDisplaySectionViewModel {
     public var mhcCandidateControlsAvailable = false
     public var mhcCandidateIntegrityWarnings: [String] = []
     public var mhcCandidatePersistenceWarning: String?
+    public var locusDisplayOrderAvailable = false
+    public var locusDisplayOrderCanEdit = true
+    public var locusDisplayOrderDraft = ""
+    public var locusDisplayOrderValidationError: String?
+    public var locusDisplayOrderPersistenceWarning: String?
+    public private(set) var bundleLocusDisplayOrder: [String]?
     public private(set) var presentationPolicy:
         GenotypeResultPresentationPolicy?
     public var presentationChoices:
@@ -233,6 +239,7 @@ public final class GenotypeResultDisplaySectionViewModel {
         self.isGenotypeOnlyResult = isGenotypeOnlyResult
         matrixVisibilityCapability = .empty
         setNormalizedDisplayState(state)
+        synchronizeLocusDisplayOrderDraft()
         synchronizeNumericFilterDrafts()
         updateSelection(nil)
     }
@@ -246,12 +253,18 @@ public final class GenotypeResultDisplaySectionViewModel {
     public func updateDisplayState(_ state: GenotypeResultDisplayState) {
         cancelPendingNumericFilterCommit()
         setNormalizedDisplayState(state)
+        synchronizeLocusDisplayOrderDraft()
         synchronizeNumericFilterDrafts()
     }
 
     public func clear() {
         cancelPendingNumericFilterCommit()
         isAvailable = false
+        locusDisplayOrderAvailable = false
+        bundleLocusDisplayOrder = nil
+        locusDisplayOrderDraft = ""
+        locusDisplayOrderValidationError = nil
+        locusDisplayOrderPersistenceWarning = nil
         displayState = GenotypeResultDisplayState()
         synchronizeNumericFilterDrafts()
         visibleRowCount = 0
@@ -275,6 +288,12 @@ public final class GenotypeResultDisplaySectionViewModel {
     }
 
     public func updateMHCCandidatePresentation(from result: ONTGenotypeResultBundleData) {
+        bundleLocusDisplayOrder = result.genotypeLocusDisplayOrder
+        locusDisplayOrderAvailable = bundleLocusDisplayOrder != nil
+            || result.manifest.kind == "full-length-ont-mhc-genotype"
+            || result.calls.contains { !MHCReferenceGenotypeDisplay.alleleNames(for: $0.genotype).isEmpty }
+        locusDisplayOrderCanEdit = FileManager.default.isWritableFile(atPath: result.bundleURL.path)
+        synchronizeLocusDisplayOrderDraft()
         presentationPolicy = GenotypeResultPresentationPolicy(
             legacyBundleKind: result.manifest.kind,
             legacyWorkflowDeclarationsAbsent:
@@ -309,6 +328,40 @@ public final class GenotypeResultDisplaySectionViewModel {
         if !isFullLengthMHCResult {
             mhcCandidatePersistenceWarning = nil
         }
+    }
+
+    public var locusDisplayOrderStatus: String {
+        if displayState.genotypeLocusDisplayOrder != nil { return "Using the saved order for this result." }
+        if bundleLocusDisplayOrder != nil { return "Using the bundle default." }
+        return "No bundle default. Apply saves the suggested order below."
+    }
+
+    private func synchronizeLocusDisplayOrderDraft() {
+        let order = displayState.genotypeLocusDisplayOrder
+            ?? bundleLocusDisplayOrder ?? MHCAlleleDisplayOrder.miseqLocusDisplayOrder
+        locusDisplayOrderDraft = order.map { $0.replacingOccurrences(of: "MHC-", with: "") }.joined(separator: ", ")
+        locusDisplayOrderValidationError = nil
+    }
+
+    public func applyLocusDisplayOrderDraft() {
+        do {
+            let tokens = locusDisplayOrderDraft.split(whereSeparator: { $0 == "," || $0 == "\n" }).map(String.init)
+            displayState.genotypeLocusDisplayOrder = try MHCAlleleDisplayOrder.validatedLocusDisplayOrder(tokens)
+            synchronizeLocusDisplayOrderDraft()
+            notifyStateChanged()
+        } catch {
+            locusDisplayOrderValidationError = error.localizedDescription
+        }
+    }
+
+    public func resetLocusDisplayOrder() {
+        displayState.genotypeLocusDisplayOrder = nil
+        synchronizeLocusDisplayOrderDraft()
+        notifyStateChanged()
+    }
+
+    public func updateLocusDisplayOrderPersistenceWarning(_ warning: String?) {
+        locusDisplayOrderPersistenceWarning = warning
     }
 
     public func setMHCCandidateVisibility(
@@ -541,6 +594,11 @@ public final class GenotypeResultDisplaySectionViewModel {
 
     func setSupportDenominator(_ denominator: ONTGenotypeSupportDenominator) {
         displayState.supportDenominator = denominator
+        notifyStateChanged()
+    }
+
+    public func setDiagnosticAllelesOnly(_ enabled: Bool) {
+        displayState.diagnosticAllelesOnly = enabled
         notifyStateChanged()
     }
 
@@ -1203,6 +1261,10 @@ private struct GenotypeNumericFilterStepper: NSViewRepresentable {
 }
 
 public struct GenotypeResultDisplaySection: View {
+    private var typography: ContentTypographyModel { .shared }
+    @AppStorage(GenotypeOutlineView.densityPreferenceKey) private var compactHaplotypeRows = false
+    @State private var showsReviewHelp = false
+    @State private var showsAdvancedDisplay = false
     @Bindable var viewModel: GenotypeResultDisplaySectionViewModel
     @FocusState private var focusedNumericFilter: NumericFilterFocus?
 
@@ -1219,8 +1281,20 @@ public struct GenotypeResultDisplaySection: View {
         if viewModel.isAvailable {
             DisclosureGroup(isExpanded: $viewModel.isExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
+                    reviewHelp
                     summary
                     contentTextSizeControls
+                    if viewModel.hasHaplotypingResult {
+                        Picker("Haplotype spacing", selection: $compactHaplotypeRows) {
+                            Text("Comfortable").tag(false)
+                            Text("Compact").tag(true)
+                        }
+                        .pickerStyle(.menu)
+                        .help("Comfortable spacing gives each assignment a larger target. Both modes follow Content Text Size.")
+                        .onChange(of: compactHaplotypeRows) { _, _ in
+                            NotificationCenter.default.post(name: GenotypeOutlineView.densityChanged, object: nil)
+                        }
+                    }
                     if viewModel.mhcCandidateControlsAvailable
                         || !viewModel.mhcCandidateIntegrityWarnings.isEmpty
                         || viewModel.mhcCandidatePersistenceWarning != nil {
@@ -1233,16 +1307,22 @@ public struct GenotypeResultDisplaySection: View {
                     Divider()
                     if viewModel.showsViewportAndLayoutControls {
                         viewControls
-                        layoutControls
+                    }
+                    if viewModel.hasHaplotypingResult {
+                        diagnosticAlleleControls
                     }
                     thresholdGuidance
                     matrixFilterControls
+                    DisclosureGroup("Layout and locus order", isExpanded: $showsAdvancedDisplay) {
+                        if viewModel.showsViewportAndLayoutControls { layoutControls }
+                        if viewModel.locusDisplayOrderAvailable { locusDisplayOrderControls }
+                    }
                     matrixVisibilityControls
                     colorControls
                     highlightControls
                     Text("Visual filters do not change genotype calls.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(typography.font(for: .body))
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if viewModel.canExportFilteredPivot {
                         Divider()
@@ -1250,9 +1330,10 @@ public struct GenotypeResultDisplaySection: View {
                     }
                 }
                 .padding(.top, 4)
+                .font(typography.font(for: .body))
             } label: {
                 Label("Genotype Display", systemImage: "tablecells")
-                    .font(.headline)
+                    .font(typography.font(for: .emphasizedBody))
             }
             .onChange(of: focusedNumericFilter) { oldValue, newValue in
                 guard oldValue != newValue else { return }
@@ -1268,19 +1349,86 @@ public struct GenotypeResultDisplaySection: View {
         }
     }
 
+    private var reviewHelp: some View {
+        Button("How to review this result", systemImage: "questionmark.circle") {
+            showsReviewHelp = true
+        }
+        .help("Learn how allele observations support haplotype assignments.")
+        .accessibilityIdentifier("genotype-review-help")
+        .popover(isPresented: $showsReviewHelp) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Review a genotype result").font(typography.font(for: .emphasizedBody))
+                    if viewModel.hasHaplotypingResult {
+                        Text("Haplotype Calls shows assignments inferred from allele evidence. Select a call to inspect its support.")
+                    }
+                    Text("Genotype Matrix compares allele read support across samples. Slash-separated names can represent alleles the assay cannot distinguish.")
+                    if viewModel.hasHaplotypingResult { Text("Diagnostic alleles only shows evidence used by the active definitions. Turn it off to inspect all observed alleles. Display filters do not change calls.") }
+                    Text("Use Columns to choose the identifiers and read totals you need. Total reads includes all samples in the result, even hidden columns.")
+                    if viewModel.hasHaplotypingResult { Text("To correct an assignment, inspect its evidence and choose Change. Custom names require a rationale, acknowledgement and explicit application; the original call remains in the audit history.") }
+                    Text("Update the current workbook to include saved review changes. Filtered exports are copies; edits in Excel do not flow back into this result.")
+                    Button("Done") { showsReviewHelp = false }.keyboardShortcut(.cancelAction)
+                }
+                .font(typography.font(for: .body))
+                .textSelection(.enabled)
+                .padding(20)
+            }
+            .frame(width: 420, height: 480)
+        }
+    }
+
+    private var locusDisplayOrderControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Locus display order")
+                .font(typography.font(for: .body))
+                .foregroundStyle(.secondary)
+            Text(viewModel.locusDisplayOrderStatus)
+                .font(typography.font(for: .body))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("F, G, AG, A1, A2/A3/A4/A5, K, L, E, B, DRB, DQA, DQB, DPA, DPB",
+                      text: $viewModel.locusDisplayOrderDraft, axis: .vertical)
+                .lineLimit(3...6)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Locus display order")
+                .accessibilityHint("Separate ordered loci with commas. A slash groups loci together.")
+                .accessibilityIdentifier("genotype-locus-display-order")
+                .disabled(!viewModel.locusDisplayOrderCanEdit)
+            HStack {
+                Button("Apply") { viewModel.applyLocusDisplayOrderDraft() }
+                    .accessibilityIdentifier("genotype-locus-display-order-apply")
+                Button("Use Bundle Default") { viewModel.resetLocusDisplayOrder() }
+                    .accessibilityIdentifier("genotype-locus-display-order-reset")
+            }
+            .controlSize(.regular)
+            .disabled(!viewModel.locusDisplayOrderCanEdit)
+            Text("Changes row order only.")
+                .help("Commas separate groups; / joins loci. Unlisted loci appear afterward. Included Loci and haplotype calls stay unchanged.")
+                .font(typography.font(for: .body))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = viewModel.locusDisplayOrderValidationError ?? viewModel.locusDisplayOrderPersistenceWarning {
+                Text(error).font(typography.font(for: .body)).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("genotype-locus-display-order-error")
+            }
+        }
+    }
+
     private var exportControls: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Export")
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             Button("Filtered Pivot\u{2026}") {
                 viewModel.requestFilteredPivotExport()
             }
-            .controlSize(.small)
+            .controlSize(.regular)
             .accessibilityIdentifier("genotype-inspector-export-filtered-pivot")
-            Text("Writes a copy of the result workbook whose pivot sheet has the Min Reads and Min Percent filters above applied. Every other sheet is unchanged. The copy is a one-way export: edits made to it in Excel do not flow back into this result.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            Text("Exports a filtered copy. Excel edits do not flow back into this result.")
+                .help("The pivot sheet uses the displayed Min Reads and Min Percent filters. Other workbook sheets are unchanged.")
+                .font(typography.font(for: .body))
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityIdentifier("genotype-inspector-export")
@@ -1289,7 +1437,7 @@ public struct GenotypeResultDisplaySection: View {
     private var contentTextSizeControls: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Content Text Size")
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button("A−") {
@@ -1320,7 +1468,7 @@ public struct GenotypeResultDisplaySection: View {
                 .accessibilityIdentifier("genotype-view-content-text-size-default")
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
+            .controlSize(.regular)
         }
     }
 
@@ -1338,7 +1486,7 @@ public struct GenotypeResultDisplaySection: View {
             )
         }
         .buttonStyle(.borderless)
-        .controlSize(.small)
+        .controlSize(.regular)
     }
 
     private var summary: some View {
@@ -1346,7 +1494,7 @@ public struct GenotypeResultDisplaySection: View {
             LabeledContent("Rows", value: "\(viewModel.visibleRowCount) of \(viewModel.totalRowCount)")
             LabeledContent("Hidden Cells", value: "\(viewModel.hiddenCellCount)")
         }
-        .font(.callout)
+        .font(typography.font(for: .body))
     }
 
     private var viewControls: some View {
@@ -1356,7 +1504,7 @@ public struct GenotypeResultDisplaySection: View {
                     ? "Viewport"
                     : "View Presentation"
             )
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             if viewModel.presentationChoices.isEmpty {
                 Picker("Viewport", selection: Binding(
@@ -1369,7 +1517,7 @@ public struct GenotypeResultDisplaySection: View {
                     }
                 }
                 .pickerStyle(.radioGroup)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .labelsHidden()
             } else {
                 Picker("View Presentation", selection: Binding(
@@ -1383,7 +1531,7 @@ public struct GenotypeResultDisplaySection: View {
                     }
                 }
                 .pickerStyle(.radioGroup)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .labelsHidden()
                 .accessibilityHint(
                     viewModel.presentationAccessibilityHelp
@@ -1395,7 +1543,7 @@ public struct GenotypeResultDisplaySection: View {
     private var layoutControls: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Panel Layout")
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             Picker("Layout", selection: Binding(
                 get: { viewModel.displayState.layout },
@@ -1409,7 +1557,7 @@ public struct GenotypeResultDisplaySection: View {
                     .tag(GenotypeResultPanelLayout.listTop)
             }
             .pickerStyle(.radioGroup)
-            .controlSize(.small)
+            .controlSize(.regular)
             .labelsHidden()
         }
     }
@@ -1417,15 +1565,13 @@ public struct GenotypeResultDisplaySection: View {
     private var thresholdGuidance: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Run and Calling Thresholds")
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             Text(
-                "Genotype calls and haplotype thresholds are fixed by the completed run. "
-                    + "Re-run the original genotyping workflow to change them. "
-                    + "The editable search and support filters below affect only this view."
+                "Display filters do not change calls. Re-run the analysis to change calling thresholds."
             )
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(typography.font(for: .body))
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1433,20 +1579,20 @@ public struct GenotypeResultDisplaySection: View {
     private var matrixFilterControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Search and Support Filters")
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             TextField("Alleles", text: Binding(
                 get: { viewModel.displayState.matrixRowFilterText },
                 set: { viewModel.setMatrixRowFilterText($0) }
             ))
             .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
+            .controlSize(.regular)
             TextField("Samples", text: Binding(
                 get: { viewModel.displayState.matrixSampleFilterText },
                 set: { viewModel.setMatrixSampleFilterText($0) }
             ))
             .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
+            .controlSize(.regular)
             HStack(spacing: 6) {
                 Text(
                     viewModel.matrixMinimumReadsDraft.configuration.label
@@ -1465,8 +1611,8 @@ public struct GenotypeResultDisplaySection: View {
                 )
                 .multilineTextAlignment(.trailing)
                 .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .frame(width: 88)
+                .controlSize(.regular)
+                .frame(minWidth: 88, idealWidth: 112)
                 .focused($focusedNumericFilter, equals: .minimumReads)
                 .onSubmit {
                     viewModel.commitMatrixMinimumReadsDraft()
@@ -1500,7 +1646,7 @@ public struct GenotypeResultDisplaySection: View {
                     }
                 )
                 .labelsHidden()
-                .controlSize(.small)
+                .controlSize(.regular)
             }
             HStack(spacing: 6) {
                 Text(
@@ -1520,8 +1666,8 @@ public struct GenotypeResultDisplaySection: View {
                 )
                 .multilineTextAlignment(.trailing)
                 .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .frame(width: 88)
+                .controlSize(.regular)
+                .frame(minWidth: 88, idealWidth: 112)
                 .focused($focusedNumericFilter, equals: .minimumPercent)
                 .onSubmit {
                     viewModel.commitMatrixMinimumPercentDraft()
@@ -1558,11 +1704,11 @@ public struct GenotypeResultDisplaySection: View {
                     }
                 )
                 .labelsHidden()
-                .controlSize(.small)
+                .controlSize(.regular)
             }
             Text("0 = Off.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(typography.font(for: .body))
+                .foregroundStyle(.secondary)
             Picker("Percent Basis", selection: Binding(
                 get: { viewModel.displayState.matrixPercentDenominator },
                 set: { viewModel.setMatrixPercentDenominator($0) }
@@ -1572,20 +1718,20 @@ public struct GenotypeResultDisplaySection: View {
                 }
             }
             .pickerStyle(.segmented)
-            .controlSize(.small)
+            .controlSize(.regular)
         }
     }
 
     private var matrixVisibilityControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Selected Rows and Columns")
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             Text(viewModel.matrixVisibilityScopeSummary)
-                .font(.callout)
+                .font(typography.font(for: .body))
                 .accessibilityIdentifier("genotype-view-visibility-scope")
             Text(viewModel.matrixVisibilityStatus)
-                .font(.caption2)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("genotype-view-visibility-status")
@@ -1594,8 +1740,8 @@ public struct GenotypeResultDisplaySection: View {
                     + "Visibility actions use the selection. Search and support filters always "
                     + "apply to the currently visible matrix."
             )
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+            .font(typography.font(for: .body))
+            .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("genotype-view-visibility-guidance")
             HStack(spacing: 8) {
@@ -1639,7 +1785,7 @@ public struct GenotypeResultDisplaySection: View {
                 }
                 .accessibilityIdentifier("genotype-view-column-visibility-menu")
             }
-            .controlSize(.small)
+            .controlSize(.regular)
 
             Button {
                 viewModel.resetMatrixVisibility()
@@ -1647,28 +1793,51 @@ public struct GenotypeResultDisplaySection: View {
                 Label("Reset Visibility", systemImage: "arrow.counterclockwise")
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
+            .controlSize(.regular)
             .disabled(!viewModel.canResetMatrixVisibility)
             .accessibilityIdentifier("genotype-view-reset-visibility")
         }
         .accessibilityIdentifier("genotype-view-visibility-group")
     }
 
+    private var diagnosticAlleleControls: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Diagnostic alleles only", isOn: Binding(
+                get: { viewModel.displayState.diagnosticAllelesOnly },
+                set: { viewModel.setDiagnosticAllelesOnly($0) }
+            ))
+            .accessibilityIdentifier("genotype-display-diagnostic-alleles-only")
+            Text(viewModel.displayState.diagnosticAllelesOnly ? "Showing diagnostic evidence" : "Showing all observed alleles")
+                .help("Diagnostic alleles come from all active haplotype definitions, including unresolved calls. This filters Haplotype Calls evidence and Genotype Matrix without changing assignments.")
+                .font(typography.font(for: .body))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var colorControls: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Cell Color")
-                .font(.caption)
+                .font(typography.font(for: .body))
                 .foregroundStyle(.secondary)
             Picker("Cell Color", selection: Binding(
                 get: { viewModel.displayState.cellColorMode },
                 set: { viewModel.setCellColorMode($0) }
             )) {
-                ForEach(GenotypeResultCellColorMode.allCases, id: \.self) { mode in
+                ForEach(GenotypeResultCellColorMode.allCases.filter { $0 != .haplotype || viewModel.hasHaplotypingResult }, id: \.self) { mode in
                     Text(mode.displayName).tag(mode)
                 }
             }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
+            .pickerStyle(.menu)
+            .controlSize(.regular)
+            if viewModel.displayState.cellColorMode == .haplotype {
+                Text("Shared support: gray · Unmatched: neutral")
+                    .help("Colors identify support for displayed haplotype calls using the active definitions. Inspect a cell for its supporting haplotypes.")
+                    .font(typography.font(for: .body))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("genotype-display-haplotype-color-legend")
+            }
         }
     }
 
@@ -1677,11 +1846,11 @@ public struct GenotypeResultDisplaySection: View {
         if let target = viewModel.genotypeResultSelection?.highlightTarget {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Selected Highlight")
-                    .font(.caption)
+                    .font(typography.font(for: .body))
                     .foregroundStyle(.secondary)
 
                 valueRow(label: "Target", value: target.sample.map { "\(target.locus) / \($0)" } ?? target.locus)
-                    .font(.caption)
+                    .font(typography.font(for: .body))
 
                 Picker("Target Scope", selection: $viewModel.genotypeHighlightScope) {
                     if target.sample != nil {
@@ -1691,7 +1860,7 @@ public struct GenotypeResultDisplaySection: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .controlSize(.small)
+                .controlSize(.regular)
 
                 Picker("Color Target", selection: Binding(
                     get: { viewModel.genotypeHighlightChannel },
@@ -1703,7 +1872,7 @@ public struct GenotypeResultDisplaySection: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .controlSize(.small)
+                .controlSize(.regular)
 
                 HStack(spacing: 10) {
                     ContinuousColorWell(
@@ -1712,7 +1881,7 @@ public struct GenotypeResultDisplaySection: View {
                     )
                     .frame(width: 44, height: 24)
                     Text(viewModel.genotypeHighlightChannel == .fill ? "Cell Fill" : "Outer Border")
-                        .font(.caption)
+                        .font(typography.font(for: .body))
                         .foregroundStyle(.secondary)
                 }
 
@@ -1723,7 +1892,7 @@ public struct GenotypeResultDisplaySection: View {
                         Label("Clear Fill", systemImage: "xmark.circle")
                     }
                     .buttonStyle(.borderless)
-                    .controlSize(.small)
+                    .controlSize(.regular)
 
                     Button {
                         viewModel.clearGenotypeHighlight(.border)
@@ -1731,7 +1900,7 @@ public struct GenotypeResultDisplaySection: View {
                         Label("Clear Border", systemImage: "square.dashed")
                     }
                     .buttonStyle(.borderless)
-                    .controlSize(.small)
+                    .controlSize(.regular)
                 }
 
                 Button {
@@ -1740,7 +1909,7 @@ public struct GenotypeResultDisplaySection: View {
                     Label("Revert to Default", systemImage: "arrow.uturn.backward.circle")
                 }
                 .buttonStyle(.borderless)
-                .controlSize(.small)
+                .controlSize(.regular)
             }
         }
     }

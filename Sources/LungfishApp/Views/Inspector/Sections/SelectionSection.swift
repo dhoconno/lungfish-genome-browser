@@ -785,7 +785,7 @@ public struct SelectionSection: View {
             }
         } label: {
             Text("Selection")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -796,11 +796,11 @@ public struct SelectionSection: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(selection.title)
-                    .font(.callout.weight(.semibold))
+                    .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                     .textSelection(.enabled)
                 if let subtitle = selection.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
@@ -811,7 +811,7 @@ public struct SelectionSection: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(selection.detailRows.enumerated()), id: \.offset) { _, row in
                     LabeledContent(row.0, value: row.1)
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                 }
             }
 
@@ -843,11 +843,11 @@ public struct SelectionSection: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(selection.title)
-                    .font(.callout.weight(.semibold))
+                    .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                     .textSelection(.enabled)
                 if let subtitle = selection.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
@@ -858,7 +858,7 @@ public struct SelectionSection: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(selection.detailRows.enumerated()), id: \.offset) { _, row in
                     LabeledContent(row.0, value: row.1)
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                 }
             }
         }
@@ -872,11 +872,11 @@ public struct SelectionSection: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(selection.title)
-                    .font(.callout.weight(.semibold))
+                    .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                     .textSelection(.enabled)
                 if let subtitle = selection.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
@@ -887,7 +887,7 @@ public struct SelectionSection: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(selection.detailRows.enumerated()), id: \.offset) { _, row in
                     LabeledContent(row.0, value: row.1)
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                 }
             }
 
@@ -911,11 +911,11 @@ public struct SelectionSection: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(selection.title)
-                    .font(.callout.weight(.semibold))
+                    .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                     .textSelection(.enabled)
                 if let subtitle = selection.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
@@ -926,7 +926,7 @@ public struct SelectionSection: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(selection.detailRows.enumerated()), id: \.offset) { _, row in
                     LabeledContent(row.0, value: row.1)
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                 }
             }
 
@@ -960,7 +960,7 @@ public struct SelectionSection: View {
                 .foregroundStyle(.secondary)
 
             InspectorValueRow(label: "Target", value: target.sample.map { "\(target.locus) / \($0)" } ?? target.locus)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
 
             Picker("Target Scope", selection: $viewModel.genotypeHighlightScope) {
                 if target.sample != nil {
@@ -991,7 +991,7 @@ public struct SelectionSection: View {
                 )
                 .frame(width: 44, height: 24)
                 Text(viewModel.genotypeHighlightChannel == .fill ? "Cell Fill" : "Outer Border")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
 
@@ -1022,7 +1022,7 @@ public struct SelectionSection: View {
             .controlSize(.small)
 
             Text("Viewport-only review color. It is not saved into the scientific bundle.")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1101,7 +1101,7 @@ public struct SelectionSection: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 TextEditor(text: $viewModel.notes)
-                    .font(.body)
+                    .font(LungfishInspectorStyle.controlFont)
                     .frame(minHeight: 60, maxHeight: 100)
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
@@ -1138,7 +1138,7 @@ public struct SelectionSection: View {
                         LabeledContent("Intervals", value: "\(annotation.intervals.count)")
                     }
                 }
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
 
                 // Qualifier details (from GFF3 / GenBank / SQLite)
                 if !viewModel.qualifierPairs.isEmpty || !viewModel.dbxrefLinks.isEmpty {
@@ -1154,12 +1154,12 @@ public struct SelectionSection: View {
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                     Text(pair.value)
-                                        .font(.callout)
+                                        .font(LungfishInspectorStyle.controlFont)
                                         .textSelection(.enabled)
                                 }
                             } else {
                                 LabeledContent(pair.key, value: pair.value)
-                                    .font(.callout)
+                                    .font(LungfishInspectorStyle.controlFont)
                             }
                         }
 
@@ -1177,9 +1177,9 @@ public struct SelectionSection: View {
                                                     .foregroundStyle(.secondary)
                                                 Text(link.id)
                                                 Image(systemName: "arrow.up.right.square")
-                                                    .font(.caption2)
+                                                    .font(LungfishInspectorStyle.controlFont)
                                             }
-                                            .font(.callout)
+                                            .font(LungfishInspectorStyle.controlFont)
                                         }
                                     } else {
                                         HStack(spacing: 4) {
@@ -1189,7 +1189,7 @@ public struct SelectionSection: View {
                                                 Text(link.id)
                                             }
                                         }
-                                        .font(.callout)
+                                        .font(LungfishInspectorStyle.controlFont)
                                         .textSelection(.enabled)
                                     }
                                 }
@@ -1245,10 +1245,10 @@ public struct SelectionSection: View {
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text("No Selection")
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text("Select an annotation to edit its properties")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
 
@@ -1353,7 +1353,7 @@ public struct SelectionSection: View {
                     // Full amino acid sequence, scrollable and selectable
                     ScrollView {
                         Text(translation)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(LungfishInspectorStyle.controlFont.monospaced())
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -1386,7 +1386,7 @@ public struct SelectionSection: View {
                     .controlSize(.small)
                 } else {
                     Text("No stored translation")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
 

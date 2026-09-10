@@ -241,7 +241,7 @@ public struct AnnotationSection: View {
             .padding(.top, 8)
         } label: {
             Text("Annotation Style")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -309,10 +309,10 @@ public struct AnnotationSection: View {
             } label: {
                 HStack {
                     Text("Type Visibility")
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                     Spacer()
                     Text("\(viewModel.visibleTypes.count)/\(AnnotationType.allCases.count)")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -341,7 +341,7 @@ public struct AnnotationSection: View {
                         Label("All", systemImage: "eye")
                     }
                     .buttonStyle(.borderless)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
 
                     Button {
                         viewModel.hideAllVariantTypes()
@@ -349,7 +349,7 @@ public struct AnnotationSection: View {
                         Label("None", systemImage: "eye.slash")
                     }
                     .buttonStyle(.borderless)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 70))], spacing: 4) {
@@ -369,7 +369,7 @@ public struct AnnotationSection: View {
             viewModel.toggleVariantType(vtype)
         } label: {
             Text(vtype)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .lineLimit(1)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -397,7 +397,7 @@ public struct AnnotationSection: View {
                     Label("All", systemImage: "eye")
                 }
                 .buttonStyle(.borderless)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
 
                 Button {
                     viewModel.hideAllTypes()
@@ -405,7 +405,7 @@ public struct AnnotationSection: View {
                     Label("None", systemImage: "eye.slash")
                 }
                 .buttonStyle(.borderless)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
             }
 
             // Common types grid
@@ -428,7 +428,7 @@ public struct AnnotationSection: View {
             viewModel.toggleType(type)
         } label: {
             Text(type.displayName)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .lineLimit(1)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)

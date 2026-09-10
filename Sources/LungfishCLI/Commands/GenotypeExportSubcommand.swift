@@ -647,6 +647,7 @@ struct GenotypeExportSubcommand: AsyncParsableCommand {
             }
             return GenotypeViewProjectionRow(
                 label: row.label,
+                rawGenotype: row.rawGenotype,
                 locus: row.locus,
                 stableClusterID: row.stableClusterID,
                 cells: cells,
@@ -658,7 +659,11 @@ struct GenotypeExportSubcommand: AsyncParsableCommand {
             lens: projection.lens,
             sampleColumns: keptColumns,
             rows: rows,
-            cellColorMode: projection.cellColorMode
+            cellColorMode: projection.cellColorMode,
+            genotypeLocusDisplayOrder: projection.genotypeLocusDisplayOrder,
+            genotypeNumericPrefixOrder: projection.genotypeNumericPrefixOrder,
+            diagnosticAllelesOnly: projection.diagnosticAllelesOnly,
+            includeTotalReads: projection.includeTotalReads
         )
     }
 
@@ -769,6 +774,19 @@ struct GenotypeExportSubcommand: AsyncParsableCommand {
         }
         if let activeHaplotypeDefinition {
             explicitOptions["activeHaplotypeDefinition"] = .string(activeHaplotypeDefinition)
+        }
+        if let order = loadedProjection?.projection.genotypeLocusDisplayOrder {
+            explicitOptions["genotypeLocusDisplayOrder"] = .array(order.map(ParameterValue.string))
+        }
+        if let numericOrder = loadedProjection?.projection.genotypeNumericPrefixOrder {
+            explicitOptions["genotypeNumericPrefixOrder"] = .boolean(numericOrder)
+        }
+        if let projection = loadedProjection?.projection {
+            explicitOptions["diagnosticAllelesOnly"] = .boolean(projection.diagnosticAllelesOnly ?? false)
+            explicitOptions["includeTotalReads"] = .boolean(projection.includeTotalReads ?? false)
+            if let colorMode = projection.cellColorMode {
+                explicitOptions["cellColorMode"] = .string(colorMode)
+            }
         }
         var resolvedOptions = explicitOptions
         if let nativeWriteReport {

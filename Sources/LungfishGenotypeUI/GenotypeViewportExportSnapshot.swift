@@ -80,6 +80,7 @@ struct GenotypeAnnotationAuditEntry: Equatable {
 
 struct GenotypeViewportExportRow: Equatable {
     let genotype: String
+    let displayName: String
     let locus: String
     let stableClusterID: String?
     let sampleCount: Int
@@ -90,6 +91,7 @@ struct GenotypeViewportExportRow: Equatable {
 
     init(
         genotype: String,
+        displayName: String? = nil,
         locus: String,
         stableClusterID: String? = nil,
         sampleCount: Int,
@@ -99,6 +101,7 @@ struct GenotypeViewportExportRow: Equatable {
         cellStyles: [String: GenotypeResultHighlightStyle]
     ) {
         self.genotype = genotype
+        self.displayName = displayName ?? genotype
         self.locus = locus
         self.stableClusterID = stableClusterID
         self.sampleCount = sampleCount

@@ -56,7 +56,7 @@ struct TwelveSDetailSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("12S Detail", systemImage: "list.bullet.rectangle")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
             Divider()
             switch viewModel.payload?.kind {
             case let .target(detail):
@@ -65,7 +65,7 @@ struct TwelveSDetailSection: View {
                 unresolvedDetail(detail)
             case nil:
                 Text(viewModel.placeholderText)
-                    .font(.callout)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -95,7 +95,7 @@ struct TwelveSDetailSection: View {
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
-                            .font(.callout)
+                            .font(LungfishInspectorStyle.controlFont)
                         }
                     }
                     .padding(.top, 4)
@@ -107,12 +107,12 @@ struct TwelveSDetailSection: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if detail.alternateTexts.isEmpty {
                         Text("No alternate exact species labels recorded.")
-                            .font(.callout)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(detail.alternateTexts, id: \.self) { text in
                             Text(text)
-                                .font(.callout)
+                                .font(LungfishInspectorStyle.controlFont)
                         }
                     }
                 }
@@ -130,7 +130,7 @@ struct TwelveSDetailSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 if sequences.isEmpty {
                     Text("No reference sequences available.")
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 } else {
                     Button {
@@ -144,7 +144,7 @@ struct TwelveSDetailSection: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
                                 Text(seq.targetID)
-                                    .font(.caption.weight(.semibold))
+                                    .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                                 Spacer()
                                 Button {
                                     pasteboard.setString(seq.sequence)
@@ -156,7 +156,7 @@ struct TwelveSDetailSection: View {
                                 .help("Copy this sequence")
                             }
                             Text(seq.sequence)
-                                .font(.system(.caption, design: .monospaced))
+                                .font(LungfishInspectorStyle.controlFont.monospaced())
                                 .textSelection(.enabled)
                                 .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -178,7 +178,7 @@ struct TwelveSDetailSection: View {
 
             Divider()
             Text("Sequence")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text(detail.sequence)
                 .font(.system(.callout, design: .monospaced))
@@ -198,7 +198,7 @@ struct TwelveSDetailSection: View {
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
-                            .font(.callout)
+                            .font(LungfishInspectorStyle.controlFont)
                         }
                     }
                     .padding(.top, 4)

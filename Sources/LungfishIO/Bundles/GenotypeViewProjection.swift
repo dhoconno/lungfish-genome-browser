@@ -32,16 +32,33 @@ public struct GenotypeViewProjection: Codable, Sendable, Equatable {
     /// `"budde2010"`). `nil` when the view rendered without cell coloring.
     public let cellColorMode: String?
 
+    /// Effective allele-row group order, recorded with the exported view for replay.
+    public let genotypeLocusDisplayOrder: [String]?
+    public let genotypeNumericPrefixOrder: Bool?
+
+    /// Display-only scope; never changes scientific calls in the source bundle.
+    public let diagnosticAllelesOnly: Bool?
+    /// Append a read sum across the exported sample columns.
+    public let includeTotalReads: Bool?
+
     public init(
         lens: String,
         sampleColumns: [String],
         rows: [GenotypeViewProjectionRow],
-        cellColorMode: String? = nil
+        cellColorMode: String? = nil,
+        genotypeLocusDisplayOrder: [String]? = nil,
+        genotypeNumericPrefixOrder: Bool? = nil,
+        diagnosticAllelesOnly: Bool? = nil,
+        includeTotalReads: Bool? = nil
     ) {
         self.lens = lens
         self.sampleColumns = sampleColumns
         self.rows = rows
         self.cellColorMode = cellColorMode
+        self.genotypeLocusDisplayOrder = genotypeLocusDisplayOrder
+        self.genotypeNumericPrefixOrder = genotypeNumericPrefixOrder
+        self.diagnosticAllelesOnly = diagnosticAllelesOnly
+        self.includeTotalReads = includeTotalReads
     }
 }
 
@@ -49,6 +66,10 @@ public struct GenotypeViewProjection: Codable, Sendable, Equatable {
 public struct GenotypeViewProjectionRow: Codable, Sendable, Equatable {
     /// Row header label as rendered (e.g. `"MHC-A H1"`).
     public let label: String
+
+    /// Original reference identity for annotations when the display label is abbreviated.
+    /// Older projections omit this and use `label` as their identity.
+    public let rawGenotype: String?
 
     /// Optional locus identity for row-level/cell-level matrix annotations.
     /// Older projection JSON omits this and remains decodable.
@@ -75,6 +96,7 @@ public struct GenotypeViewProjectionRow: Codable, Sendable, Equatable {
 
     public init(
         label: String,
+        rawGenotype: String? = nil,
         locus: String? = nil,
         stableClusterID: String? = nil,
         cells: [String],
@@ -82,6 +104,7 @@ public struct GenotypeViewProjectionRow: Codable, Sendable, Equatable {
         rowColorHex: String? = nil
     ) {
         self.label = label
+        self.rawGenotype = rawGenotype
         self.locus = locus
         self.stableClusterID = stableClusterID
         self.cells = cells

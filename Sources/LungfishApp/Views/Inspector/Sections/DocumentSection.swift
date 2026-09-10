@@ -766,7 +766,7 @@ public struct DocumentSection: View {
     private func bundleHeader(_ manifest: BundleManifest) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(manifest.name)
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
                 .lineLimit(2)
 
             if !manifest.source.organism.isEmpty {
@@ -778,13 +778,13 @@ public struct DocumentSection: View {
 
             if let commonName = manifest.source.commonName, !commonName.isEmpty {
                 Text(commonName)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.tertiary)
             }
 
             if let desc = manifest.description, !desc.isEmpty {
                 Text(desc)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)
             }
@@ -828,7 +828,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("Source")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -864,7 +864,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("Genome")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -881,7 +881,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text(group.name)
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -926,7 +926,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("Chromosome")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -938,7 +938,7 @@ public struct DocumentSection: View {
             // Header
             VStack(alignment: .leading, spacing: 4) {
                 Text("FASTQ Dataset")
-                    .font(.headline)
+                    .font(LungfishInspectorStyle.sectionTitleFont)
                 Text("\(formatCount(stats.readCount)) reads")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -983,10 +983,10 @@ public struct DocumentSection: View {
                 } label: {
                     HStack {
                         Text("Analyses")
-                            .font(.headline)
+                            .font(LungfishInspectorStyle.sectionTitleFont)
                         if !viewModel.analysisManifestEntries.isEmpty {
                             Text("(\(viewModel.analysisManifestEntries.count))")
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1021,7 +1021,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("Dataset Statistics")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -1089,7 +1089,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("SRA Metadata")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -1141,7 +1141,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("ENA Metadata")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -1165,7 +1165,7 @@ public struct DocumentSection: View {
                         .foregroundStyle(.secondary)
                     ForEach(ingestion.originalFilenames, id: \.self) { name in
                         Text(name)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(LungfishInspectorStyle.controlFont.monospaced())
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -1198,7 +1198,7 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("Ingestion")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -1213,7 +1213,7 @@ public struct DocumentSection: View {
                     .fontWeight(.semibold)
                 Spacer()
                 Text(formatDate(info.appliedDate))
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.tertiary)
             }
 
@@ -1238,12 +1238,12 @@ public struct DocumentSection: View {
                         let step = info.stepResults[idx]
                         HStack(alignment: .top, spacing: 6) {
                             Text("\(idx + 1).")
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 16, alignment: .trailing)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(step.stepName)
-                                    .font(.caption)
+                                    .font(LungfishInspectorStyle.controlFont)
                                     .lineLimit(2)
                                 if let inCount = step.inputReadCount, let outCount = step.outputReadCount {
                                     let delta = inCount - outCount
@@ -1252,25 +1252,25 @@ public struct DocumentSection: View {
                                         let verb = isScrubStep ? "masked" : "removed"
                                         let pct = inCount > 0 ? String(format: " (%.1f%%)", Double(delta) / Double(inCount) * 100) : ""
                                         Text("\(formatCount(inCount)) reads, \(formatCount(delta)) \(verb)\(pct)")
-                                            .font(.caption)
+                                            .font(LungfishInspectorStyle.controlFont)
                                             .foregroundStyle(.secondary)
                                     } else if delta < 0 {
                                         Text("\(formatCount(inCount)) → \(formatCount(outCount)) (+\(formatCount(-delta)))")
-                                            .font(.caption)
+                                            .font(LungfishInspectorStyle.controlFont)
                                             .foregroundStyle(.secondary)
                                     } else {
                                         Text("\(formatCount(outCount)) reads, none \(isScrubStep ? "masked" : "removed")")
-                                            .font(.caption)
+                                            .font(LungfishInspectorStyle.controlFont)
                                             .foregroundStyle(.secondary)
                                     }
                                 }
                                 if let ver = step.toolVersion {
                                     Text("\(step.tool) \(ver)")
-                                        .font(.caption2)
+                                        .font(LungfishInspectorStyle.controlFont)
                                         .foregroundStyle(.tertiary)
                                 } else {
                                     Text(step.tool)
-                                        .font(.caption2)
+                                        .font(LungfishInspectorStyle.controlFont)
                                         .foregroundStyle(.tertiary)
                                 }
                                 if let commandLine = step.commandLine,
@@ -1291,7 +1291,7 @@ public struct DocumentSection: View {
                             }
                             Spacer()
                             Text(formatDuration(step.durationSeconds))
-                                .font(.caption2)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.tertiary)
                         }
                     }
@@ -1312,7 +1312,7 @@ public struct DocumentSection: View {
                             Image(systemName: "doc.on.doc")
                             Text("Copy Pipeline as Script")
                         }
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
@@ -1368,15 +1368,15 @@ public struct DocumentSection: View {
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(manifest.operation.displaySummary)
-                            .font(.callout)
+                            .font(LungfishInspectorStyle.controlFont)
                             .fontWeight(.semibold)
                         if let tool = manifest.operation.toolUsed {
                             Text(tool)
-                                .font(.caption)
+                                .font(LungfishInspectorStyle.controlFont)
                                 .foregroundStyle(.secondary)
                         }
                         Text(formatDate(manifest.createdAt))
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -1413,7 +1413,7 @@ public struct DocumentSection: View {
                     ZStack(alignment: .topTrailing) {
                         ScrollView(.vertical, showsIndicators: false) {
                             Text(cmd)
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(LungfishInspectorStyle.controlFont.monospaced())
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(8)
@@ -1431,7 +1431,7 @@ public struct DocumentSection: View {
                             NSPasteboard.general.setString(cmd, forType: .string)
                         } label: {
                             Image(systemName: "doc.on.doc")
-                                .font(.caption2)
+                                .font(LungfishInspectorStyle.controlFont)
                         }
                         .buttonStyle(.borderless)
                         .help("Copy command to clipboard")
@@ -1443,7 +1443,7 @@ public struct DocumentSection: View {
                 if manifest.lineage.count > 1 {
                     Divider()
                     Text("Lineage")
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 0) {
@@ -1459,7 +1459,7 @@ public struct DocumentSection: View {
                                             .fill(isLast ? Color.accentColor : Color(nsColor: .quaternarySystemFill))
                                             .frame(width: 20, height: 20)
                                         Text("\(index + 1)")
-                                            .font(.caption2)
+                                            .font(LungfishInspectorStyle.controlFont)
                                             .fontWeight(.semibold)
                                             .foregroundStyle(isLast ? .white : .secondary)
                                     }
@@ -1474,17 +1474,17 @@ public struct DocumentSection: View {
                                 // Step content
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(isFirst ? "Root FASTQ" : op.displaySummary)
-                                        .font(.caption)
+                                        .font(LungfishInspectorStyle.controlFont)
                                         .foregroundStyle(isLast ? .primary : .secondary)
                                     if isFirst {
                                         Text(manifest.rootFASTQFilename)
-                                            .font(.caption2)
+                                            .font(LungfishInspectorStyle.controlFont)
                                             .foregroundStyle(.tertiary)
                                             .lineLimit(1)
                                             .truncationMode(.middle)
                                     } else if let tool = op.toolUsed {
                                         Text(tool)
-                                            .font(.caption2)
+                                            .font(LungfishInspectorStyle.controlFont)
                                             .foregroundStyle(.tertiary)
                                     }
                                 }
@@ -1501,9 +1501,9 @@ public struct DocumentSection: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.triangle.branch")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                 Text("Provenance")
-                    .font(.headline)
+                    .font(LungfishInspectorStyle.sectionTitleFont)
             }
         }
     }
@@ -1517,10 +1517,10 @@ public struct DocumentSection: View {
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text("No Bundle Loaded")
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text("Open a reference bundle to view its metadata")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
@@ -1534,13 +1534,13 @@ public struct DocumentSection: View {
     private func metadataRow(label: String, value: String, url: String? = nil) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .trailing)
 
             if let urlString = url, let linkURL = URL(string: urlString) {
                 Link(value, destination: linkURL)
-                    .font(.callout)
+                    .font(LungfishInspectorStyle.controlFont)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contextMenu {
                         Button("Copy Value") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value, forType: .string) }
@@ -1548,7 +1548,7 @@ public struct DocumentSection: View {
                     }
             } else {
                 Text(value)
-                    .font(.callout)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1637,7 +1637,7 @@ struct AlignmentTrackInventorySection: View {
             }
             .padding(.top, 4)
         }
-        .font(.headline)
+        .font(LungfishInspectorStyle.sectionTitleFont)
     }
 
     @ViewBuilder
@@ -1654,7 +1654,7 @@ struct AlignmentTrackInventorySection: View {
             Button(action: action) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.caption.weight(.semibold))
+                        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                         .truncationMode(.middle)
@@ -1673,7 +1673,7 @@ struct AlignmentTrackInventorySection: View {
                     }
 
                     Text(subtitle)
-                        .font(.caption2)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1686,7 +1686,7 @@ struct AlignmentTrackInventorySection: View {
                 Button("Remove Derived Alignment...") {
                     removeAction()
                 }
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(Color.lungfishDangerFallback)
                 .buttonStyle(.borderless)
             }
@@ -1703,7 +1703,7 @@ struct AlignmentTrackInventorySection: View {
     @ViewBuilder
     private func badge(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 9, weight: .semibold))
+            .font(LungfishInspectorStyle.sectionTitleFont)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(Color.gray.opacity(0.12))

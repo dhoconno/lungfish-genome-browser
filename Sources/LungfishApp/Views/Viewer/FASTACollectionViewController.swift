@@ -485,6 +485,14 @@ public final class FASTACollectionViewController: NSViewController,
                     guard let self else { return }
                     self.onBlastRequested?(self.selectedSequences())
                 },
+                onCopyNames: { [weak self] in
+                    guard let self else { return }
+                    self.scalarPasteboard.setString(self.selectedSequences().map(\.name).joined(separator: "\n"))
+                },
+                onCopySequences: { [weak self] in
+                    guard let self else { return }
+                    self.scalarPasteboard.setString(self.selectedSequences().map { $0.asString() }.joined(separator: "\n"))
+                },
                 onCopy: { [weak self] in self?.copySelectedSequencesAsFASTA() },
                 onExport: onExportRequested == nil ? nil : { [weak self] in
                     guard let self else { return }

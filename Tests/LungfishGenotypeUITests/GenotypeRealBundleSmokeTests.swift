@@ -29,6 +29,44 @@ final class GenotypeRealBundleSmokeTests: XCTestCase {
         XCTAssertNotNil(result.haplotypeAnalysis, "Real bundle should carry a haplotype analysis")
     }
 
+    func testMiSeqReferenceMatrixUsesConciseLabelsAndPreservesEvidence() throws {
+        let result = try loadRealBundleOrSkip()
+        guard result.calls.contains(where: { !MHCReferenceGenotypeDisplay.alleleNames(for: $0.genotype).isEmpty }) else {
+            throw XCTSkip("Real bundle does not contain collapsed MHC reference headers")
+        }
+        GenotypeComparisonMatrixView.testingResetPersistedReferenceVisibility()
+        defer { GenotypeComparisonMatrixView.testingResetPersistedReferenceVisibility() }
+        let matrix = GenotypeComparisonMatrixView()
+        matrix.configure(result: result)
+        let rows = matrix.testingVisibleRows
+        let expected = result.locusSummaries.flatMap(\.sharedCalls)
+        XCTAssertEqual(rows.count, expected.count)
+        XCTAssertEqual(Set(rows.map(\.genotype)), Set(result.calls.map(\.genotype)))
+        XCTAssertEqual(rows.reduce(0) { $0 + $1.totalUniqueReads }, expected.reduce(0) { $0 + $1.totalUniqueReads })
+        let names = rows.map { MHCReferenceGenotypeDisplay.alleleName(for: $0.genotype) }
+        XCTAssertFalse(names.isEmpty)
+        XCTAssertTrue(names.allSatisfy { !$0.contains("|alleles=") && $0.hasPrefix("Mafa-") })
+        for (left, right) in zip(names, names.dropFirst()) {
+            XCTAssertNotEqual(MHCAlleleDisplayOrder.compare(left, right), .orderedDescending)
+        }
+        for row in rows {
+            XCTAssertEqual(matrix.testingReferenceValue(genotype: row.genotype, fieldKey: "feature.allele"), MHCReferenceGenotypeDisplay.alleleName(for: row.genotype))
+        }
+        XCTAssertTrue(matrix.testingPinnedColumnTitles.contains("Allele"))
+        XCTAssertFalse(matrix.testingPinnedColumnTitles.contains("Full reference name"))
+        print("MiSeq matrix smoke: \(rows.count) rows, \(result.samples.count) samples, \(rows.reduce(0) { $0 + $1.totalUniqueReads }) unique reads; all reference identities retained")
+        if let screenshotPath = ProcessInfo.processInfo.environment["LUNGFISH_GENOTYPE_SMOKE_SCREENSHOT"] {
+            matrix.frame = NSRect(x: 0, y: 0, width: 1500, height: 1250)
+            let window = NSWindow(contentRect: matrix.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = matrix
+            matrix.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(matrix.bitmapImageRepForCachingDisplay(in: matrix.bounds))
+            matrix.cacheDisplay(in: matrix.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: screenshotPath))
+        }
+    }
+
     func testObservedLociIndexIncludesNonAnalyzedLoci() throws {
         let result = try loadRealBundleOrSkip()
         let index = GenotypeObservedLociIndex.build(from: result)

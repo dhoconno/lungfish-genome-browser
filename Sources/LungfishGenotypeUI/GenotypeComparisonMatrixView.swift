@@ -235,6 +235,11 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
     private let filterField = NSSearchField()
     private let locusPopup = NSPopUpButton()
     private let reviewLegend = NSTextField(labelWithString: "")
+    private let columnsButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let haplotypeLegendButton = NSButton(title: "Haplotype legend…", target: nil, action: nil)
+    private let footerActions = NSStackView()
+    private var haplotypeLegendPopover: NSPopover?
+
     private let pinnedScrollView = NSScrollView()
     private let pinnedTableView = GenotypeMatrixTableView()
     private let paneDivider = GenotypeMatrixPaneDivider()
@@ -283,6 +288,16 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
     private var result: ONTGenotypeResultBundleData?
     private var referenceFields: [GenBankRecordDatabase.FieldDefinition] = []
     private var referenceRecords: [String: [String: String]] = [:]
+    private var hasEmbeddedMHCAlleles = false
+    private var hasNumericReferencePrefixes = false
+    private var usesNumericReferenceOrder: Bool {
+        hasNumericReferencePrefixes && effectiveLocusDisplayOrder == nil
+    }
+    private var bundleLocusDisplayOrder: [String]?
+    private var sidecarLocusDisplayOrder: [String]?
+    private var effectiveLocusDisplayOrder: [String]? {
+        displayState.genotypeLocusDisplayOrder ?? sidecarLocusDisplayOrder ?? bundleLocusDisplayOrder
+    }
     private var alleleFieldKey: String?
     private var visibleReferenceFieldKeys: Set<String> = []
     private var visibleStandardColumnIDs: Set<String> = []
@@ -466,12 +481,28 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         // it simply no-ops once `self` has been deallocated.
     }
 
+    private var haplotypeEvidence = GenotypeAlleleHaplotypeEvidenceIndex.empty
+
+    func configureHaplotypeEvidence(_ index: GenotypeAlleleHaplotypeEvidenceIndex) {
+        guard index != haplotypeEvidence else { return }
+        haplotypeEvidence = index
+        updateReviewLegend()
+        guard result != nil else { return }
+        if displayState.diagnosticAllelesOnly {
+            applyFilterAndSort()
+        }
+        if displayState.cellColorMode == .haplotype {
+            reloadVisibleMatrix()
+        }
+    }
+
     func configure(
         result: ONTGenotypeResultBundleData,
         metadataStore: SampleMetadataStore? = nil,
         sidecar: GenotypeAnnotationSidecar? = nil
     ) {
         self.result = result
+        bundleLocusDisplayOrder = result.genotypeLocusDisplayOrder
         if case .eligible = GenotypeManualHaplotypeEligibility.evaluate(result) {
             manualHaplotypeEditingEligible = true
         } else {
@@ -607,6 +638,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
     ) {
         captureStableSampleColumnState()
         self.result = result
+        bundleLocusDisplayOrder = result.genotypeLocusDisplayOrder
         if case .eligible = GenotypeManualHaplotypeEligibility.evaluate(result) {
             manualHaplotypeEditingEligible = true
         } else {
@@ -660,6 +692,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
                 ? captureSemanticScrollAnchor()
                 : nil
         displayState = state
+        updateReviewLegend()
         applyManualHaplotypeBandPresentation()
         if state.manualHaplotypeBandExpanded
             != previousState.manualHaplotypeBandExpanded {
@@ -681,8 +714,11 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             previousEffectiveCandidateSettings.tints
                 != nextEffectiveCandidateSettings.tints
 
-        if candidateVisibilityDidChange {
+        if candidateVisibilityDidChange || state.genotypeLocusDisplayOrder != previousState.genotypeLocusDisplayOrder {
             rebuildBaseProjection()
+            if state.genotypeLocusDisplayOrder != previousState.genotypeLocusDisplayOrder {
+                applyDefaultSortDescriptor()
+            }
         } else if state.requiresMatrixDerivedProjection(comparedTo: previousState) {
             applyDerivedProjection()
         }
@@ -711,10 +747,12 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         reloading targets: [GenotypeAnnotationSidecar.MatrixTarget]? = nil
     ) {
         let previousEffectiveCandidateDisplaySettings = effectiveCandidateDisplaySettings
+        let previousLocusDisplayOrder = effectiveLocusDisplayOrder
         updateManualHaplotypeBand(
             assignments: sidecar?.manualHaplotypeAssignments ?? []
         )
         candidateDisplaySettings = sidecar?.settings.mhcCandidateDisplay ?? .default
+        sidecarLocusDisplayOrder = sidecar?.settings.genotypeLocusDisplayOrder
         sidecarCellStyles = [:]
         sidecarRowStyles = [:]
         sidecarColumnStyles = [:]
@@ -771,10 +809,10 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         updateManualHaplotypeHeaderAccessibility()
         let nextEffectiveCandidateDisplaySettings = effectiveCandidateDisplaySettings
         if reload,
-           candidateVisibilityChanged(
+           (previousLocusDisplayOrder != effectiveLocusDisplayOrder || candidateVisibilityChanged(
                from: previousEffectiveCandidateDisplaySettings,
                to: nextEffectiveCandidateDisplaySettings
-        ) {
+        )) {
             rebuildBaseProjection()
             applyFilterAndSort()
             // Sidecar replacement may also change surviving row/cell chrome
@@ -1019,6 +1057,10 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             "matrixRowFilterText": displayState.matrixRowFilterText,
             "matrixSampleFilterText": displayState.matrixSampleFilterText,
             "cellColorMode": displayState.cellColorMode.displayName,
+            "diagnosticAllelesOnly": String(displayState.diagnosticAllelesOnly),
+            "includeTotalReads": String(visibleStandardColumnIDs.contains(ColumnID.uniqueReads.rawValue)),
+            "genotypeLocusDisplayOrder": (effectiveLocusDisplayOrder ?? []).joined(separator: ","),
+            "genotypeNumericPrefixOrder": String(usesNumericReferenceOrder),
             "hideFilteredHighlights": String(displayState.hideFilteredHighlights),
         ]
         let rows = visibleRows.map { row in
@@ -1036,6 +1078,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             })
             return GenotypeViewportExportRow(
                 genotype: row.genotype,
+                displayName: biologicalAlleleDisplayName(for: row),
                 locus: row.locus,
                 stableClusterID: row.stableClusterID,
                 sampleCount: reads.count,
@@ -1115,6 +1158,22 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             "Matrix review legend: bracketed read count means false positive; inner frame means false negative; folded corner means comment."
         )
         addSubview(reviewLegend)
+        columnsButton.controlSize = .small
+        columnsButton.setAccessibilityIdentifier("genotype-matrix-columns")
+        columnsButton.setAccessibilityLabel("Columns")
+        columnsButton.toolTip = "Show or hide matrix columns, including Total reads and reference names."
+        haplotypeLegendButton.controlSize = .small
+        haplotypeLegendButton.target = self
+        haplotypeLegendButton.action = #selector(showHaplotypeLegend(_:))
+        haplotypeLegendButton.setAccessibilityIdentifier("genotype-matrix-haplotype-legend-button")
+        haplotypeLegendButton.toolTip = "Open the complete haplotype color legend."
+        haplotypeLegendButton.isHidden = true
+        footerActions.translatesAutoresizingMaskIntoConstraints = false
+        footerActions.orientation = .horizontal
+        footerActions.spacing = 8
+        footerActions.addArrangedSubview(haplotypeLegendButton)
+        footerActions.addArrangedSubview(columnsButton)
+        addSubview(footerActions)
 
         pinnedScrollView.translatesAutoresizingMaskIntoConstraints = false
         pinnedScrollView.hasVerticalScroller = false
@@ -1295,7 +1354,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         )
 
         filterHeightConstraint = filterField.heightAnchor.constraint(equalToConstant: 24)
-        reviewLegendHeightConstraint = reviewLegend.heightAnchor.constraint(equalToConstant: 15)
+        reviewLegendHeightConstraint = reviewLegend.heightAnchor.constraint(equalToConstant: 26)
         NSLayoutConstraint.activate([
             filterField.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             filterField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -1321,7 +1380,9 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             scrollView.bottomAnchor.constraint(equalTo: reviewLegend.topAnchor, constant: -2),
 
             reviewLegend.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            reviewLegend.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6),
+            reviewLegend.trailingAnchor.constraint(lessThanOrEqualTo: footerActions.leadingAnchor, constant: -8),
+            footerActions.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            footerActions.centerYAnchor.constraint(equalTo: reviewLegend.centerYAnchor),
             reviewLegend.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
             reviewLegendHeightConstraint!,
         ])
@@ -1482,14 +1543,14 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
 
         addRowSelectorColumn(to: pinnedTableView)
         if visibleStandardColumnIDs.contains(ColumnID.genotype.rawValue) {
-            addColumn(to: pinnedTableView, identifier: ColumnID.genotype, title: "Genotype", width: 280, minWidth: 80, ascending: true)
+            addColumn(to: pinnedTableView, identifier: ColumnID.genotype, title: genotypeColumnTitle, width: 280, minWidth: 80, ascending: true)
         }
         for field in referenceFields where visibleReferenceFieldKeys.contains(field.key) {
             addColumn(
                 to: pinnedTableView,
                 identifier: ColumnID.reference(field.key),
                 title: field.displayTitle,
-                width: field.key == alleleFieldKey ? 220 : 150,
+                width: field.key == alleleFieldKey ? (hasEmbeddedMHCAlleles ? 420 : 220) : 150,
                 minWidth: 60,
                 ascending: true
             )
@@ -1512,7 +1573,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             addColumn(to: pinnedTableView, identifier: ColumnID.samples, title: "Samples", width: 70, minWidth: 50, ascending: false)
         }
         if visibleStandardColumnIDs.contains(ColumnID.uniqueReads.rawValue) {
-            addColumn(to: pinnedTableView, identifier: ColumnID.uniqueReads, title: "Unique", width: 78, minWidth: 50, ascending: false)
+            addColumn(to: pinnedTableView, identifier: ColumnID.uniqueReads, title: "Total reads", width: 100, minWidth: 72, ascending: false, headerToolTip: "Sum of supporting unique reads across all samples in this result")
         }
         updatePinnedTableAccessibilityLabel()
 
@@ -1583,7 +1644,11 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
     private static let genBankStandardVisibilityKey = "GenotypeMatrix.genbank.visibleStandardColumns"
     private static let fastaStandardVisibilityKey = "GenotypeMatrix.fasta.visibleStandardColumns"
     private static let referenceVisibilityKey = "GenotypeMatrix.genbank.visibleReferenceFields"
+    private static let mhcStandardVisibilityKey = "GenotypeMatrix.mhcMiSeq.visibleStandardColumns"
+    private static let mhcReferenceVisibilityKey = "GenotypeMatrix.mhcMiSeq.visibleReferenceFields"
     private static let columnWidthsKey = "GenotypeMatrix.pinnedColumnWidths"
+    private static let mhcColumnWidthsKey = "GenotypeMatrix.mhcMiSeq.pinnedColumnWidths"
+    private static let mhcPinnedPaneWidthKey = "GenotypeMatrix.mhcMiSeq.pinnedPaneWidth"
 
     static func searchVisibleReferenceFieldKeys(
         for metadata: ONTGenotypeReferenceMetadata?
@@ -1597,7 +1662,35 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         return metadata.alleleFieldKey.map { Set([$0]) } ?? []
     }
 
-    private func configureReferenceColumns(from metadata: ONTGenotypeReferenceMetadata?) {
+    private var genotypeColumnTitle: String {
+        hasEmbeddedMHCAlleles ? "Full reference name" : "Genotype"
+    }
+
+    private func configureReferenceColumns(from storedMetadata: ONTGenotypeReferenceMetadata?) {
+        // Historical MiSeq bundles embed their analyst labels in FASTA identities
+        // instead of carrying a GenBank record store. Rehydrate display metadata
+        // without changing those identities or rewriting the scientific bundle.
+        hasEmbeddedMHCAlleles = result?.calls.contains {
+            !MHCReferenceGenotypeDisplay.alleleNames(for: $0.genotype).isEmpty
+        } ?? false
+        hasNumericReferencePrefixes = storedMetadata == nil && !hasEmbeddedMHCAlleles
+            && (result?.calls.contains { GenotypeReferenceNumericPrefixOrder.hasPrefix($0.genotype) } ?? false)
+        var metadata = storedMetadata
+        if hasEmbeddedMHCAlleles {
+            let key = storedMetadata?.alleleFieldKey ?? "feature.allele"
+            var fields = storedMetadata?.fields ?? []
+            if !fields.contains(where: { $0.key == key }) {
+                fields.insert(.init(key: key, displayTitle: "Allele", valueType: "text",
+                                    sourceCategory: "reference", preferredOrder: 0), at: 0)
+            }
+            var records = storedMetadata?.recordsBySequenceName ?? [:]
+            for call in result?.calls ?? [] {
+                if records[call.genotype]?[key]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                    records[call.genotype, default: [:]][key] = MHCReferenceGenotypeDisplay.alleleName(for: call.genotype)
+                }
+            }
+            metadata = .init(fields: fields, recordsBySequenceName: records, alleleFieldKey: key)
+        }
         referenceFields = metadata?.fields.sorted {
             if $0.preferredOrder != $1.preferredOrder { return $0.preferredOrder < $1.preferredOrder }
             return $0.displayTitle.localizedStandardCompare($1.displayTitle) == .orderedAscending
@@ -1605,31 +1698,51 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         referenceRecords = metadata?.recordsBySequenceName ?? [:]
         alleleFieldKey = metadata?.alleleFieldKey
 
-        let standardKey = metadata == nil ? Self.fastaStandardVisibilityKey : Self.genBankStandardVisibilityKey
+        let standardKey = hasEmbeddedMHCAlleles ? Self.mhcStandardVisibilityKey
+            : (metadata == nil ? Self.fastaStandardVisibilityKey : Self.genBankStandardVisibilityKey)
         if let stored = columnDefaults.array(forKey: standardKey) as? [String] {
             visibleStandardColumnIDs = Set(stored)
+        } else if hasEmbeddedMHCAlleles {
+            visibleStandardColumnIDs = [ColumnID.locus.rawValue]
         } else if metadata == nil {
             visibleStandardColumnIDs = [ColumnID.genotype.rawValue, ColumnID.locus.rawValue, ColumnID.samples.rawValue, ColumnID.uniqueReads.rawValue]
         } else {
             visibleStandardColumnIDs = [ColumnID.locus.rawValue, ColumnID.samples.rawValue, ColumnID.uniqueReads.rawValue]
         }
 
-        if metadata != nil {
+        if hasEmbeddedMHCAlleles {
+            if let stored = columnDefaults.array(forKey: Self.mhcReferenceVisibilityKey) as? [String] {
+                visibleReferenceFieldKeys = Set(stored).intersection(referenceFields.map(\.key))
+            } else {
+                visibleReferenceFieldKeys = alleleFieldKey.map { Set([$0]) } ?? []
+            }
+        } else if metadata != nil {
             visibleReferenceFieldKeys = Self.searchVisibleReferenceFieldKeys(
                 for: metadata
             )
         } else {
             visibleReferenceFieldKeys = []
         }
-        restoredColumnWidths = (columnDefaults.dictionary(forKey: Self.columnWidthsKey) as? [String: Double])?
+        restoredColumnWidths = (columnDefaults.dictionary(forKey: activeColumnWidthsKey) as? [String: Double])?
             .mapValues { CGFloat($0) } ?? [:]
+        let rememberedPaneWidth = columnDefaults.double(forKey: activePinnedPaneWidthKey)
+        setPinnedPaneWidth(rememberedPaneWidth > 0 ? rememberedPaneWidth : (hasEmbeddedMHCAlleles ? 600 : 360), persist: false)
+    }
+
+    private var activeColumnWidthsKey: String {
+        hasEmbeddedMHCAlleles ? Self.mhcColumnWidthsKey : Self.columnWidthsKey
+    }
+
+    private var activePinnedPaneWidthKey: String {
+        hasEmbeddedMHCAlleles ? Self.mhcPinnedPaneWidthKey : Self.pinnedPaneWidthKey
     }
 
     private func persistColumnVisibility() {
-        let standardKey = referenceFields.isEmpty ? Self.fastaStandardVisibilityKey : Self.genBankStandardVisibilityKey
+        let standardKey = hasEmbeddedMHCAlleles ? Self.mhcStandardVisibilityKey
+            : (referenceFields.isEmpty ? Self.fastaStandardVisibilityKey : Self.genBankStandardVisibilityKey)
         columnDefaults.set(visibleStandardColumnIDs.sorted(), forKey: standardKey)
         if !referenceFields.isEmpty {
-            columnDefaults.set(visibleReferenceFieldKeys.sorted(), forKey: Self.referenceVisibilityKey)
+            columnDefaults.set(visibleReferenceFieldKeys.sorted(), forKey: hasEmbeddedMHCAlleles ? Self.mhcReferenceVisibilityKey : Self.referenceVisibilityKey)
         }
     }
 
@@ -1639,10 +1752,10 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         standardHeader.isEnabled = false
         menu.addItem(standardHeader)
         for (identifier, title) in [
-            (ColumnID.genotype.rawValue, "Genotype"),
+            (ColumnID.genotype.rawValue, genotypeColumnTitle),
             (ColumnID.locus.rawValue, "Locus"),
             (ColumnID.samples.rawValue, "Samples"),
-            (ColumnID.uniqueReads.rawValue, "Unique"),
+            (ColumnID.uniqueReads.rawValue, "Total reads"),
         ] {
             let item = NSMenuItem(title: title, action: #selector(togglePinnedStandardColumn(_:)), keyEquivalent: "")
             item.target = self
@@ -1652,7 +1765,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         }
         if !referenceFields.isEmpty {
             menu.addItem(.separator())
-            let header = NSMenuItem(title: "GenBank Fields", action: nil, keyEquivalent: "")
+            let header = NSMenuItem(title: "Reference Fields", action: nil, keyEquivalent: "")
             header.isEnabled = false
             menu.addItem(header)
             for field in referenceFields {
@@ -1665,6 +1778,10 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             }
         }
         pinnedTableView.headerView?.menu = menu
+        if let visibleMenu = menu.copy() as? NSMenu {
+            visibleMenu.insertItem(withTitle: "Columns", action: nil, keyEquivalent: "", at: 0)
+            columnsButton.menu = visibleMenu
+        }
     }
 
     @objc private func togglePinnedStandardColumn(_ sender: NSMenuItem) {
@@ -1864,7 +1981,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         let constrained = min(maximum, max(180, width))
         pinnedWidthConstraint?.constant = constrained
         if persist {
-            columnDefaults.set(Double(constrained), forKey: Self.pinnedPaneWidthKey)
+            columnDefaults.set(Double(constrained), forKey: activePinnedPaneWidthKey)
         }
     }
 
@@ -1995,7 +2112,9 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             unnameableDocument: result.mhcUnnameableClusters,
             logicalSampleNames: sampleNames,
             candidateSettings: effectiveCandidateDisplaySettings,
-            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder
+            usesBiologicalAlleleOrder: usesBiologicalAlleleOrder,
+            locusDisplayOrder: effectiveLocusDisplayOrder,
+            usesNumericReferenceOrder: usesNumericReferenceOrder
         )
 #if DEBUG
         testingBaseProjectionBuildCount += 1
@@ -2101,13 +2220,95 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
                 range: NSRange(swatchRange, in: text)
             )
         }
+        var haplotypeLegendDetails: [String] = []
+        haplotypeLegendButton.isHidden = displayState.cellColorMode != .haplotype
+        if displayState.cellColorMode != .haplotype { haplotypeLegendPopover?.close() }
+        if displayState.cellColorMode == .haplotype {
+            var seen = Set<String>()
+            for item in haplotypeEvidence.legend {
+                let identity = "\(item.name):\(item.fillColor.hexString)"
+                guard seen.insert(identity).inserted else { continue }
+                haplotypeLegendDetails.append("\(item.name) (\(item.locus)): \(item.fillColor.hexString)")
+                guard haplotypeLegendDetails.count <= 6 else { continue }
+                var style = GenotypeMatrixRenderedStyle.default
+                applyAutomaticTextContrast(to: &style, against: item.fillColor)
+                attributed.append(NSAttributedString(string: "  "))
+                attributed.append(NSAttributedString(string: " \(item.name) ", attributes: [
+                    .backgroundColor: Self.color(from: item.fillColor),
+                    .foregroundColor: style.textColor.map(Self.color(from:)) ?? NSColor.labelColor,
+                ]))
+            }
+            if haplotypeLegendDetails.count > 6 {
+                attributed.append(NSAttributedString(string: "  +\(haplotypeLegendDetails.count - 6) more"))
+            }
+            attributed.append(NSAttributedString(string: "   Shared: gray · Unassigned: neutral",
+                                                attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+        }
         reviewLegend.attributedStringValue = attributed
+        reviewLegend.toolTip = ([text] + haplotypeLegendDetails
+            + (displayState.cellColorMode == .haplotype ? ["Shared support: gray; unassigned: neutral"] : [])).joined(separator: "\n")
         let provisionalAccessibility = provisionalExon2Genotypes.isEmpty
             ? ""
             : " amber allele identity means Provisional exon 2;"
         reviewLegend.setAccessibilityLabel(
-            "Matrix review legend:\(provisionalAccessibility) bracketed read count means false positive; inner frame means false negative; folded corner means comment."
+            "Matrix review legend:\(provisionalAccessibility) bracketed read count means false positive; inner frame means false negative; folded corner means comment. "
+            + (displayState.cellColorMode == .haplotype ? attributed.string : "")
         )
+    }
+
+    /// The complete legend is selectable and scrollable, so no repertoire
+    /// entries depend on hover text or the compact footer's available width.
+    func haplotypeLegendContent() -> NSAttributedString {
+        let content = NSMutableAttributedString(string: "Haplotype support colors\n\n", attributes: [
+            .font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+        ])
+        for item in haplotypeEvidence.legend {
+            var style = GenotypeMatrixRenderedStyle.default
+            applyAutomaticTextContrast(to: &style, against: item.fillColor)
+            content.append(NSAttributedString(string: " \(item.name) ", attributes: [
+                .font: NSFont.systemFont(ofSize: 13),
+                .backgroundColor: Self.color(from: item.fillColor),
+                .foregroundColor: style.textColor.map(Self.color(from:)) ?? NSColor.labelColor,
+            ]))
+            content.append(NSAttributedString(string: "  \(item.locus)  \(item.fillColor.hexString)\n", attributes: [
+                .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+            ]))
+        }
+        content.append(NSAttributedString(string: "\nShared support: gray\nUnassigned: neutral\n\nColors indicate support for currently assigned haplotypes. Shared support does not uniquely identify one haplotype.", attributes: [
+            .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor,
+        ]))
+        return content
+    }
+
+    @objc private func showHaplotypeLegend(_ sender: NSButton) {
+        if haplotypeLegendPopover?.isShown == true {
+            haplotypeLegendPopover?.close()
+            return
+        }
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 320))
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let text = NSTextView(frame: scroll.bounds)
+        text.isEditable = false
+        text.isSelectable = true
+        text.isVerticallyResizable = true
+        text.isHorizontallyResizable = false
+        text.autoresizingMask = [.width]
+        text.textContainerInset = NSSize(width: 12, height: 12)
+        text.textContainer?.widthTracksTextView = true
+        text.textStorage?.setAttributedString(haplotypeLegendContent())
+        text.setAccessibilityIdentifier("genotype-matrix-complete-haplotype-legend")
+        text.setAccessibilityLabel("Complete haplotype color legend")
+        scroll.documentView = text
+        let controller = NSViewController()
+        controller.view = scroll
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = controller
+        popover.contentSize = scroll.frame.size
+        haplotypeLegendPopover = popover
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        text.window?.makeFirstResponder(text)
     }
 
     private func candidateVisibilityChanged(
@@ -2120,7 +2321,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
     }
 
     private var usesBiologicalAlleleOrder: Bool {
-        result?.manifest.kind == "full-length-ont-mhc-genotype"
+        result?.manifest.kind == "full-length-ont-mhc-genotype" || hasEmbeddedMHCAlleles
     }
 
     /// Candidate projection is deliberately confined to the full-length MHC
@@ -2162,6 +2363,12 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
             && freeTextMatchesAnyGenotypeRow(normalizedFilter)
         let activeSamples = Set(activeSampleNames())
         visibleRows = allRows.filter { row in
+            if displayState.diagnosticAllelesOnly {
+                guard haplotypeEvidence.isDiagnostic(locus: row.locus, genotype: row.genotype),
+                      row.sampleSupport.contains(where: { activeSamples.contains($0.sample) && $0.passedUniqueReads > 0 }) else {
+                    return false
+                }
+            }
             // Manual row visibility precedes shared quick search.
             if !visibilityState.allows(row: row.id) {
                 return false
@@ -2538,12 +2745,16 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         ascending: Bool
     ) -> Bool {
         let ordered: ComparisonResult
-        if isBiologicalAlleleSortKey(key) {
+        if usesNumericReferenceOrder, key == ColumnID.genotype.rawValue,
+           let numericOrder = GenotypeReferenceNumericPrefixOrder.compare(lhs.genotype, rhs.genotype) {
+            ordered = numericOrder
+        } else if isBiologicalAlleleSortKey(key) {
             ordered = MHCAlleleDisplayOrder.compare(
                 biologicalAlleleDisplayName(for: lhs),
                 biologicalAlleleDisplayName(for: rhs),
                 lhsStableID: lhs.biologicalSortTieID,
-                rhsStableID: rhs.biologicalSortTieID
+                rhsStableID: rhs.biologicalSortTieID,
+                locusDisplayOrder: effectiveLocusDisplayOrder
             )
         } else {
             switch key {
@@ -2597,7 +2808,8 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
     }
 
     private func isBiologicalAlleleSortKey(_ key: String) -> Bool {
-        guard usesBiologicalAlleleOrder else { return false }
+        guard usesBiologicalAlleleOrder || effectiveLocusDisplayOrder != nil else { return false }
+        if key == ColumnID.locus.rawValue, effectiveLocusDisplayOrder != nil { return true }
         if key == ColumnID.genotype.rawValue { return true }
         guard let alleleFieldKey else { return false }
         return key == ColumnID.reference(alleleFieldKey).rawValue
@@ -2691,7 +2903,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
                 typographyBaselineColumnWidths[column.identifier.rawValue] ?? column.width
         }
         restoredColumnWidths = widths
-        columnDefaults.set(widths.mapValues { Double($0) }, forKey: Self.columnWidthsKey)
+        columnDefaults.set(widths.mapValues { Double($0) }, forKey: activeColumnWidthsKey)
         updatePinnedWidth()
         setHeaderViewsNeedDisplay()
     }
@@ -2935,7 +3147,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         case ColumnID.samples:
             return ("\(row.sampleCount)", .right, nil)
         case ColumnID.uniqueReads:
-            return (integer(row.totalUniqueReads), .right, "Total unique reads across supporting samples")
+            return (integer(row.totalUniqueReads), .right, "Sum of supporting unique reads across all samples in this result")
         default:
             if identifier.rawValue.hasPrefix(ColumnID.referencePrefix) {
                 let key = String(identifier.rawValue.dropFirst(ColumnID.referencePrefix.count))
@@ -3076,6 +3288,17 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         var lines: [String] = []
         if let base, !base.isEmpty {
             lines.append(base)
+        }
+        if displayState.cellColorMode == .haplotype {
+            let matches = haplotypeSupport(sample: sample, row: row)
+            if !matches.isEmpty {
+                let names = matches.map { "\($0.name) (\($0.locus))" }.joined(separator: ", ")
+                lines.append(Set(matches.map { "\($0.name):\($0.fillColor.hexString)" }).count > 1
+                    ? "Supports \(names) — shared support; not haplotype-specific"
+                    : "Supports \(names)")
+            } else if (support(for: sample, row: row)?.passedUniqueReads ?? 0) > 0 {
+                lines.append("No assignment to a currently called haplotype")
+            }
         }
         lines.append(contentsOf: cachedRowCommentTooltips(row))
         if let column = sidecarColumnCommentTooltips[sample] {
@@ -5494,7 +5717,7 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         updateNativeHeaderLayout(ordinaryHeight: headerHeight)
         filterHeightConstraint?.constant = max(24, ceil(typography.font(for: .body).boundingRectForFont.height + 8))
         reviewLegendHeightConstraint?.constant = max(
-            15,
+            26,
             ceil(typography.font(for: .caption).boundingRectForFont.height + 4)
         )
         applyManualHaplotypeBandPresentation()
@@ -5859,6 +6082,10 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         row: GenotypeCandidateMatrixRow
     ) -> GenotypeMatrixRenderedStyle {
         var rendered = mergedRenderedStyle(for: sampleColumnLookup[identifier], row: row)
+        if let sample = sampleColumnLookup[identifier], displayState.cellColorMode == .haplotype {
+            applyHaplotypeColor(to: &rendered, sample: sample, row: row,
+                                isFiltered: hidesFilteredCellAppearance(identifier: identifier, row: row))
+        }
         let effectiveBackground: AnnotationColor?
         if displayState.cellColorMode != .none, let fillColor = rendered.fillColor {
             effectiveBackground = fillColor
@@ -5880,9 +6107,45 @@ final class GenotypeComparisonMatrixView: NSView, NSTableViewDataSource, NSTable
         row: GenotypeCandidateMatrixRow
     ) -> GenotypeMatrixRenderedStyle {
         var rendered = mergedRenderedStyle(for: sample, row: row)
+        if let sample, displayState.cellColorMode == .haplotype {
+            let isFiltered = sampleColumnIdentifierByName[sample].map {
+                hidesFilteredCellAppearance(identifier: $0, row: row)
+            } ?? false
+            applyHaplotypeColor(to: &rendered, sample: sample, row: row, isFiltered: isFiltered)
+        }
         let background = rendered.fillColor
         applyAutomaticTextContrast(to: &rendered, against: background)
         return rendered
+    }
+
+    private func haplotypeSupport(
+        sample: String,
+        row: GenotypeCandidateMatrixRow
+    ) -> [GenotypeAlleleHaplotypeEvidenceIndex.Support] {
+        guard row.population == .known,
+              (support(for: sample, row: row)?.passedUniqueReads ?? 0) > 0,
+              reviewDisposition(for: sample, row: row) != .falsePositive else { return [] }
+        return haplotypeEvidence.support(locus: row.locus, genotype: row.genotype, sample: sample)
+    }
+
+    private func applyHaplotypeColor(
+        to rendered: inout GenotypeMatrixRenderedStyle,
+        sample: String,
+        row: GenotypeCandidateMatrixRow,
+        isFiltered: Bool
+    ) {
+        // Semantic mode owns the fill. Stored analyst highlights are still
+        // available in Highlights mode, but cannot imply haplotype support here.
+        rendered.fillColor = nil
+        rendered.textColor = nil
+        guard !isFiltered else { return }
+        let matches = haplotypeSupport(sample: sample, row: row)
+        let assignments = Set(matches.map { "\($0.name):\($0.fillColor.hexString)" })
+        if assignments.count == 1 {
+            rendered.fillColor = matches.first?.fillColor
+        } else if assignments.count > 1 {
+            rendered.fillColor = AnnotationColor(red: 0.85, green: 0.85, blue: 0.85)
+        }
     }
 
     private func mergedRenderedStyle(
@@ -6869,6 +7132,8 @@ enum GenotypeCandidateMatrixTestingColumn {
 extension GenotypeComparisonMatrixView {
     static func testingResetPersistedReferenceVisibility() {
         UserDefaults.standard.removeObject(forKey: referenceVisibilityKey)
+        UserDefaults.standard.removeObject(forKey: mhcReferenceVisibilityKey)
+        UserDefaults.standard.removeObject(forKey: mhcStandardVisibilityKey)
     }
 
     var testingVisibleRows: [GenotypeCandidateMatrixRow] { visibleRows }

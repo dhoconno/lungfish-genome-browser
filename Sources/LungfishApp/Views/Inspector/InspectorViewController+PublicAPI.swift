@@ -503,6 +503,7 @@ extension InspectorViewController {
         // Mirror the current display-state knobs into the document state so
         // Inspector controls render with the right values when the section appears.
         var currentDisplay = viewModel.genotypeResultDisplaySectionViewModel.displayState
+        currentDisplay.genotypeLocusDisplayOrder = sidecar.settings.genotypeLocusDisplayOrder
         if result.manifest.kind == "full-length-ont-mhc-genotype", result.mhcCandidates != nil {
             currentDisplay.mhcCandidateDisplaySettings = sidecar.settings.mhcCandidateDisplay
         } else {
@@ -676,6 +677,7 @@ extension InspectorViewController {
                 )
             }
             var displayState = viewModel.genotypeResultDisplaySectionViewModel.displayState
+            displayState.genotypeLocusDisplayOrder = sidecar.settings.genotypeLocusDisplayOrder
             if viewModel.genotypeResultDisplaySectionViewModel.mhcCandidateControlsAvailable {
                 displayState.mhcCandidateDisplaySettings = sidecar.settings.mhcCandidateDisplay
             }

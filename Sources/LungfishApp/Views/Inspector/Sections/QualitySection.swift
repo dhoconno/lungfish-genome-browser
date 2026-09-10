@@ -118,7 +118,7 @@ public struct QualitySection: View {
             }
         } label: {
             Text("Quality")
-                .font(.headline)
+                .font(LungfishInspectorStyle.sectionTitleFont)
         }
     }
 
@@ -163,10 +163,10 @@ public struct QualitySection: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Mean Quality")
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                     Spacer()
                     Text(String(format: "%.1f", stats.meanQuality))
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                         .fontWeight(.medium)
                         .monospacedDigit()
                 }
@@ -180,14 +180,14 @@ public struct QualitySection: View {
                 HStack {
                     HStack(spacing: 4) {
                         Text("Q20")
-                            .font(.callout)
+                            .font(LungfishInspectorStyle.controlFont)
                         Text("(>= 20)")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.tertiary)
                     }
                     Spacer()
                     Text(String(format: "%.1f%%", stats.q20Percentage))
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                         .fontWeight(.medium)
                         .monospacedDigit()
                 }
@@ -201,14 +201,14 @@ public struct QualitySection: View {
                 HStack {
                     HStack(spacing: 4) {
                         Text("Q30")
-                            .font(.callout)
+                            .font(LungfishInspectorStyle.controlFont)
                         Text("(>= 30)")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.tertiary)
                     }
                     Spacer()
                     Text(String(format: "%.1f%%", stats.q30Percentage))
-                        .font(.callout)
+                        .font(LungfishInspectorStyle.controlFont)
                         .fontWeight(.medium)
                         .monospacedDigit()
                 }
@@ -231,7 +231,7 @@ public struct QualitySection: View {
                         .monospacedDigit()
                 }
             }
-            .font(.callout)
+            .font(LungfishInspectorStyle.controlFont)
         }
     }
 
@@ -244,10 +244,10 @@ public struct QualitySection: View {
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text("No quality data available")
-                .font(.callout)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
             Text("Quality scores are only available for FASTQ files")
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }

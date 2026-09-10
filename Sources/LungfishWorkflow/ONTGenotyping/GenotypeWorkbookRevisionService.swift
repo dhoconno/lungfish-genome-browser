@@ -2420,9 +2420,21 @@ public struct GenotypeWorkbookRevisionService {
             in: bundleURL,
             role: "current workbook provenance"
         )
+        let data = try Data(contentsOf: provenanceURL)
+        // Initial miSeq workbooks use the Python report writer's v1 provenance,
+        // which has flat options and startedAt/completedAt, not an envelope.
+        // That writer never creates managed annotation state. Preserve its
+        // provenance verbatim and begin a new authority on the first update.
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if object?["schemaVersion"] == nil,
+           object?["toolName"] as? String == "lungfish fastq ont-barcode-genotype workbook report",
+           object?["toolVersion"] as? String == "1",
+           object?["mode"] as? String == "mcm-client-current" {
+            return nil
+        }
         let envelope = try ProvenanceJSON.decoder.decode(
             ProvenanceEnvelope.self,
-            from: Data(contentsOf: provenanceURL)
+            from: data
         )
         return envelope.options.explicit["managedWorkbookStateAuthority"]?.stringValue
     }

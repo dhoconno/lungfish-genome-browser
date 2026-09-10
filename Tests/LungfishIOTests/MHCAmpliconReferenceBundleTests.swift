@@ -4,6 +4,17 @@ import LungfishCore
 @testable import LungfishIO
 
 final class MHCAmpliconReferenceBundleTests: XCTestCase {
+    func testManifestRetainsOptionalGenotypeLocusDisplayOrder() throws {
+        let data = Data(#"""
+        {"schemaVersion":1,"kind":"mhc-reference","name":"MCM","referenceFastaPath":"ref.fa",
+         "haplotypeDefinitionPaths":[],"metrics":{"referenceCount":1,"haplotypeDefinitionCount":0},
+         "createdAt":"2026-09-09T00:00:00Z","genotypeLocusDisplayOrder":["MHC-F","MHC-A2/A3/A4/A5","MHC-B"]}
+        """#.utf8)
+        let manifest = try JSONDecoder().decode(MHCAmpliconReferenceBundleManifest.self, from: data)
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(manifest)) as? [String: Any])
+        XCTAssertEqual(encoded["genotypeLocusDisplayOrder"] as? [String], ["MHC-F", "MHC-A2/A3/A4/A5", "MHC-B"])
+    }
+
     func testWritesManifestAndResolvesReferenceAndHaplotypeDefinitions() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MHCAmpliconReferenceBundleTests-\(UUID().uuidString)", isDirectory: true)

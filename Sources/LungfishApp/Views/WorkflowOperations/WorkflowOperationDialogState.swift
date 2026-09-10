@@ -39,7 +39,7 @@ enum WorkflowOperationAmpliconAnalysisMode: String, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .aiSpecialistPreset: return "AI preset"
-        case .deterministicHaplotyping: return "Deterministic"
+        case .deterministicHaplotyping: return "Defined haplotypes"
         case .genotypeOnly: return "Genotype only"
         }
     }
@@ -47,11 +47,11 @@ enum WorkflowOperationAmpliconAnalysisMode: String, CaseIterable, Sendable {
     var helpText: String {
         switch self {
         case .aiSpecialistPreset:
-            return "Uses a preset reference and specialist analyst prompt."
+            return "Use a preset reference and AI analysis. Review its conclusions against the read evidence."
         case .deterministicHaplotyping:
-            return "Uses the selected reference and a haplotype definition."
+            return "Report detected alleles and match diagnostic evidence to the selected haplotype definitions."
         case .genotypeOnly:
-            return "Maps reads and reports genotypes without haplotyping."
+            return "Report detected alleles and supporting reads without assigning haplotypes."
         }
     }
 }
@@ -578,7 +578,7 @@ final class WorkflowOperationDialogState {
         if selectedTool?.kind == .ontGenotyping,
            selectedAmpliconAnalysisMode == .deterministicHaplotyping,
            selectedHaplotypeDefinitionSetID == nil {
-            return "Select a deterministic haplotype definition, or choose genotype-only."
+            return "Choose a haplotype definition, or select Genotype only."
         }
         if selectedTool?.kind == .fullLengthONTMHCGenotyping,
            haplotypeDropoutLocusPercent < 0 || haplotypeDropoutLocusPercent > 100 {

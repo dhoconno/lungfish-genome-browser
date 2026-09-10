@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import SwiftUI
+import LungfishKit
 import LungfishCore
 import LungfishIO
 
@@ -18,6 +19,10 @@ import LungfishIO
 /// - `onAddComment`: invoked with the text the analyst entered in the new-comment field
 ///   when they tap Add.
 struct GenotypeStatusFlagSection: View {
+    private let typographyModel = ContentTypographyModel.shared
+    private var contentBodyFont: Font { typographyModel.font(for: .body) }
+    private var contentHeadingFont: Font { typographyModel.font(for: .emphasizedBody) }
+
     @Binding var status: GenotypeAnnotationSidecar.StatusValue
     let comments: [GenotypeAnnotationSidecar.CellComment]
     var onAddComment: (String) -> Void
@@ -36,17 +41,18 @@ struct GenotypeStatusFlagSection: View {
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(contentHeadingFont)
     }
 
     // MARK: - Sub-views
 
     private var statusRow: some View {
-        HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Status")
-                .font(.caption)
+                .font(contentBodyFont)
                 .foregroundStyle(.secondary)
-                .frame(width: 118, alignment: .trailing)
+                .frame(maxWidth: 118, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
             Picker("", selection: $status) {
                 ForEach(GenotypeAnnotationSidecar.StatusValue.allCases, id: \.self) { value in
                     Text(displayName(for: value)).tag(value)
@@ -54,8 +60,8 @@ struct GenotypeStatusFlagSection: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .font(.caption)
-            .controlSize(.small)
+            .font(contentBodyFont)
+            .controlSize(.regular)
             .accessibilityIdentifier("genotypeStatusFlagPicker")
         }
     }
@@ -65,18 +71,19 @@ struct GenotypeStatusFlagSection: View {
         if comments.isEmpty {
             HStack(alignment: .firstTextBaseline) {
                 Text("Comments")
-                    .font(.caption)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
-                    .frame(width: 118, alignment: .trailing)
+                    .frame(maxWidth: 118, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
                 Text("No comments yet.")
-                    .font(.caption)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Comments")
-                    .font(.caption)
+                    .font(contentBodyFont)
                     .foregroundStyle(.secondary)
                 ForEach(Array(comments.enumerated()), id: \.offset) { _, comment in
                     commentRow(comment)
@@ -90,15 +97,15 @@ struct GenotypeStatusFlagSection: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(comment.author)
-                    .font(.caption2.weight(.semibold))
+                    .font(contentHeadingFont)
                     .foregroundStyle(.primary)
                 Text(comment.timestamp)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(contentBodyFont)
+                    .foregroundStyle(.secondary)
                 Spacer()
             }
             Text(comment.body)
-                .font(.caption)
+                .font(contentBodyFont)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -111,19 +118,20 @@ struct GenotypeStatusFlagSection: View {
     }
 
     private var addCommentRow: some View {
-        HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Add")
-                .font(.caption)
+                .font(contentBodyFont)
                 .foregroundStyle(.secondary)
-                .frame(width: 118, alignment: .trailing)
+                .frame(maxWidth: 118, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
             TextField("New comment", text: $newCommentText)
                 .textFieldStyle(.roundedBorder)
-                .font(.caption)
-                .controlSize(.small)
+                .font(contentBodyFont)
+                .controlSize(.regular)
                 .accessibilityIdentifier("genotypeAddCommentField")
                 .onSubmit(addComment)
             Button("Add", action: addComment)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .disabled(trimmed.isEmpty)
                 .accessibilityIdentifier("genotypeAddCommentButton")
         }

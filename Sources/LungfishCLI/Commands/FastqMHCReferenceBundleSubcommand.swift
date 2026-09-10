@@ -22,6 +22,9 @@ struct FastqMHCReferenceBundleSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("default-haplotype-definition"), help: "Default embedded haplotype definition set ID")
     var defaultHaplotypeDefinition: String?
 
+    @Option(name: .customLong("genotype-locus-display-order"), help: "Genotype matrix locus or slash-delimited locus group in display order; repeat for each position")
+    var genotypeLocusDisplayOrder: [String] = []
+
     @Option(name: .customLong("output"), help: "Output .lungfishmhcref bundle")
     var output: String
 
@@ -57,10 +60,12 @@ struct FastqMHCReferenceBundleSubcommand: AsyncParsableCommand {
             outputURL: URL(fileURLWithPath: output),
             name: name,
             defaultHaplotypeDefinitionID: defaultHaplotypeDefinition,
+            genotypeLocusDisplayOrder: genotypeLocusDisplayOrder.isEmpty ? nil : genotypeLocusDisplayOrder,
             sourceFiles: sourceFiles.map { URL(fileURLWithPath: $0) },
             sourceDirectories: sourceDirectories.map { URL(fileURLWithPath: $0) },
             forceOverwrite: force,
-            argv: replayArgv()
+            argv: replayArgv(),
+            provenanceToolVersion: LungfishAppVersion.cliToolVersion
         )
     }
 
@@ -78,6 +83,9 @@ struct FastqMHCReferenceBundleSubcommand: AsyncParsableCommand {
         }
         if let name {
             argv += ["--name", name]
+        }
+        for locus in genotypeLocusDisplayOrder {
+            argv += ["--genotype-locus-display-order", locus]
         }
         for sourceFile in sourceFiles {
             argv += ["--source-file", sourceFile]

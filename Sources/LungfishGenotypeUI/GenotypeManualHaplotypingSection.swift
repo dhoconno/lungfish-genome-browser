@@ -1,6 +1,7 @@
 import LungfishCore
 import LungfishIO
 import SwiftUI
+import LungfishKit
 
 /// Artifact-lens summary for assignments edited in the selected sample's
 /// Detail Inspector. Assignment creation belongs to the sample-scoped editor;
@@ -27,11 +28,11 @@ struct GenotypeManualHaplotypingSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Manual haplotype assignments")
-                .font(.subheadline.weight(.semibold))
+                .font(ContentTypographyModel.shared.font(for: .emphasizedBody))
             Text(
                 "Select one sample column to add or edit its ordered H1 and H2 assignments in the Detail Inspector."
             )
-            .font(.caption2)
+            .font(ContentTypographyModel.shared.font(for: .body))
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
@@ -39,17 +40,17 @@ struct GenotypeManualHaplotypingSection: View {
 
             if manualAssignments.isEmpty {
                 Text("No saved assignments.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(ContentTypographyModel.shared.font(for: .body))
+                    .foregroundStyle(.secondary)
             } else {
                 Text(assignmentSummary)
-                    .font(.caption.weight(.semibold))
+                    .font(ContentTypographyModel.shared.font(for: .body).weight(.semibold))
                 ForEach(sampleSummaries, id: \.sample) { summary in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(summary.sample)
-                            .font(.caption.weight(.semibold))
+                            .font(ContentTypographyModel.shared.font(for: .body).weight(.semibold))
                         Text(summary.labels)
-                            .font(.caption2)
+                            .font(ContentTypographyModel.shared.font(for: .body))
                             .foregroundStyle(.secondary)
                             .lineLimit(3)
                     }
@@ -133,11 +134,11 @@ struct GenotypeLegacyManualHaplotypingSection: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Manual haplotyping")
-                .font(.subheadline.weight(.semibold))
+                .font(ContentTypographyModel.shared.font(for: .emphasizedBody))
             Text(
                 "No reference haplotype set is available. Group observed genotypes into haplotypes; this bundle's annotations sidecar stores the assignments."
             )
-            .font(.caption2)
+            .font(ContentTypographyModel.shared.font(for: .body))
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -146,12 +147,12 @@ struct GenotypeLegacyManualHaplotypingSection: View {
     private var existingAssignments: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Saved haplotypes")
-                .font(.caption.weight(.semibold))
+                .font(ContentTypographyModel.shared.font(for: .body).weight(.semibold))
                 .foregroundStyle(.secondary)
             if manualAssignments.isEmpty {
                 Text("None yet.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(ContentTypographyModel.shared.font(for: .body))
+                    .foregroundStyle(.secondary)
             } else {
                 ForEach(
                     Array(uniqueLabels.enumerated()),
@@ -177,9 +178,9 @@ struct GenotypeLegacyManualHaplotypingSection: View {
                             .frame(width: 10, height: 10)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(label)
-                                .font(.caption.weight(.semibold))
+                                .font(ContentTypographyModel.shared.font(for: .body).weight(.semibold))
                             Text(alleles.joined(separator: ", "))
-                                .font(.caption2)
+                                .font(ContentTypographyModel.shared.font(for: .body))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                                 .truncationMode(.tail)
@@ -201,7 +202,7 @@ struct GenotypeLegacyManualHaplotypingSection: View {
                 "Export Manual Definitions\u{2026}",
                 action: onExportDefinitions
             )
-            .controlSize(.small)
+            .controlSize(.regular)
             .disabled(exportIsDisabled)
         }
     }
@@ -209,7 +210,7 @@ struct GenotypeLegacyManualHaplotypingSection: View {
     private func locusGroup(_ locus: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(locus)
-                .font(.caption.weight(.semibold))
+                .font(ContentTypographyModel.shared.font(for: .body).weight(.semibold))
                 .foregroundStyle(.secondary)
             let locusRows = rows.filter { $0.locus == locus }
                 .sorted { $0.totalReads > $1.totalReads }
@@ -230,7 +231,7 @@ struct GenotypeLegacyManualHaplotypingSection: View {
                         )
                     ) {
                         Text(row.genotype)
-                            .font(.caption.monospaced())
+                            .font(ContentTypographyModel.shared.font(for: .body).monospaced())
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
@@ -239,7 +240,7 @@ struct GenotypeLegacyManualHaplotypingSection: View {
                     Text(
                         "\(row.sampleCount) samp\u{00B7}\(row.totalReads) rd"
                     )
-                    .font(.caption2.monospacedDigit())
+                    .font(ContentTypographyModel.shared.font(for: .body).monospacedDigit())
                     .foregroundStyle(.secondary)
                 }
             }
@@ -251,14 +252,14 @@ struct GenotypeLegacyManualHaplotypingSection: View {
             Text(
                 "Create haplotype from \(selectedGenotypeIds.count) selected"
             )
-            .font(.caption.weight(.semibold))
+            .font(ContentTypographyModel.shared.font(for: .body).weight(.semibold))
             .foregroundStyle(.secondary)
             TextField(
                 "Label (e.g. Custom-A1)",
                 text: $draftLabel
             )
             .textFieldStyle(.roundedBorder)
-            .font(.caption)
+            .font(ContentTypographyModel.shared.font(for: .body))
             HStack(spacing: 4) {
                 ForEach(
                     0..<HaplotypeColorToken.canonicalPalette.count,
@@ -297,7 +298,7 @@ struct GenotypeLegacyManualHaplotypingSection: View {
                 "Create haplotype",
                 action: onCreateHaplotype
             )
-            .controlSize(.small)
+            .controlSize(.regular)
             .disabled(
                 selectedGenotypeIds.isEmpty
                     || draftLabel.isEmpty

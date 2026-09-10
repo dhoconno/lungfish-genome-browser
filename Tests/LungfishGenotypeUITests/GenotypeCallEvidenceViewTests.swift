@@ -501,6 +501,28 @@ final class GenotypeCallEvidenceViewTests: XCTestCase {
         )
     }
 
+    func testCustomPendingOverridePreservesArbitraryNameAndRationale() {
+        var pending = GenotypeCallEvidenceView.PendingOverrides()
+        let request = GenotypeCallEvidenceView.HaplotypeOverrideRequest(
+            slot: .h2, haplotypeName: "Family North / novel-42", rationale: "Confirmed by independent pedigree review", reasonTag: .novel
+        )
+        pending.stage(request)
+        XCTAssertEqual(pending.requests, [request])
+        XCTAssertEqual(pending.target(for: .h2), request.haplotypeName)
+        pending.stage(.init(slot: .h2, haplotypeName: "?"))
+        XCTAssertEqual(pending.requests, [.init(slot: .h2, haplotypeName: "?")])
+    }
+
+    func testCustomOverrideRequiresNameRationaleAndExplicitAcknowledgement() {
+        var draft = GenotypeOverrideSection.OverrideDraft(target: "Family North", rationale: "Pedigree reviewed")
+        XCTAssertFalse(GenotypeOverrideSection.canSave(draft, requiresAcknowledgement: true, acknowledged: false))
+        XCTAssertTrue(GenotypeOverrideSection.canSave(draft, requiresAcknowledgement: true, acknowledged: true))
+        draft.rationale = "  \n"
+        XCTAssertFalse(GenotypeOverrideSection.canSave(draft, requiresAcknowledgement: true, acknowledged: true))
+        draft.target = "  \n"
+        XCTAssertFalse(GenotypeOverrideSection.canSave(draft, requiresAcknowledgement: false, acknowledged: true))
+    }
+
     func testPendingOverridesCanStageBothSlotsBeforeApply() {
         var pending = GenotypeCallEvidenceView.PendingOverrides()
 

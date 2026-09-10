@@ -321,7 +321,7 @@ public struct SampleSection: View {
                 }
             } label: {
                 Label("Sample Display", systemImage: "person.3")
-                    .font(.headline)
+                    .font(LungfishInspectorStyle.sectionTitleFont)
             }
         }
     }
@@ -333,7 +333,7 @@ public struct SampleSection: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Samples")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                     .frame(width: 60, alignment: .trailing)
                 Text("\(viewModel.sampleCount)")
@@ -342,7 +342,7 @@ public struct SampleSection: View {
             if viewModel.hasHiddenSamples {
                 HStack {
                     Text("Visible")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                         .frame(width: 60, alignment: .trailing)
                     Text("\(viewModel.visibleSampleCount) of \(viewModel.sampleCount)")
@@ -351,7 +351,7 @@ public struct SampleSection: View {
             }
 
             Text("Use the Samples tab in the bottom drawer to manage visibility and metadata.")
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.tertiary)
         }
     }
@@ -372,11 +372,11 @@ public struct SampleSection: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Row Height")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                         Spacer()
                         Text("\(Int(viewModel.displayState.rowHeight))px")
-                            .font(.system(.caption, design: .monospaced))
+                            .font(LungfishInspectorStyle.controlFont.monospaced())
                             .foregroundStyle(.secondary)
                     }
                     Slider(
@@ -404,11 +404,11 @@ public struct SampleSection: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Bar Height")
-                            .font(.caption)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                         Spacer()
                         Text("\(Int(viewModel.displayState.summaryBarHeight))px")
-                            .font(.system(.caption, design: .monospaced))
+                            .font(LungfishInspectorStyle.controlFont.monospaced())
                             .foregroundStyle(.secondary)
                     }
                     Slider(
@@ -427,7 +427,7 @@ public struct SampleSection: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Color Theme")
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.secondary)
                 Picker("", selection: Binding(
                     get: { viewModel.displayState.colorThemeName },

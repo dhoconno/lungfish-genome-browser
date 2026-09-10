@@ -6,6 +6,9 @@ public struct FASTASequenceActionHandlers {
     public var onExtractSequence: (() -> Void)? = nil
     public var blastMenuTitle: String = "Verify with BLAST…"
     public var onBlast: (() -> Void)?
+    public var onCopyNames: (() -> Void)?
+    public var onCopySequences: (() -> Void)?
+    public var onCopyFullNames: (() -> Void)?
     public var onCopy: (() -> Void)?
     public var onExport: (() -> Void)?
     public var onCreateBundle: (() -> Void)?
@@ -22,6 +25,9 @@ public struct FASTASequenceActionHandlers {
         onExtractSequence: (() -> Void)? = nil,
         blastMenuTitle: String = "Verify with BLAST…",
         onBlast: (() -> Void)? = nil,
+        onCopyNames: (() -> Void)? = nil,
+        onCopySequences: (() -> Void)? = nil,
+        onCopyFullNames: (() -> Void)? = nil,
         onCopy: (() -> Void)? = nil,
         onExport: (() -> Void)? = nil,
         onCreateBundle: (() -> Void)? = nil,
@@ -33,6 +39,9 @@ public struct FASTASequenceActionHandlers {
         self.onExtractSequence = onExtractSequence
         self.blastMenuTitle = blastMenuTitle
         self.onBlast = onBlast
+        self.onCopyNames = onCopyNames
+        self.onCopySequences = onCopySequences
+        self.onCopyFullNames = onCopyFullNames
         self.onCopy = onCopy
         self.onExport = onExport
         self.onCreateBundle = onCreateBundle
@@ -90,6 +99,9 @@ public enum FASTASequenceActionMenuBuilder {
                 : nil,
             to: &items
         )
+        addItem(titled: selectionCount > 1 ? "Copy Names" : "Copy Name", handler: handlers.onCopyNames, enabled: isEnabled, to: &items)
+        addItem(titled: selectionCount > 1 ? "Copy Full Reference Names" : "Copy Full Reference Name", handler: handlers.onCopyFullNames, enabled: isEnabled, to: &items)
+        addItem(titled: selectionCount > 1 ? "Copy Sequences" : "Copy Sequence", handler: handlers.onCopySequences, enabled: isEnabled, to: &items)
         addItem(
             titled: "Copy FASTA",
             handler: handlers.onCopy,

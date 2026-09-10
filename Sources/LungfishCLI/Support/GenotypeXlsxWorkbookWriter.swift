@@ -472,9 +472,13 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
         separator: String
     ) -> String {
         var lines: [String] = []
-        lines.append(delimitedRow(["Locus", "Row"] + projection.sampleColumns, separator: separator))
+        let totalHeader = projection.includeTotalReads == true ? ["Total reads"] : []
+        lines.append(delimitedRow(["Locus", "Row"] + projection.sampleColumns + totalHeader, separator: separator))
         for row in projection.rows {
-            lines.append(delimitedRow([row.locus ?? "", row.label] + row.cells, separator: separator))
+            let totalCells = projection.includeTotalReads == true
+                ? [String(row.cells.prefix(projection.sampleColumns.count).compactMap(Int.init).reduce(0, +))]
+                : []
+            lines.append(delimitedRow([row.locus ?? "", row.label] + row.cells + totalCells, separator: separator))
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -871,7 +875,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
                 let row = projection.rows[$0]
                 return ProjectionRowKey(
                     locus: row.locus,
-                    label: row.label,
+                    label: row.rawGenotype ?? row.label,
                     stableClusterID: row.stableClusterID
                 )
             }
@@ -1008,7 +1012,11 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
             lens: projection.lens,
             sampleColumns: projection.sampleColumns,
             rows: resolvedRows,
-            cellColorMode: projection.cellColorMode
+            cellColorMode: projection.cellColorMode,
+            genotypeLocusDisplayOrder: projection.genotypeLocusDisplayOrder,
+            genotypeNumericPrefixOrder: projection.genotypeNumericPrefixOrder,
+            diagnosticAllelesOnly: projection.diagnosticAllelesOnly,
+            includeTotalReads: projection.includeTotalReads
         )
         let resolvedRowsByKey = Dictionary(
             grouping: resolvedProjection.rows.indices,
@@ -1016,7 +1024,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
                 let row = resolvedProjection.rows[$0]
                 return ProjectionRowKey(
                     locus: row.locus,
-                    label: row.label,
+                    label: row.rawGenotype ?? row.label,
                     stableClusterID: row.stableClusterID
                 )
             }
@@ -1132,6 +1140,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
         for sample in projection.sampleColumns {
             header.append(.header(sample))
         }
+        if projection.includeTotalReads == true { header.append(.header("Total reads")) }
         sheet += rowXML(index: 1, cells: header)
 
         for (offset, row) in projection.rows.enumerated() {
@@ -1155,6 +1164,9 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
                     displayValue = value
                 }
                 cells.append(palette.styledCell(value: displayValue, hex: hex, review: review))
+            }
+            if projection.includeTotalReads == true {
+                cells.append(.number(row.cells.prefix(projection.sampleColumns.count).compactMap(Int.init).reduce(0, +)))
             }
             sheet += rowXML(index: offset + 2, cells: cells)
         }
@@ -1236,7 +1248,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
                     let row = projection.rows[$0]
                     return ProjectionRowKey(
                         locus: row.locus,
-                        label: row.label,
+                        label: row.rawGenotype ?? row.label,
                         stableClusterID: row.stableClusterID
                     )
                 }
@@ -1498,6 +1510,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
     enum StyledCell {
         case header(String)
         case body(String)
+        case number(Int)
         case error(String)
         case haplotype(String, tokenIndex: Int)
         /// A view-projection cell whose fill resolves to an explicit style
@@ -1507,6 +1520,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
         var value: String {
             switch self {
             case .header(let v), .body(let v), .error(let v): return v
+            case .number(let v): return String(v)
             case .haplotype(let v, _): return v
             case .dynamic(let v, _): return v
             }
@@ -1515,7 +1529,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
         var styleID: Int {
             switch self {
             case .header: return 1
-            case .body: return 0
+            case .body, .number: return 0
             case .error: return Self.errorStyleID
             case .haplotype(_, let tokenIndex):
                 // Style IDs are laid out as:
@@ -1557,6 +1571,9 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
     private func rowXML(index: Int, cells: [StyledCell]) -> String {
         let cellXML = cells.enumerated().map { (col, cell) -> String in
             let ref = "\(columnLetter(col + 1))\(index)"
+            if case .number(let value) = cell {
+                return #"<c r="\#(ref)" s="\#(cell.styleID)" t="n"><v>\#(value)</v></c>"#
+            }
             let escaped = xmlEscape(cell.value)
             return #"<c r="\#(ref)" s="\#(cell.styleID)" t="inlineStr"><is><t>\#(escaped)</t></is></c>"#
         }.joined()
@@ -1803,6 +1820,7 @@ struct GenotypeXlsxWorkbookWriter: Sendable {
         var fonts = [
             #"<font><sz val="11"/><name val="Aptos"/></font>"#,
             #"<font><b/><sz val="11"/><name val="Aptos"/></font>"#,
+            #"<font><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/></font>"#,
             #"<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/></font>"#,
         ]
         for index in 1...7 {
@@ -1913,7 +1931,7 @@ private struct ProjectionPalette {
                 let review = reviews[
                     .init(row: rowIndex, sampleColumn: sampleIndex)
                 ]
-                register(StyleKey(hex: hex, bold: hex != nil, review: review))
+                register(StyleKey(hex: hex, bold: false, review: review))
             }
         }
         for (offset, key) in orderedKeys.enumerated() {
@@ -1927,7 +1945,7 @@ private struct ProjectionPalette {
         bold: Bool = false,
         review: GenotypeAnnotationSidecar.MatrixReviewDisposition? = nil
     ) -> GenotypeXlsxWorkbookWriter.StyledCell {
-        let key = StyleKey(hex: Self.normalize(hex), bold: bold || hex != nil, review: review)
+        let key = StyleKey(hex: Self.normalize(hex), bold: bold, review: review)
         guard let index = styleIndexByKey[key] else {
             return bold ? .header(value) : .body(value)
         }
@@ -1939,6 +1957,18 @@ private struct ProjectionPalette {
         let trimmed = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
         guard trimmed.count == 6, trimmed.allSatisfy(\.isHexDigit) else { return nil }
         return trimmed.uppercased()
+    }
+
+    /// Choose black or white using WCAG relative luminance for readable fills.
+    private static func needsWhiteText(_ hex: String?) -> Bool {
+        guard let hex, let rgb = UInt32(hex, radix: 16) else { return false }
+        func linear(_ component: UInt32) -> Double {
+            let value = Double(component) / 255
+            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear((rgb >> 16) & 255)
+            + 0.7152 * linear((rgb >> 8) & 255) + 0.0722 * linear(rgb & 255)
+        return luminance < 0.179
     }
 
     var stylesXML: String {
@@ -1959,6 +1989,9 @@ private struct ProjectionPalette {
             #"<font><b/><sz val="11"/><name val="Aptos"/></font>"#,
             #"<font><i/><sz val="11"/><color rgb="FF767676"/><name val="Aptos"/></font>"#,
             #"<font><b/><sz val="11"/><color rgb="FF7F6000"/><name val="Aptos"/></font>"#,
+            #"<font><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/></font>"#,
+            #"<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/></font>"#,
+            #"<font><i/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/></font>"#,
         ]
         let fontsXML = fonts.joined()
 
@@ -1982,7 +2015,7 @@ private struct ProjectionPalette {
             switch key.review {
             case .falsePositive:
                 fillID = viewportFillID
-                fontID = 2
+                fontID = Self.needsWhiteText(key.hex) ? 6 : 2
                 borderID = 0
             case .falseNegative:
                 fillID = falseNegativeFillID
@@ -1990,7 +2023,7 @@ private struct ProjectionPalette {
                 borderID = 1
             case nil:
                 fillID = viewportFillID
-                fontID = key.bold ? 1 : 0
+                fontID = Self.needsWhiteText(key.hex) ? (key.bold ? 5 : 4) : (key.bold ? 1 : 0)
                 borderID = 0
             }
             let applyFill = fillID == 0 ? "" : #" applyFill="1""#

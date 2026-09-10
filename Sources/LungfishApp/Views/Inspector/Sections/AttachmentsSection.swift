@@ -34,12 +34,12 @@ struct AttachmentsSection: View {
 
             if let attachmentErrorMessage {
                 Text(attachmentErrorMessage)
-                    .font(.system(size: 10))
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(Color.lungfishDangerFallback)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(LungfishInspectorStyle.controlFont.weight(.semibold))
     }
 
     private func attachmentRow(_ attachment: BundleAttachment) -> some View {
@@ -54,7 +54,7 @@ struct AttachmentsSection: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(formatFileSize(attachment.fileSize))
-                    .font(.system(size: 9))
+                    .font(LungfishInspectorStyle.controlFont)
                     .foregroundStyle(.tertiary)
             }
 

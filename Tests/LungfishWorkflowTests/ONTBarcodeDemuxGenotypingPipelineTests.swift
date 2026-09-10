@@ -226,7 +226,8 @@ final class ONTBarcodeDemuxGenotypingPipelineTests: XCTestCase {
             definition: Self.mhcDefinition(
                 id: "MHC-exon2-miSeq.mauritian-cynomolgus-macaques",
                 assayID: "MHC-exon2-miSeq"
-            )
+            ),
+            genotypeLocusDisplayOrder: ["MHC-F", "MHC-B", "MHC-DQA"]
         )
         try "@r0\nACGT\n+\nIIII\n".write(to: inputFASTQ, atomically: true, encoding: .utf8)
         try "sample,barcode\nDW472,ACGT\n".write(to: barcodeDefinitions, atomically: true, encoding: .utf8)
@@ -256,6 +257,12 @@ final class ONTBarcodeDemuxGenotypingPipelineTests: XCTestCase {
                 bundledMicromambaVersionProvider: { "test-micromamba" }
             )
         ).run(request)
+
+        let portableManifest = try ONTGenotypeResultBundle.loadManifest(from: outputDirectory)
+        XCTAssertEqual(portableManifest.genotypeLocusDisplayOrder, ["MHC-F", "MHC-B", "MHC-DQA"])
+        let portableProvenance = try XCTUnwrap(ProvenanceEnvelopeReader.load(fromSidecar: outputDirectory.appendingPathComponent(portableManifest.provenancePath)))
+        XCTAssertNotNil(portableProvenance.options.explicit["genotypeLocusDisplayOrder"])
+        XCTAssertNotNil(portableProvenance.options.resolvedDefaults["genotypeLocusDisplayOrder"])
 
         let historyOperations = try FileManager.default.contentsOfDirectory(
             at: root.appendingPathComponent(
@@ -1154,6 +1161,58 @@ final class ONTBarcodeDemuxGenotypingPipelineTests: XCTestCase {
         let options = try XCTUnwrap(provenance["options"] as? [String: Any])
         let preparation = try XCTUnwrap(options["illuminaInputPreparation"] as? [String: Any])
         XCTAssertEqual(preparation["internalMergePerformed"] as? Bool, true)
+    }
+
+    func testImportedPlainFASTACompletesAmpliconPipelineAndRealWorkbook() async throws {
+        let python = ProcessInfo.processInfo.environment["LUNGFISH_TEST_OPENPYXL_PYTHON"]
+            ?? (try? runPython(["-c", "import openpyxl, sys; print(sys.executable)"]))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let python else { throw XCTSkip("An openpyxl Python runtime is required; set LUNGFISH_TEST_OPENPYXL_PYTHON") }
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let condaRoot = root.appendingPathComponent("conda", isDirectory: true)
+        let micromamba = try makeFakeONTGenotypingCondaRoot(at: condaRoot, genotypeRows: [
+            "DW001,05_M4_A1_031_01,11,11", "DW001,16_A102,3,3", "DW001,unclassified-control,2,2",
+        ])
+        // Mapping/filtering remain deterministic test doubles; the workbook writer
+        // runs the production Python script against a real openpyxl installation.
+        let reportPython = condaRoot.appendingPathComponent("envs/openpyxl/bin/python")
+        try FileManager.default.removeItem(at: reportPython)
+        try FileManager.default.createSymbolicLink(atPath: reportPython.path, withDestinationPath: python)
+        let fasta = root.appendingPathComponent("legacy.fa")
+        try ">05_M4_A1_031_01\nAACCGGTT\n>16_A102\nAAAACCCC\n>unclassified-control\nTTTTGGGG\n".write(to: fasta, atomically: true, encoding: .utf8)
+        let reference = try await ReferenceBundleBuilder().build(configuration: BuildConfiguration(
+            name: "Legacy raw", identifier: "test.legacy-raw", fastaURL: fasta,
+            outputDirectory: root, source: SourceInfo(organism: "Macaca fascicularis", assembly: "test"),
+            compressFASTA: false
+        ))
+        let sample = try makeMergedFASTQBundle(root: root, name: "DW001", sequence: "AACCGGTT")
+        let output = root.appendingPathComponent("legacy.lungfishgenotype", isDirectory: true)
+        let request = ONTBarcodeDemuxGenotypingRunRequest(
+            inputFASTQURLs: [sample.bundleURL], referenceSourceURL: reference,
+            outputDirectory: output, outputName: "legacy", threads: 2, sortThreads: 1,
+            minSupport: 1, mode: .illuminaPaired, readType: .illumina
+        )
+        _ = try await ONTBarcodeDemuxGenotypingPipeline(condaManager: CondaManager(
+            rootPrefix: condaRoot, bundledMicromambaProvider: { micromamba },
+            bundledMicromambaVersionProvider: { "test-micromamba" }
+        )).run(request)
+        let result = try ONTGenotypeResultBundle.loadResult(from: output)
+        XCTAssertEqual(Set(result.calls.map(\.genotype)), Set(["05_M4_A1_031_01", "16_A102", "unclassified-control"]))
+        XCTAssertEqual(result.calls.first { $0.genotype == "16_A102" }?.locusGroup, "Unknown")
+        let catalog = try XCTUnwrap(result.reviewableRowCatalog)
+        XCTAssertEqual(Set(catalog.rows.map(\.displayName)), Set(result.calls.map(\.genotype)))
+        XCTAssertEqual(catalog.rows.first { $0.displayName == "05_M4_A1_031_01" }?.supportBySample["DW001"], 11)
+        XCTAssertEqual(catalog.rows.first { $0.displayName == "16_A102" }?.locus, "Unknown")
+        let workbook = try ONTGenotypeResultBundle.currentWorkbookURL(for: output)
+        let inspection = try runPython([
+            "-c", "import sys,zipfile; from openpyxl import load_workbook; assert zipfile.is_zipfile(sys.argv[1]); w=load_workbook(sys.argv[1]); assert any(c.value == 'DW001' for s in w for row in s for c in row); print(len(w.sheetnames))",
+            workbook.path,
+        ], environment: ["PATH": URL(fileURLWithPath: python).deletingLastPathComponent().path + ":" + (ProcessInfo.processInfo.environment["PATH"] ?? "")])
+        XCTAssertGreaterThan(Int(inspection.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0, 0)
+        let provenance = try XCTUnwrap(ProvenanceEnvelopeReader.load(from: output))
+        XCTAssertTrue(provenance.outputs.contains { $0.path == workbook.path && $0.checksumSHA256 != nil && $0.fileSize != nil })
+        XCTAssertTrue(provenance.steps.contains { $0.toolName == "minimap2" })
     }
 
     func testRunIlluminaModePublishesObservedNovelSequenceAsProvisionalExon2() async throws {
@@ -3437,6 +3496,54 @@ final class ONTBarcodeDemuxGenotypingPipelineTests: XCTestCase {
         XCTAssertEqual(inspection["provenanceIncludesHaplotypes"] as? Bool, true)
     }
 
+    func testReportScriptGroupsMiSeqClassIISourceLociBeforeClassISuffixes() throws {
+        try XCTSkipIf(!pythonCanImportOpenpyxl(), "openpyxl is required for workbook report verification")
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scriptURL = root.appendingPathComponent("write-report.py")
+        try ONTBarcodeDemuxGenotypingPipeline.writeReportScript(to: scriptURL)
+        let output = try runPython(["-c", #"""
+import json, runpy, sys
+report = runpy.run_path(sys.argv[1])
+loci = ["MHC-A1", "MHC-B", "MHC-B17", "MHC-B21Ps", "MHC-K", "MHC-DRB", "MHC-DQA1", "MHC-DQB1", "MHC-DPA1", "MHC-DPB1"]
+print(json.dumps({locus: report["mcm_allele_section_label"]("MCM_MHC_MiSeq_0025|source_loci=" + locus) for locus in loci}))
+"""#, scriptURL.path])
+        let sections = try JSONDecoder().decode([String: String].self, from: Data(output.utf8))
+        XCTAssertEqual(sections["MHC-A1"], "Mafa-A major alleles")
+        XCTAssertEqual(sections["MHC-B"], "Mafa-B alleles")
+        XCTAssertEqual(sections["MHC-B17"], "Mafa-B alleles")
+        XCTAssertEqual(sections["MHC-B21Ps"], "Mafa-B alleles")
+        XCTAssertEqual(sections["MHC-K"], "Mafa-K alleles")
+        XCTAssertEqual(sections["MHC-DRB"], "Mafa-DRB alleles")
+        XCTAssertEqual(sections["MHC-DQA1"], "Mafa-DQA/DQB alleles")
+        XCTAssertEqual(sections["MHC-DQB1"], "Mafa-DQA/DQB alleles")
+        XCTAssertEqual(sections["MHC-DPA1"], "Mafa-DPA/DPB alleles")
+        XCTAssertEqual(sections["MHC-DPB1"], "Mafa-DPA/DPB alleles")
+    }
+
+    func testReportScriptSortsMiSeqAllelesByDisplayNameWithinLocusSections() throws {
+        try XCTSkipIf(!pythonCanImportOpenpyxl(), "openpyxl is required for workbook report verification")
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scriptURL = root.appendingPathComponent("write-report.py")
+        try ONTBarcodeDemuxGenotypingPipeline.writeReportScript(to: scriptURL)
+        let output = try runPython(["-c", #"""
+import json, runpy, sys
+from openpyxl import Workbook
+report = runpy.run_path(sys.argv[1])
+genotypes = [
+    "MCM_MHC_MiSeq_0001|source_loci=MHC-DPB1|alleles=Mafa-DPB1_20:01",
+    "MCM_MHC_MiSeq_0002|source_loci=MHC-DPA1|alleles=Mafa-DPA1_10:01",
+    "MCM_MHC_MiSeq_0999|source_loci=MHC-DPA1|alleles=Mafa-DPA1_2:01",
+]
+ws = Workbook().active
+report["write_full_sequencing_results"](ws, ["sample"], {}, {"sample": {g: i+1 for i,g in enumerate(genotypes)}}, genotypes, {}, [])
+print(json.dumps([row[0].value for row in ws if str(row[0].value).startswith("Mafa-DP") and "*" in str(row[0].value)]))
+"""#, scriptURL.path])
+        let labels = try JSONDecoder().decode([String].self, from: Data(output.utf8))
+        XCTAssertEqual(labels, ["Mafa-DPA1*2:01", "Mafa-DPA1*10:01", "Mafa-DPB1*20:01"])
+    }
+
     func testReportScriptWritesMCMClientCurrentWorkbook() throws {
         try XCTSkipIf(!pythonCanImportOpenpyxl(), "openpyxl is required for workbook report verification")
         let root = try temporaryDirectory()
@@ -4318,7 +4425,8 @@ print(json.dumps(payload))
     private func makeMHCReferenceBundle(
         root: URL,
         definition: GenotypeHaplotypeDefinitionSet,
-        name: String = "MCM MHC"
+        name: String = "MCM MHC",
+        genotypeLocusDisplayOrder: [String]? = nil
     ) throws -> URL {
         let bundleURL = root.appendingPathComponent("MCM-MHC.lungfishmhcref", isDirectory: true)
         let definitionRelativePath = "haplotypes/\(definition.id).lungfishhaplotypedef.json"
@@ -4374,6 +4482,7 @@ print(json.dumps(payload))
                 haplotypeDefinitionPaths: [definitionRelativePath],
                 defaultHaplotypeDefinitionID: definition.id,
                 metrics: MHCAmpliconReferenceBundleMetrics(referenceCount: 1, haplotypeDefinitionCount: 1),
+                genotypeLocusDisplayOrder: genotypeLocusDisplayOrder,
                 createdAt: "2026-05-30T00:00:00Z"
             ),
             to: bundleURL

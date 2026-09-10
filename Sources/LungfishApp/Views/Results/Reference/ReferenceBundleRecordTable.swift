@@ -38,6 +38,48 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
     private(set) var dynamicFields: [GenBankRecordDatabase.FieldDefinition] = []
     private var numericDynamicColumnIdentifiers = Set<String>()
     var onDisplayedRowsChanged: (() -> Void)?
+    var displaysAlleles = false
+    var onCopySequences: (([ReferenceBundleRecordRow], Bool) -> Void)?
+    var onExtractSequences: (([ReferenceBundleRecordRow]) -> Void)?
+    private let sequenceMenu = NSMenu()
+
+    static func fullReferenceName(for row: ReferenceBundleRecordRow) -> String {
+        guard let description = row.summary.displayDescription, !description.isEmpty,
+              !row.summary.name.contains(description) else { return row.summary.name }
+        return row.summary.name + " " + description
+    }
+
+    static func alleleName(for row: ReferenceBundleRecordRow) -> String {
+        let fullName = fullReferenceName(for: row)
+        let alleles = MHCReferenceGenotypeDisplay.alleleNames(for: fullName)
+        return alleles.isEmpty ? row.summary.name : alleles.joined(separator: " / ")
+    }
+
+    var selectedSequenceRows: [ReferenceBundleRecordRow] {
+        tableView.selectedRowIndexes.compactMap { displayedRows.indices.contains($0) ? displayedRows[$0] : nil }
+    }
+
+    func sequenceActionMenu(clickedRow: Int) -> NSMenu {
+        guard displayedRows.indices.contains(clickedRow) else { return NSMenu() }
+        if !tableView.selectedRowIndexes.contains(clickedRow) {
+            tableView.selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+        }
+        let rows = selectedSequenceRows
+        return FASTASequenceActionMenuBuilder.buildMenu(selectionCount: rows.count, handlers: .init(
+            onCopyNames: { [weak self] in
+                self?.copyText(rows.map { self?.displaysAlleles == true ? Self.alleleName(for: $0) : $0.summary.name }.joined(separator: "\n"))
+            },
+            onCopySequences: onCopySequences == nil ? nil : { [weak self] in self?.onCopySequences?(rows, false) },
+            onCopyFullNames: displaysAlleles ? { [weak self] in self?.copyText(rows.map(Self.fullReferenceName).joined(separator: "\n")) } : nil,
+            onCopy: onCopySequences == nil ? nil : { [weak self] in self?.onCopySequences?(rows, true) },
+            onCreateBundle: onExtractSequences == nil ? nil : { [weak self] in self?.onExtractSequences?(rows) }
+        ))
+    }
+
+    private func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
 
     /// The reference bundle's user-facing `manifest.name`, used as the
     /// primary "sequence" cell line. `nil` (the default) falls back to
@@ -56,11 +98,14 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
         let fixed: [BatchColumnSpec] = (displaysSamples ? [
             .init(identifier: .init("sample"), title: "Sample", width: 130, minWidth: 90, defaultAscending: true),
         ] : []) + [
-            .init(identifier: .init("sequence"), title: "Sequence", width: 220, minWidth: 140, defaultAscending: true),
+            .init(identifier: .init("sequence"), title: displaysAlleles ? "Allele" : "Sequence", width: displaysAlleles ? 350 : 220, minWidth: 140, defaultAscending: true),
             .init(identifier: .init("length"), title: "Length", width: 100, minWidth: 80, defaultAscending: false),
             .init(identifier: .init("role"), title: "Role", width: 100, minWidth: 80, defaultAscending: true),
         ]
-        return fixed + dynamicFields.map { field in
+        let names: [BatchColumnSpec] = displaysAlleles ? [
+            .init(identifier: .init("fullReferenceName"), title: "Full reference name", width: 300, minWidth: 140, defaultAscending: true)
+        ] : []
+        return fixed + names + dynamicFields.map { field in
             .init(
                 identifier: .init(Self.columnIdentifier(for: field.key)),
                 title: field.displayTitle,
@@ -100,7 +145,9 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
     }
 
     private func finishSetup() {
-        tableView.allowsMultipleSelection = false
+        tableView.allowsMultipleSelection = true
+        sequenceMenu.delegate = self
+        tableView.menu = sequenceMenu
         tableView.sortDescriptors = [NSSortDescriptor(key: "sequence", ascending: true)]
     }
 
@@ -125,7 +172,11 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
         for filteredColumn in columnFilters.keys where !availableColumnIdentifiers.contains(filteredColumn) {
             columnFilterSet.removeFilters(for: filteredColumn)
         }
+        let hadFullNameColumn = tableView.tableColumns.contains { $0.identifier.rawValue == "fullReferenceName" }
         rebuildStandardColumns()
+        if displaysAlleles && !hadFullNameColumn {
+            tableView.tableColumn(withIdentifier: .init("fullReferenceName"))?.isHidden = true
+        }
         tableView.sortDescriptors = [NSSortDescriptor(key: "sequence", ascending: true)]
         super.configure(rows: rows)
     }
@@ -138,6 +189,8 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
         let displayText: String
         if column.rawValue == "sample" {
             displayText = row.sampleID ?? "—"
+        } else if column.rawValue == "sequence", displaysAlleles {
+            displayText = Self.alleleName(for: row)
         } else if column.rawValue == "sequence", let bundleDisplayName {
             // Primary line shows the bundle's user-facing name; the
             // underlying sequence/contig name moves to the dimmed secondary
@@ -161,7 +214,7 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
         for column: NSUserInterfaceItemIdentifier,
         row: ReferenceBundleRecordRow
     ) -> String? {
-        guard column.rawValue == "sequence", let bundleDisplayName else { return nil }
+        guard !displaysAlleles, column.rawValue == "sequence", let bundleDisplayName else { return nil }
         return BundleDisplayLabel.secondaryLine(
             bundleName: bundleDisplayName,
             contigName: row.summary.name,
@@ -174,7 +227,9 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
         case "sample":
             return row.sampleID ?? ""
         case "sequence":
-            return row.summary.name
+            return displaysAlleles ? Self.alleleName(for: row) : row.summary.name
+        case "fullReferenceName":
+            return Self.fullReferenceName(for: row)
         case "length":
             return String(row.summary.length)
         case "role":
@@ -287,6 +342,18 @@ final class ReferenceBundleRecordTable: BatchTableView<ReferenceBundleRecordRow>
         case (nil, nil): return .orderedSame
         case (nil, _): return .orderedDescending
         case (_, nil): return .orderedAscending
+        }
+    }
+}
+
+
+extension ReferenceBundleRecordTable: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let rebuilt = sequenceActionMenu(clickedRow: tableView.clickedRow)
+        menu.removeAllItems()
+        for item in rebuilt.items {
+            rebuilt.removeItem(item)
+            menu.addItem(item)
         }
     }
 }

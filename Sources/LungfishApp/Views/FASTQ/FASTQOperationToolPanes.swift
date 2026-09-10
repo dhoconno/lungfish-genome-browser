@@ -556,10 +556,12 @@ private struct FASTQOperationPrimarySettingsSection: View {
                 workflowFormGroup("Run Parameters") {
                     HStack(spacing: 12) {
                         labeledCompactTextField("Threads", text: Self.intBinding(state, \.ontGenotypingThreads), help: LungfishHelpContent.fastqThreads)
-                        labeledCompactTextField("Min Reads", text: Self.intBinding(state, \.ontGenotypingMinSupport), help: LungfishHelpContent.fastqMinReads)
+                        labeledCompactTextField("Minimum supporting reads", text: Self.intBinding(state, \.ontGenotypingMinSupport), help: MiSeqWorkflowSetupHelp.minimumSupport)
                     }
                 }
-                helperText("Select a MiSeq allele reference and barcode definition in the Inputs section. The workflow retains exact+indel full-amplicon mappings, then demultiplexes retained reads.")
+                helperText(state.requiredInputKinds.contains(.barcodeDefinition)
+                    ? "Choose an allele reference and barcode definitions in Inputs."
+                    : "Choose an allele reference in Inputs. These reads are already separated by sample.")
 
             case .correctSequencingErrors:
                 labeledCompactTextField("K-mer Size", text: Self.intBinding(state, \.correctSequencingErrorsKmerSize), help: LungfishHelpContent.fastqKmerSize)

@@ -4,6 +4,7 @@
 
 import AppKit
 import SwiftUI
+import LungfishKit
 import LungfishCore
 import LungfishIO
 
@@ -24,7 +25,7 @@ struct GenotypeMutationActionButton: NSViewRepresentable {
     let title: String
     let accessibilityIdentifier: String
     var systemImageName: String? = nil
-    var controlSize: NSControl.ControlSize = .small
+    var controlSize: NSControl.ControlSize = .regular
     var isBorderless = false
     var isEnabled = true
     var keyEquivalent = ""
@@ -54,6 +55,7 @@ struct GenotypeMutationActionButton: NSViewRepresentable {
         coordinator.action = action
         button.title = title
         button.controlSize = controlSize
+        button.font = ContentTypographyModel.shared.resolvedNSFont(for: .body)
         button.bezelStyle = .rounded
         button.isBordered = !isBorderless
         button.isEnabled = isEnabled
@@ -119,10 +121,20 @@ struct GenotypeOverrideSection: View {
     let originalCall: String
     /// Empty array means free-text mode (manual haplotyping bundles).
     let allowedTargets: [String]
+    var requiresAcknowledgement = false
+    var saveTitle = "Save"
     var onSave: (OverrideDraft) -> Void
     var onCancel: () -> Void
 
     @State private var isExpanded = true
+    @State private var acknowledged = false
+
+    static func canSave(_ draft: OverrideDraft, requiresAcknowledgement: Bool, acknowledged: Bool) -> Bool {
+        guard !draft.target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return !requiresAcknowledgement || (acknowledged && !draft.rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private var needsAcknowledgement: Bool { requiresAcknowledgement || isOffWhitelist || normalizedAllowedTargets.isEmpty }
 
     var body: some View {
         DisclosureGroup("Override Call", isExpanded: $isExpanded) {
@@ -132,23 +144,32 @@ struct GenotypeOverrideSection: View {
                 targetRow
                 reasonRow
                 rationaleRow
+                if needsAcknowledgement {
+                    Toggle("I intend to replace this assignment with the entered name", isOn: $acknowledged)
+                        .font(ContentTypographyModel.shared.font(for: .body))
+                        .accessibilityIdentifier("genotypeOverrideAcknowledgement")
+                    Text("A rationale is required for this manual assignment.")
+                        .font(ContentTypographyModel.shared.font(for: .body))
+                        .foregroundStyle(.secondary)
+                }
                 buttonsRow
             }
             .padding(.top, 4)
         }
-        .font(.caption.weight(.semibold))
+        .font(ContentTypographyModel.shared.font(for: .body).weight(.semibold))
+        .onChange(of: draft.target) { _, _ in acknowledged = false }
     }
 
     // MARK: - Sub-views
 
     private var originalRow: some View {
-        HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Original")
-                .font(.caption)
+                .font(ContentTypographyModel.shared.font(for: .body))
                 .foregroundStyle(.secondary)
-                .frame(width: 118, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text(originalCall.isEmpty ? "(no call)" : originalCall)
-                .font(.caption.monospaced())
+                .font(ContentTypographyModel.shared.font(for: .body).monospaced())
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -161,22 +182,22 @@ struct GenotypeOverrideSection: View {
     /// when a typed value isn't in the suggestion list so reviewers see it.
     @ViewBuilder
     private var targetRow: some View {
-        HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Override To")
-                .font(.caption)
+                .font(ContentTypographyModel.shared.font(for: .body))
                 .foregroundStyle(.secondary)
-                .frame(width: 118, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 4)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     TextField("Haplotype name", text: $draft.target)
                         .textFieldStyle(.roundedBorder)
-                        .font(.caption)
-                        .controlSize(.small)
+                        .font(ContentTypographyModel.shared.font(for: .body))
+                        .controlSize(.regular)
                         .accessibilityIdentifier("genotypeOverrideTargetField")
                     if isOffWhitelist {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
+                            .font(ContentTypographyModel.shared.font(for: .body))
                             .foregroundStyle(Color(nsColor: .lungfishDanger))
                             .help("Off-whitelist value. Reviewers will see this as a custom override.")
                             .accessibilityLabel("Off-whitelist override")
@@ -229,7 +250,7 @@ struct GenotypeOverrideSection: View {
                 ForEach(filteredSuggestions, id: \.self) { name in
                     Button(action: { draft.target = name }) {
                         Text(name)
-                            .font(.caption2.monospaced())
+                            .font(ContentTypographyModel.shared.font(for: .body).monospaced())
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
@@ -250,11 +271,11 @@ struct GenotypeOverrideSection: View {
     }
 
     private var reasonRow: some View {
-        HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Reason")
-                .font(.caption)
+                .font(ContentTypographyModel.shared.font(for: .body))
                 .foregroundStyle(.secondary)
-                .frame(width: 118, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .leading)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(GenotypeAnnotationSidecar.OverrideReasonTag.allCases, id: \.self) { tag in
@@ -271,7 +292,7 @@ struct GenotypeOverrideSection: View {
         let isSelected = draft.reason == tag
         Button(action: { draft.reason = tag }) {
             Text(reasonLabel(tag))
-                .font(.caption)
+                .font(ContentTypographyModel.shared.font(for: .body))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
@@ -290,13 +311,13 @@ struct GenotypeOverrideSection: View {
     }
 
     private var rationaleRow: some View {
-        HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Rationale")
-                .font(.caption)
+                .font(ContentTypographyModel.shared.font(for: .body))
                 .foregroundStyle(.secondary)
-                .frame(width: 118, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .leading)
             TextEditor(text: $draft.rationale)
-                .font(.caption)
+                .font(ContentTypographyModel.shared.font(for: .body))
                 .frame(minHeight: 60)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
@@ -310,14 +331,18 @@ struct GenotypeOverrideSection: View {
         HStack {
             Spacer()
             Button("Cancel", action: onCancel)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .keyboardShortcut(.cancelAction)
             GenotypeMutationActionButton(
-                title: "Save",
+                title: saveTitle,
                 accessibilityIdentifier: "genotypeOverrideSaveButton",
-                isEnabled: !draft.target.isEmpty,
-                keyEquivalent: "\r",
-                action: { onSave(draft) }
+                isEnabled: Self.canSave(draft, requiresAcknowledgement: needsAcknowledgement, acknowledged: acknowledged),
+                action: {
+                    guard Self.canSave(draft, requiresAcknowledgement: needsAcknowledgement, acknowledged: acknowledged) else { return }
+                    var normalized = draft
+                    normalized.target = draft.target.trimmingCharacters(in: .whitespacesAndNewlines)
+                    onSave(normalized)
+                }
             )
         }
     }

@@ -31,14 +31,14 @@ struct ProvenanceSection: View {
                         Text(source.name).tag(source.id)
                     }
                 }
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .accessibilityIdentifier("provenance-source-picker")
             }
 
             if shouldShowSearch {
                 TextField("Filter provenance", text: $viewModel.searchText)
                     .textFieldStyle(.roundedBorder)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .accessibilityIdentifier("provenance-filter-field")
             }
 
@@ -46,7 +46,7 @@ struct ProvenanceSection: View {
                 runSummaryContent
                     .padding(.top, 4)
             }
-            .font(.caption.weight(.semibold))
+            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
             .accessibilityIdentifier("provenance-run-summary")
 
             if !viewModel.warnings.isEmpty {
@@ -58,7 +58,7 @@ struct ProvenanceSection: View {
                     }
                     .padding(.top, 4)
                 }
-                .font(.caption.weight(.semibold))
+                .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                 .accessibilityIdentifier("provenance-warnings")
             }
 
@@ -66,35 +66,35 @@ struct ProvenanceSection: View {
                 lineageContent
                     .padding(.top, 4)
             }
-            .font(.caption.weight(.semibold))
+            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
             .accessibilityIdentifier("provenance-step-list")
 
             DisclosureGroup("Files & Outputs", isExpanded: $isFilesExpanded) {
                 filesContent
                     .padding(.top, 4)
             }
-            .font(.caption.weight(.semibold))
+            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
             .accessibilityIdentifier("provenance-files")
 
             DisclosureGroup("Invocation & Options", isExpanded: $isOptionsExpanded) {
                 optionsContent
                     .padding(.top, 4)
             }
-            .font(.caption.weight(.semibold))
+            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
             .accessibilityIdentifier("provenance-options")
 
             DisclosureGroup("Runtime", isExpanded: $isRuntimeExpanded) {
                 runtimeContent
                     .padding(.top, 4)
             }
-            .font(.caption.weight(.semibold))
+            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
             .accessibilityIdentifier("provenance-runtime")
 
             DisclosureGroup("Raw JSON", isExpanded: $isRawJSONExpanded) {
                 rawJSONContent
                     .padding(.top, 4)
             }
-            .font(.caption.weight(.semibold))
+            .font(LungfishInspectorStyle.controlFont.weight(.semibold))
             .accessibilityIdentifier("provenance-raw-json")
         }
         .accessibilityIdentifier("provenance-root")
@@ -113,7 +113,7 @@ struct ProvenanceSection: View {
                         .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .help("Copy provenance text")
                 .disabled(viewModel.isLoading || viewModel.copyableText.isEmpty)
                 .accessibilityIdentifier("provenance-copy-text")
@@ -129,13 +129,13 @@ struct ProvenanceSection: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .menuStyle(.button)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .disabled(viewModel.resolvedEnvelope == nil)
                 .accessibilityIdentifier("provenance-export-menu")
             }
 
             Label(viewModel.summary.statusLabel, systemImage: statusSymbol)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(statusForegroundStyle)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -145,7 +145,7 @@ struct ProvenanceSection: View {
                     ProgressView()
                         .scaleEffect(0.7)
                     Text("Loading provenance...")
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("provenance-loading-indicator")
@@ -202,9 +202,9 @@ struct ProvenanceSection: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(run.title)
-                                    .font(.caption)
+                                    .font(LungfishInspectorStyle.controlFont)
                                 Text(run.subtitle)
-                                    .font(.caption2)
+                                    .font(LungfishInspectorStyle.controlFont)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
@@ -264,13 +264,13 @@ struct ProvenanceSection: View {
                         Label("Copy", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.borderless)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .accessibilityIdentifier("provenance-copy-json")
                 }
 
                 SelectableWrappingText(
                     viewModel.rawJSON,
-                    font: .monospacedSystemFont(ofSize: 10, weight: .regular),
+                    font: ContentTypographyModel.shared.resolvedNSFont(for: .monospaced),
                     maximumNumberOfLines: 80,
                     accessibilityIdentifier: "provenance-raw-json-text"
                 )
@@ -282,10 +282,10 @@ struct ProvenanceSection: View {
     private func warningRow(_ warning: ProvenanceWarningRow) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(warning.title)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.primary)
             Text(warning.message)
-                .font(.caption2)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -319,15 +319,15 @@ struct ProvenanceSection: View {
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("\(step.ordinal).")
-                    .font(.caption2.monospacedDigit())
+                    .font(LungfishInspectorStyle.controlFont.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 24, alignment: .trailing)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(step.toolName)
-                        .font(.caption)
+                        .font(LungfishInspectorStyle.controlFont)
                     if !step.toolVersion.isEmpty {
                         Text(step.toolVersion)
-                            .font(.caption2)
+                            .font(LungfishInspectorStyle.controlFont)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -340,11 +340,11 @@ struct ProvenanceSection: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(row.role)
-                    .font(.caption2.weight(.semibold))
+                    .font(LungfishInspectorStyle.controlFont.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 62, alignment: .trailing)
                 Text(row.displayPath)
-                    .font(.caption)
+                    .font(LungfishInspectorStyle.controlFont)
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
@@ -353,13 +353,13 @@ struct ProvenanceSection: View {
                     .help(row.path)
             }
             Text(fileMetadataSummary(for: row))
-            .font(.caption2)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.tertiary)
             .padding(.leading, 68)
 
             if let checksum = row.checksumSHA256, !checksum.isEmpty {
                 Text("sha256 \(checksum)")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(LungfishInspectorStyle.controlFont.monospaced())
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -391,11 +391,11 @@ struct ProvenanceSection: View {
     ) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .foregroundStyle(.secondary)
                 .frame(width: 96, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(LungfishInspectorStyle.controlFont)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -406,7 +406,7 @@ struct ProvenanceSection: View {
 
     private func emptyMessage(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
+            .font(LungfishInspectorStyle.controlFont)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)

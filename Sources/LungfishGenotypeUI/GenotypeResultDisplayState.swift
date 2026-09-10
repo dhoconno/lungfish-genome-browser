@@ -82,6 +82,7 @@ public enum GenotypeSummaryViewMode: String, CaseIterable, Equatable {
 
 public enum GenotypeResultCellColorMode: String, CaseIterable, Equatable {
     case support
+    case haplotype
     case highlights
     case none
 
@@ -89,6 +90,8 @@ public enum GenotypeResultCellColorMode: String, CaseIterable, Equatable {
         switch self {
         case .support:
             return "Support"
+        case .haplotype:
+            return "Haplotype"
         case .highlights:
             return "Highlights"
         case .none:
@@ -105,6 +108,8 @@ public struct GenotypeResultDisplayState: Equatable {
     public var minimumSupportPercent: Double = 0
     public var supportDenominator: ONTGenotypeSupportDenominator = .viewedLocus
     public var cellColorMode: GenotypeResultCellColorMode = .support
+    /// Show only observed alleles used by the active haplotype definitions.
+    public var diagnosticAllelesOnly: Bool = false
     public var hideFilteredHighlights: Bool = true
     /// When true, the Outline / Matrix views include observed loci
     /// that the active haplotype definition set does NOT cover. When false
@@ -135,6 +140,8 @@ public struct GenotypeResultDisplayState: Equatable {
     /// `nil` preserves the settings loaded from this result bundle's annotation
     /// sidecar. Full-length MHC controls use this while an edit is being applied.
     public var mhcCandidateDisplaySettings: ONTMHCCandidateDisplaySettings? = nil
+    /// Display-only order override. Nil uses the result bundle's portable default.
+    public var genotypeLocusDisplayOrder: [String]? = nil
 
     /// The historical "calls below this are unreliable" cohort flag (default
     /// `5_000`). It LABELS samples in the Cohort Summary panel; it does not
@@ -149,6 +156,7 @@ public struct GenotypeResultDisplayState: Equatable {
         minimumSupportPercent: Double = 0,
         supportDenominator: ONTGenotypeSupportDenominator = .viewedLocus,
         cellColorMode: GenotypeResultCellColorMode = .support,
+        diagnosticAllelesOnly: Bool = false,
         hideFilteredHighlights: Bool = true,
         showsAncillaryLoci: Bool = false,
         includedLoci: Set<String>? = nil,
@@ -169,6 +177,7 @@ public struct GenotypeResultDisplayState: Equatable {
         self.minimumSupportPercent = minimumSupportPercent
         self.supportDenominator = supportDenominator
         self.cellColorMode = cellColorMode
+        self.diagnosticAllelesOnly = diagnosticAllelesOnly
         self.hideFilteredHighlights = hideFilteredHighlights
         self.showsAncillaryLoci = showsAncillaryLoci
         self.includedLoci = includedLoci
@@ -238,6 +247,7 @@ extension GenotypeResultDisplayState {
         replaced.minimumSupportPercent = source.minimumSupportPercent
         replaced.supportDenominator = source.supportDenominator
         replaced.cellColorMode = source.cellColorMode
+        replaced.diagnosticAllelesOnly = source.diagnosticAllelesOnly
         replaced.hideFilteredHighlights = source.hideFilteredHighlights
         replaced.minimumReads = source.minimumReads
         replaced.matrixMinimumReads = source.matrixMinimumReads
@@ -248,6 +258,7 @@ extension GenotypeResultDisplayState {
         replaced.manualHaplotypeBandExpanded =
             source.manualHaplotypeBandExpanded
         replaced.mhcCandidateDisplaySettings = source.mhcCandidateDisplaySettings
+        replaced.genotypeLocusDisplayOrder = source.genotypeLocusDisplayOrder
         return replaced
     }
 
@@ -264,9 +275,11 @@ extension GenotypeResultDisplayState {
 
     func requiresMatrixFilterPass(comparedTo previous: GenotypeResultDisplayState) -> Bool {
         requiresMatrixDerivedProjection(comparedTo: previous)
+            || diagnosticAllelesOnly != previous.diagnosticAllelesOnly
             || minimumReads != previous.minimumReads
             || matrixRowFilterText != previous.matrixRowFilterText
             || matrixSampleFilterText != previous.matrixSampleFilterText
+            || genotypeLocusDisplayOrder != previous.genotypeLocusDisplayOrder
     }
 
     func requiresMatrixRedraw(comparedTo previous: GenotypeResultDisplayState) -> Bool {
